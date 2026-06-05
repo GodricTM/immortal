@@ -8,6 +8,7 @@
 package com.immortal.launcher
 
 import android.content.Context
+import android.os.Build
 import java.io.File
 
 /**
@@ -37,6 +38,18 @@ object InstallDaemon {
             .getOrDefault(0L)
     return (System.currentTimeMillis() / 1000 - ts) in 0..20
   }
+
+  /**
+   * Whether this device's built-in installer dialog is broken and it therefore
+   * RELIES on the daemon to install anything. True on the Gen-1 Portal/Portal+
+   * (Android 9 / API 28); the Android-10 models (Go, Mini, gen-2) have a working
+   * system installer and don't need the daemon. Used to tell the two apart so a
+   * paused daemon on a Gen-1 reads as "re-run setup", not a bug.
+   */
+  fun legacyInstaller(): Boolean = Build.VERSION.SDK_INT < 29
+
+  /** Gen-1 with the daemon down: on-device installs are paused until it's restarted. */
+  fun installPaused(context: Context): Boolean = legacyInstaller() && !isAvailable(context)
 
   /**
    * Queue [apk] for the daemon and block (on a background thread) until it

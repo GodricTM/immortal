@@ -117,6 +117,12 @@ object StoreCatalog {
    * broadcast handled by the host activity.
    */
   fun install(context: Context, app: CatalogApp, status: (String, String) -> Unit) {
+    // Gen-1 with the daemon down: the system installer is broken, so don't even
+    // download — tell the user how to re-enable installs (it's not a bug).
+    if (InstallDaemon.installPaused(context)) {
+      status(app.packageName, "Paused — re-run Immortal setup")
+      return
+    }
     status(app.packageName, "Resolving…")
     io.execute {
       try {
@@ -130,9 +136,7 @@ object StoreCatalog {
           val ok = InstallDaemon.install(context, apk, app.packageName)
           main.post { status(app.packageName, if (ok) "Installed ✓" else "Install failed") }
         } else {
-          // Fall back to the system installer (works on models with a working
-          // installer dialog; on the Gen-1 Portal+ that dialog is broken, so
-          // re-running the kit to restart the daemon is the fix).
+          // Android-10 models: the system installer dialog works.
           commit(context, app.packageName, apk)
         }
       } catch (t: Throwable) {

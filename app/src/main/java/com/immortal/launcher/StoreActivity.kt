@@ -44,6 +44,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -119,6 +120,9 @@ private fun StoreScreen() {
             "${apps.size} apps · tap Install to download and add to your Portal",
             style = MaterialTheme.typography.bodyMedium,
         )
+        if (InstallDaemon.installPaused(context)) {
+          PausedBanner()
+        }
       }
       categories.forEach { (cat, list) ->
         item {
@@ -138,6 +142,33 @@ private fun StoreScreen() {
           )
         }
       }
+    }
+  }
+}
+
+@Composable
+private fun PausedBanner() {
+  Card(
+      modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
+      colors = CardDefaults.cardColors(containerColor = Color(0x33FFB300)),
+  ) {
+    Column(modifier = Modifier.padding(16.dp)) {
+      Text(
+          "⚠ One-tap install is paused",
+          fontSize = 16.sp,
+          fontWeight = FontWeight.SemiBold,
+          color = Color(0xFFFFD180),
+      )
+      Text(
+          "This is a Gen-1 Portal (Android 9). Its built-in installer is broken, so " +
+              "Immortal uses a helper that, like all such tools, doesn't survive a reboot. " +
+              "Reconnect this Portal to a computer and re-run Immortal setup (or " +
+              "\"provision.sh --installd\") to re-enable installing. This is expected on " +
+              "Gen-1 after a reboot — newer Portals don't need it.",
+          style = MaterialTheme.typography.bodySmall,
+          color = Color(0xFFEEEEEE),
+          modifier = Modifier.padding(top = 6.dp),
+      )
     }
   }
 }

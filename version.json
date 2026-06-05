@@ -1,6 +1,6 @@
 {
-  "versionCode": 7,
-  "versionName": "1.6",
+  "versionCode": 8,
+  "versionName": "1.7",
   "apkUrl": "https://github.com/starbrightlab/immortal/releases/latest/download/immortal.apk",
-  "notes": "Immortal 1.6 — the App Store and self-update now install SILENTLY through the provisioning kit's install daemon when it's running (no system dialog). This makes on-device installs work on the Gen-1 Portal+, whose built-in installer UI is broken, and it's a one-tap upgrade on every model. Falls back to the system installer when the daemon isn't running."
+  "notes": "Immortal 1.7 — on a Gen-1 Portal (Android 9) where the install helper isn't running (e.g. after a reboot), the App Store now clearly shows that one-tap install is paused and how to re-enable it, instead of failing silently. Newer Portals are unaffected."
 }

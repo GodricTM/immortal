@@ -122,8 +122,10 @@ start_installd() {
   step "Starting the silent-install daemon"
   a push installd.sh /data/local/tmp/installd.sh >/dev/null 2>&1
   a shell "chmod 755 /data/local/tmp/installd.sh" >/dev/null 2>&1
-  # Kill any previous instance, then start detached.
-  a shell "for p in \$(ps -A 2>/dev/null | grep installd.sh | grep -v grep | awk '{print \$2}'); do kill \$p; done" >/dev/null 2>&1
+  # Kill any previous instance(s), then start detached. (toybox `ps` shows the
+  # process as "sh", not the script path, so scan /proc/*/cmdline instead;
+  # exclude our own shell so the scan doesn't kill itself.)
+  a shell 'me=$$; for d in /proc/[0-9]*; do p=${d#/proc/}; [ "$p" = "$me" ] && continue; c=$(cat "$d/cmdline" 2>/dev/null | tr "\0" " "); case "$c" in *installd.sh*) kill "$p" 2>/dev/null;; esac; done' >/dev/null 2>&1
   a shell "setsid sh /data/local/tmp/installd.sh /sdcard/Android/data/$PKG/files/installq >/dev/null 2>&1 &" >/dev/null 2>&1
   sleep 2
   if a shell "cat /sdcard/Android/data/$PKG/files/installq/.heartbeat 2>/dev/null" | grep -q '[0-9]'; then

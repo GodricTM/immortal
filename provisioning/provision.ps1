@@ -97,7 +97,7 @@ function Start-Installd {
   Step "Starting the silent-install daemon"
   A push installd.sh /data/local/tmp/installd.sh | Out-Null
   A shell "chmod 755 /data/local/tmp/installd.sh" | Out-Null
-  A shell "kill `$(ps -A 2>/dev/null | grep installd.sh | grep -v grep | awk '{print `$2}') 2>/dev/null" | Out-Null
+  A shell 'me=$$; for d in /proc/[0-9]*; do p=${d#/proc/}; [ "$p" = "$me" ] && continue; c=$(cat "$d/cmdline" 2>/dev/null | tr "\0" " "); case "$c" in *installd.sh*) kill "$p" 2>/dev/null;; esac; done' | Out-Null
   A shell "setsid sh /data/local/tmp/installd.sh /sdcard/Android/data/$($cfg['PKG'])/files/installq >/dev/null 2>&1 &" | Out-Null
   Start-Sleep -Seconds 2
   $hb = (A shell "cat /sdcard/Android/data/$($cfg['PKG'])/files/installq/.heartbeat 2>/dev/null")
