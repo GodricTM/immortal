@@ -35,11 +35,31 @@ installs → freeze OS updates → set launcher → set screensaver. Each step i
 | `PKG`, `HOME_ACTIVITY`, `DREAM_SERVICE` | Your client app's package and components |
 | `SET_LAUNCHER`, `SET_SCREENSAVER`, `DISABLE_VERIFIER`, `DISABLE_OTA` | `true`/`false` per step |
 | `PERMISSIONS` | Runtime permissions to pre-grant |
+| `PREINSTALL_FDROID`, `PREINSTALL_APKS` | Apps to pre-install during setup (see below) |
 | `APK_GLOB` | Which APK to install (drop yours in `apks/`) |
 | `ASSET_DIR` | Photos pushed to the frame (first becomes `frame.jpg`) |
 
 To ship your own app instead of the sample, replace `apks/app-debug.apk`, drop photos in
 `assets/`, and update `PKG`/`HOME_ACTIVITY`/`DREAM_SERVICE` in `config.env`.
+
+### Pre-installing apps
+
+`PREINSTALL_FDROID` / `PREINSTALL_APKS` install apps during setup via a silent
+`adb install`. This is the **reliable way to add apps on the Gen-1 Portal+**
+(Android 9), whose built-in install-confirmation dialog is broken (a blank window
+with no buttons) — a Meta system-UI bug we can't fix from an app. On newer models
+the on-device App Store works normally; pre-installing just gives every device a
+few useful apps out of the box.
+
+You can also run just this step later, without re-provisioning:
+
+```bash
+./provision.sh --apps          # macOS/Linux
+# powershell ... provision.ps1 -Apps   # Windows
+```
+
+F-Droid entries are `id` or `id:versionCode` (pin the arm64 build for multi-ABI
+apps like VLC). `PREINSTALL_APKS` are direct APK URLs for your own apps.
 
 ## Command line (optional)
 

@@ -111,6 +111,30 @@ install_client() {
   a install -r "$apk" >/dev/null 2>&1 && ok "Installed $PKG" || die "Install failed."
 }
 
+install_apps() {
+  # Silent adb-install of the configured apps. Works on every model — the only
+  # reliable path on devices whose on-device installer dialog is broken.
+  local tmp="$(dirname "$APK_GLOB")"; mkdir -p "$tmp"
+  for spec in ${PREINSTALL_FDROID:-}; do
+    local id="${spec%%:*}" vc=""
+    case "$spec" in *:*) vc="${spec##*:}" ;; esac
+    if [ -z "$vc" ]; then
+      vc="$(curl -fsL "https://f-droid.org/api/v1/packages/$id" 2>/dev/null | grep -o '"suggestedVersionCode":[0-9]*' | grep -o '[0-9]*' | head -1)"
+    fi
+    [ -n "$vc" ] || { warn "Skipping $id (couldn't resolve a version)"; continue; }
+    step "Installing $id"
+    if curl -fsL "https://f-droid.org/repo/${id}_${vc}.apk" -o "$tmp/$id.apk" 2>/dev/null \
+       && a install -r "$tmp/$id.apk" >/dev/null 2>&1; then ok "$id installed"; else warn "$id failed"; fi
+    rm -f "$tmp/$id.apk"
+  done
+  for url in ${PREINSTALL_APKS:-}; do
+    local f="$tmp/$(basename "$url")"
+    step "Installing $(basename "$url")"
+    if curl -fsL "$url" -o "$f" 2>/dev/null && a install -r "$f" >/dev/null 2>&1; then ok "installed"; else warn "failed"; fi
+    rm -f "$f"
+  done
+}
+
 push_assets() {
   [ -d "$ASSET_DIR" ] || { warn "No assets/ folder — skipping photos"; return; }
   local dir="/sdcard/Android/data/$PKG/files"
@@ -214,6 +238,7 @@ do_provision() {
   resolve_adb
   wait_for_device
   install_client
+  install_apps
   push_assets
   grant_perms
   disable_verifier
@@ -260,6 +285,7 @@ do_status() {
 case "${1:-}" in
   --restore|-r) do_restore ;;
   --status|-s)  do_status ;;
+  --apps|-a)    resolve_adb; wait_for_device; install_apps ;;
   --help|-h)    sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//' ;;
   "")           do_provision ;;
   *)            die "Unknown option: $1 (use --restore, --status, or no argument)" ;;

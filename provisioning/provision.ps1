@@ -11,7 +11,7 @@
     powershell -ExecutionPolicy Bypass -File provision.ps1 -Restore   # undo
     powershell -ExecutionPolicy Bypass -File provision.ps1 -Status    # show state
 #>
-param([switch]$Restore, [switch]$Status)
+param([switch]$Restore, [switch]$Status, [switch]$Apps)
 
 $ErrorActionPreference = "Stop"
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -91,6 +91,29 @@ function Install-Client {
   Step "Installing client app ($($apk.Name))"
   A install -r $apk.FullName | Out-Null
   Ok "Installed $($cfg["PKG"])"
+}
+function Install-Apps {
+  # Silent adb-install of configured apps — the reliable path on models whose
+  # on-device installer dialog is broken (e.g. Gen-1 Portal+).
+  $tmp = Split-Path -Parent $cfg["APK_GLOB"]; New-Item -ItemType Directory -Force -Path $tmp | Out-Null
+  foreach ($spec in ($cfg["PREINSTALL_FDROID"] -split "\s+")) {
+    if (-not $spec) { continue }
+    $id = ($spec -split ":")[0]; $vc = ""
+    if ($spec -match ":") { $vc = ($spec -split ":")[1] }
+    if (-not $vc) { try { $vc = (Invoke-RestMethod "https://f-droid.org/api/v1/packages/$id").suggestedVersionCode } catch {} }
+    if (-not $vc) { Warn "Skipping $id (couldn't resolve a version)"; continue }
+    Step "Installing $id"
+    $f = Join-Path $tmp "$id.apk"
+    try { Invoke-WebRequest "https://f-droid.org/repo/$($id)_$vc.apk" -OutFile $f; A install -r $f | Out-Null; Ok "$id installed" } catch { Warn "$id failed" }
+    Remove-Item $f -ErrorAction SilentlyContinue
+  }
+  foreach ($url in ($cfg["PREINSTALL_APKS"] -split "\s+")) {
+    if (-not $url) { continue }
+    $name = [System.IO.Path]::GetFileName($url); $f = Join-Path $tmp $name
+    Step "Installing $name"
+    try { Invoke-WebRequest $url -OutFile $f; A install -r $f | Out-Null; Ok "installed" } catch { Warn "failed" }
+    Remove-Item $f -ErrorAction SilentlyContinue
+  }
 }
 function Push-Assets {
   $dir = "/sdcard/Android/data/$($cfg["PKG"])/files"
@@ -174,6 +197,12 @@ function Load-State {
 }
 
 # ----- modes -----------------------------------------------------------------
+if ($Apps) {
+  Wait-Device
+  Install-Apps
+  exit 0
+}
+
 if ($Status) {
   Wait-Device
   Step "Current state"
@@ -214,6 +243,7 @@ Write-Host "This will modify your Portal: install an app, replace the home scree
 Write-Host "and disable Meta's app-install verifier. Run with -Restore to undo.`n" -ForegroundColor DarkGray
 Wait-Device
 Install-Client
+Install-Apps
 Push-Assets
 Grant-Perms
 Disable-Verifier
