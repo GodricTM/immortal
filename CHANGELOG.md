@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.24 (2026-06-06)
+
+Ship the dark-theme fix that landed in source after the 1.23 release was cut.
+
+- The app's XML theme is now dark (`Material.NoActionBar` with a transparent status bar and black window background), so the status bar no longer flashes white before Compose renders or when it transiently reappears on a swipe from the top. Cosmetic only; no behaviour changes.
+
 ## 1.21 (2026-06-06)
 
 A friendly, non-technical Help tour — so anyone can pick up a Portal running Immortal.

@@ -1,6 +1,6 @@
 {
-  "versionCode": 24,
-  "versionName": "1.23",
+  "versionCode": 25,
+  "versionName": "1.24",
   "apkUrl": "https://github.com/starbrightlab/immortal/releases/latest/download/immortal.apk",
-  "notes": "Immortal 1.23 — the Help guide now lives in the Settings folder (next to Screensaver) instead of the main grid, so it's there when you want it without taking up a home-screen tile. The one-time welcome tour on first launch is unchanged."
+  "notes": "Immortal 1.24 — dark window chrome: the status bar no longer flashes white while the app starts or when it briefly reappears on a swipe from the top. Purely cosmetic; no behaviour changes."
 }
