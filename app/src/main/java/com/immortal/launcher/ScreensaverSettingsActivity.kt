@@ -15,9 +15,11 @@ import androidx.activity.compose.setContent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.focusGroup
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -44,7 +46,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.key.Key
@@ -341,14 +345,40 @@ private fun IntervalStepper(seconds: Int, onChange: (Int) -> Unit) {
               }
               .focusable(interactionSource = src)
               .background(if (focused) Color(0x402E6BE6) else Color.Transparent)
-              .padding(horizontal = 18.dp, vertical = 14.dp),
+              .padding(start = 18.dp, end = 6.dp, top = 6.dp, bottom = 6.dp),
       verticalAlignment = Alignment.CenterVertically,
   ) {
     Text("Time per item", color = Color.White, fontSize = 17.sp, modifier = Modifier.weight(1f))
+    // Tappable arrows for touchscreens. They're excluded from D-pad focus
+    // traversal (focusProperties canFocus=false) so on the remote the row itself
+    // keeps handling left/right — the value adjusts the same way with either input.
+    ArrowButton("◀", focused) { onChange(seconds - 5) }
     Text(
-        "◀   ${seconds}s   ▶",
-        color = if (focused) Color.White else Color(0xFFBBBBBB),
+        "${seconds}s",
+        color = if (focused) Color.White else Color(0xFFDDDDDD),
         fontSize = 17.sp,
+        fontWeight = FontWeight.SemiBold,
+        textAlign = TextAlign.Center,
+        modifier = Modifier.widthIn(min = 52.dp),
+    )
+    ArrowButton("▶", focused) { onChange(seconds + 5) }
+  }
+}
+
+@Composable
+private fun ArrowButton(glyph: String, rowFocused: Boolean, onClick: () -> Unit) {
+  Box(
+      modifier =
+          Modifier.size(48.dp)
+              .clip(RoundedCornerShape(12.dp))
+              .focusProperties { canFocus = false }
+              .clickable(onClick = onClick),
+      contentAlignment = Alignment.Center,
+  ) {
+    Text(
+        glyph,
+        color = if (rowFocused) Color.White else Color(0xFFBBBBBB),
+        fontSize = 20.sp,
         fontWeight = FontWeight.SemiBold,
     )
   }

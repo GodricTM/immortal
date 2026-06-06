@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.15 (2026-06-05)
+
+Fix the screensaver's time-per-item control so it works with both touch and the remote.
+
+- In 1.14 the control adjusted only via D-pad left/right, so on touchscreen Portals there was no way to change it. The ◀ / ▶ arrows are now real tap targets, while the remote keeps adjusting with left/right and moving focus away with up/down. The arrows are excluded from D-pad traversal so they don't add extra stops for the remote.
+
 ## 1.14 (2026-06-05)
 
 Portal TV polish, from end-to-end testing on the device with its remote.
