@@ -177,6 +177,24 @@ function Push-Assets {
   }
   Ok "Pushed $n image(s) to the photo frame"
 }
+function Apply-SystemTweaks {
+  Step "Applying system display tweaks"
+  # Hide the status bar across all apps by default. Swipe from the top still
+  # reveals it transiently. Eliminates the white-on-white problem on
+  # light-background apps (Aurora, Android Settings, etc.). Android 5.0+.
+  A shell settings put global policy_control "immersive.status=*" | Out-Null
+  # Force system-wide dark mode. On Android 9 (Portal+) some apps respond; on
+  # Android 10 (Portal Go) it's a first-class feature — far more apps follow it.
+  A shell settings put secure ui_night_mode 2 | Out-Null
+  # Allow apps to call internal Android APIs blocked by the hidden-API blacklist.
+  # 1 = warn-only (calls succeed; logcat warning only). Covers pre-P and P+ targets.
+  A shell settings put global hidden_api_policy_pre_p_apps 1 | Out-Null
+  A shell settings put global hidden_api_policy_p_apps 1 | Out-Null
+  A shell settings put global hidden_api_policy 1 | Out-Null
+  # Unlock developer options (needed for ADB tooling and the debug menu).
+  A shell settings put global development_settings_enabled 1 | Out-Null
+  Ok "System tweaks applied"
+}
 function Grant-Perms {
   Step "Granting permissions"
   foreach ($p in ($cfg["PERMISSIONS"] -split "\s+")) { if ($p) { A shell pm grant $cfg["PKG"] $p | Out-Null } }
@@ -284,6 +302,10 @@ if ($Apps) {
 if ($Status) {
   Wait-Device
   Step "Current state"
+  $pc = "$(A shell settings get global policy_control)".Trim()
+  $dm = "$(A shell settings get secure ui_night_mode)".Trim()
+  Write-Host "  status bar:  $(if ($pc -like '*immersive*') {'hidden (immersive)'} else {'stock'})"
+  Write-Host "  dark mode:   $(if ($dm -eq '2') {'on'} else {'off'})"
   Write-Host "  screensaver: $("$(A shell settings get secure screensaver_components)".Trim())"
   $disabled = "$(A shell pm list packages -d $cfg["VERIFIER_PKG"])".Trim()
   Write-Host "  verifier:    $(if ($disabled) {'disabled'} else {'enabled'})"
@@ -298,6 +320,14 @@ if ($Restore) {
   Write-Host "Portal Restore`n"
   Wait-Device
   Load-State
+  Step "Restoring system display settings"
+  A shell settings delete global policy_control | Out-Null
+  A shell settings delete secure ui_night_mode | Out-Null
+  A shell settings delete global hidden_api_policy_pre_p_apps | Out-Null
+  A shell settings delete global hidden_api_policy_p_apps | Out-Null
+  A shell settings delete global hidden_api_policy | Out-Null
+  A shell settings put global development_settings_enabled 0 | Out-Null
+  Ok "System settings restored"
   Step "Re-enabling Meta's install verifier"
   A shell pm enable $cfg["VERIFIER_PKG"] | Out-Null
   A shell settings put global package_verifier_enable 1 | Out-Null; Ok "Verifier restored"
@@ -328,6 +358,7 @@ Start-Shizuku
 Install-Apps
 Push-Assets
 Grant-Perms
+Apply-SystemTweaks
 Disable-Verifier
 Disable-Ota
 Disable-Presence

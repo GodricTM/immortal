@@ -226,6 +226,27 @@ push_assets() {
   [ "$n" -gt 0 ] && ok "Pushed $n image(s) to the photo frame" || warn "No images in assets/"
 }
 
+apply_system_tweaks() {
+  step "Applying system display tweaks"
+  # Hide the status bar across all apps by default. Swipe from the top still
+  # reveals it transiently. Eliminates the white-on-white problem on
+  # light-background apps (Aurora, Android Settings, etc.). Android 5.0+.
+  a shell settings put global policy_control "immersive.status=*" >/dev/null 2>&1
+  # Force system-wide dark mode. On Android 9 (Portal+) some apps respond; on
+  # Android 10 (Portal Go) it's a first-class feature — far more apps follow it,
+  # meaning the status bar (when transiently visible) will be dark-styled.
+  a shell settings put secure ui_night_mode 2 >/dev/null 2>&1
+  # Allow apps (including Immortal) to call internal Android APIs that would
+  # otherwise be blocked by the hidden-API blacklist. 1 = warn-only (calls
+  # succeed; logcat warning only). Covers both pre-P and P+ app targets.
+  a shell settings put global hidden_api_policy_pre_p_apps 1 >/dev/null 2>&1
+  a shell settings put global hidden_api_policy_p_apps 1 >/dev/null 2>&1
+  a shell settings put global hidden_api_policy 1 >/dev/null 2>&1
+  # Unlock developer options (needed for ADB tooling and the debug menu).
+  a shell settings put global development_settings_enabled 1 >/dev/null 2>&1
+  ok "System tweaks applied"
+}
+
 grant_perms() {
   step "Granting permissions"
   for p in $PERMISSIONS; do a shell pm grant "$PKG" "$p" >/dev/null 2>&1; done
@@ -340,6 +361,7 @@ do_provision() {
   install_apps
   push_assets
   grant_perms
+  apply_system_tweaks
   disable_verifier
   disable_ota
   disable_presence
@@ -356,6 +378,14 @@ do_restore() {
   resolve_adb
   wait_for_device
   load_state # pull this device's real stock components (falls back to config)
+  step "Restoring system display settings"
+  a shell settings delete global policy_control >/dev/null 2>&1
+  a shell settings delete secure ui_night_mode >/dev/null 2>&1
+  a shell settings delete global hidden_api_policy_pre_p_apps >/dev/null 2>&1
+  a shell settings delete global hidden_api_policy_p_apps >/dev/null 2>&1
+  a shell settings delete global hidden_api_policy >/dev/null 2>&1
+  a shell settings put global development_settings_enabled 0 >/dev/null 2>&1
+  ok "System settings restored"
   step "Re-enabling Meta's install verifier"
   a shell pm enable "$VERIFIER_PKG" >/dev/null 2>&1
   a shell settings put global package_verifier_enable 1 >/dev/null 2>&1; ok "Verifier restored"
@@ -377,6 +407,11 @@ do_restore() {
 do_status() {
   resolve_adb; wait_for_device
   step "Current state"
+  local pc dm
+  pc="$(a shell settings get global policy_control 2>/dev/null | tr -d '\r')"
+  dm="$(a shell settings get secure ui_night_mode 2>/dev/null | tr -d '\r')"
+  printf "  status bar: %s\n" "$(printf '%s' "$pc" | grep -q 'immersive' && echo 'hidden (immersive)' || echo 'stock')"
+  printf "  dark mode:  %s\n" "$([ "$dm" = "2" ] && echo 'on' || echo 'off')"
   printf "  home:       %s\n" "$(a shell 'cmd package resolve-activity -a android.intent.action.MAIN -c android.intent.category.HOME' 2>/dev/null | awk -F= '/packageName/{print $2; exit}' | tr -d '\r')"
   printf "  screensaver:%s\n" " $(a shell settings get secure screensaver_components 2>/dev/null | tr -d '\r')"
   printf "  verifier:   %s\n" "$(a shell pm list packages -d "$VERIFIER_PKG" 2>/dev/null | tr -d '\r' | grep -q . && echo disabled || echo enabled)"
