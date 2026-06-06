@@ -34,7 +34,7 @@ Requirements:
 Either way a maintainer reviews it and adds/merges it. We aim to keep turnaround
 short.
 
-### Catalog entry format
+### Catalog entry format (schema v2)
 
 ```jsonc
 {
@@ -43,13 +43,32 @@ short.
   "source": "url",                     // "url" (direct APK) or "fdroid"
   "apkUrl": "https://github.com/you/yourapp/releases/latest/download/yourapp.apk",
   // for F-Droid apps instead: "source": "fdroid", "fdroidId": "com.example.yourapp"
-  "versionCode": 123,                   // optional — pin a specific (e.g. arm64) build
-  "minSdk": 29,
-  "description": "One clear sentence about what it does.",
-  "homepage": "https://github.com/you/yourapp",   // optional, shown as the source
-  "submittedBy": "your-handle"                     // optional, credit
+  "versionCode": 123,                  // optional — pin a specific (e.g. arm64) build
+  "minSdk": 29,                        // drives the store's compatibility badge
+  "description": "One clear sentence (under 120 chars — it gets one line in the list).",
+  "longDescription": "A paragraph for the app's detail page.",   // optional
+  "iconUrl": "https://…/icon.png",     // optional https PNG; F-Droid apps can use
+                                       // https://f-droid.org/repo/<id>/en-US/icon.png.
+                                       // Without one the store shows a monogram tile.
+  "author": "You / Your Project",      // optional, shown under the app name
+  "homepage": "https://github.com/you/yourapp",   // optional, linked on the detail page
+  "submittedBy": "your-handle",        // optional, credited on the detail page
+  "devices": ["tv"]                    // optional — only if restricted to "touch" or "tv"
 }
 ```
+
+Every PR that touches `catalog.json` is validated automatically by CI: schema
+shape, duplicate packages, https URLs, the F-Droid id resolving, and the icon and
+APK URLs actually serving. You can run the same check locally:
+
+```
+python3 scripts/validate_catalog.py --network
+```
+
+Compatibility note: the store shows a "Needs Android X+" badge (and disables
+install) on devices below your `minSdk`. First-gen Portals and the Portal TV are
+API 28; the Go/Mini/gen-2 are API 29 — so apps with `minSdk` 30+ can't run on any
+Portal and won't be listed.
 
 Multi-architecture apps (e.g. ones shipping separate per-CPU APKs) should pin the
 **arm64-v8a** build with `versionCode`, since Portal is arm64.

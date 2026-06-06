@@ -8,7 +8,9 @@
 package com.immortal.launcher
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /** Catalog JSON parsing + APK-URL resolution logic (no device needed). */
@@ -51,6 +53,59 @@ class StoreCatalogTest {
     assertNull(aurora.fdroidId)
     assertNull(aurora.versionCode)
     assertEquals("", aurora.description)
+  }
+
+  private val sampleV2 =
+      """
+      {"schemaVersion":2,"categories":[
+        {"name":"Media","apps":[
+          {"name":"VLC","packageName":"org.videolan.vlc","minSdk":21,
+           "longDescription":"Long text.","iconUrl":"https://x/icon.png",
+           "author":"VideoLAN","homepage":"https://videolan.org",
+           "submittedBy":"someone","devices":["tv"],"description":"Plays media."}
+        ]}
+      ]}
+      """.trimIndent()
+
+  @Test
+  fun parse_readsV2Fields() {
+    val vlc = StoreCatalog.parse(sampleV2).single()
+    assertEquals(21, vlc.minSdk)
+    assertEquals("Long text.", vlc.longDescription)
+    assertEquals("https://x/icon.png", vlc.iconUrl)
+    assertEquals("VideoLAN", vlc.author)
+    assertEquals("https://videolan.org", vlc.homepage)
+    assertEquals("someone", vlc.submittedBy)
+    assertEquals(listOf("tv"), vlc.devices)
+  }
+
+  @Test
+  fun parse_v2FieldsDefaultSafelyOnV1Entries() {
+    // A v1 catalog (no v2 fields) must keep parsing — the remote file may lag the app.
+    val aurora = StoreCatalog.parse(sample).first { it.packageName == "com.aurora.store" }
+    assertNull(aurora.minSdk)
+    assertNull(aurora.longDescription)
+    assertNull(aurora.iconUrl)
+    assertNull(aurora.author)
+    assertNull(aurora.homepage)
+    assertNull(aurora.submittedBy)
+    assertTrue(aurora.devices.isEmpty())
+  }
+
+  @Test
+  fun isCompatible_comparesMinSdkAgainstDevice() {
+    assertTrue(StoreCatalog.isCompatible(minSdk = null, deviceSdk = 28)) // unknown = allowed
+    assertTrue(StoreCatalog.isCompatible(minSdk = 28, deviceSdk = 28)) // exact
+    assertTrue(StoreCatalog.isCompatible(minSdk = 21, deviceSdk = 29)) // older app
+    assertFalse(StoreCatalog.isCompatible(minSdk = 30, deviceSdk = 29)) // needs Android 11
+    assertFalse(StoreCatalog.isCompatible(minSdk = 29, deviceSdk = 28)) // Gen-1 vs A10 app
+  }
+
+  @Test
+  fun incompatibleLabel_mapsApiToAndroidVersion() {
+    assertEquals("Needs Android 10+", StoreCatalog.incompatibleLabel(29))
+    assertEquals("Needs Android 11+", StoreCatalog.incompatibleLabel(30))
+    assertEquals("Needs Android API 99+", StoreCatalog.incompatibleLabel(99)) // fallback
   }
 
   @Test

@@ -1,0 +1,88 @@
+name: App submission
+description: Submit an app for the Immortal App Store catalog
+title: "[App] "
+labels: ["app-submission"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for adding to the Portal app catalog! Fill this in and a maintainer
+        will review and add the entry — or open a PR against `catalog.json`
+        yourself (CI validates it automatically). See SUBMISSIONS.md for details.
+  - type: input
+    id: name
+    attributes:
+      label: App name
+      placeholder: "My Portal App"
+    validations:
+      required: true
+  - type: input
+    id: package
+    attributes:
+      label: Package name
+      placeholder: "com.example.myapp"
+    validations:
+      required: true
+  - type: dropdown
+    id: source
+    attributes:
+      label: Source
+      options:
+        - "F-Droid (give the fdroidId below)"
+        - "Direct APK URL (give the apkUrl below)"
+    validations:
+      required: true
+  - type: input
+    id: download
+    attributes:
+      label: fdroidId or apkUrl
+      description: F-Droid package id, or a stable https APK URL (e.g. a GitHub Release).
+      placeholder: "com.example.myapp  —or—  https://github.com/you/app/releases/latest/download/app.apk"
+    validations:
+      required: true
+  - type: input
+    id: minsdk
+    attributes:
+      label: Minimum Android version (minSdk)
+      description: "Portals are API 28 (first-gen, TV) and API 29 (Go/Mini/gen-2). Apps needing API 30+ can't run on any Portal."
+      placeholder: "21"
+    validations:
+      required: true
+  - type: input
+    id: description
+    attributes:
+      label: One-line description
+      description: Shown in the store list (keep it under 120 characters).
+    validations:
+      required: true
+  - type: textarea
+    id: longdescription
+    attributes:
+      label: Longer description (optional)
+      description: Shown on the app's detail page.
+  - type: input
+    id: icon
+    attributes:
+      label: Icon URL (optional)
+      description: "https PNG. F-Droid apps can use: https://f-droid.org/repo/<id>/en-US/icon.png. Without one, the store shows a monogram tile."
+  - type: input
+    id: homepage
+    attributes:
+      label: Homepage (optional)
+      placeholder: "https://github.com/you/app"
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checks
+      options:
+        - label: I've run this app on a Portal (or it's a known-good Portal-compatible app) — arm64, landscape, no Google services required.
+          required: true
+        - label: The download URL is stable (not a temporary link).
+          required: true
+        - label: This isn't malware and doesn't do anything deceptive.
+          required: true
+  - type: input
+    id: tested
+    attributes:
+      label: Which Portal model(s) did you test on?
+      placeholder: "Portal Go (Android 10), Portal TV (Android 9)"

@@ -21,7 +21,7 @@ import java.net.URL
 import java.util.concurrent.Executors
 import org.json.JSONObject
 
-/** One installable catalog entry. */
+/** One installable catalog entry (schema v2 — all v2 fields optional/additive). */
 data class CatalogApp(
     val name: String,
     val packageName: String,
@@ -31,6 +31,13 @@ data class CatalogApp(
     val versionCode: Long?, // optional pin (e.g. the arm64 build of a multi-ABI app)
     val description: String,
     val category: String,
+    val minSdk: Int? = null,
+    val longDescription: String? = null,
+    val iconUrl: String? = null,
+    val author: String? = null,
+    val homepage: String? = null,
+    val submittedBy: String? = null,
+    val devices: List<String> = emptyList(), // empty = every Portal
 )
 
 /** Broadcast action the PackageInstaller session reports status to. */
@@ -93,6 +100,7 @@ object StoreCatalog {
       val apps = cat.getJSONArray("apps")
       for (j in 0 until apps.length()) {
         val a = apps.getJSONObject(j)
+        val devicesArr = a.optJSONArray("devices")
         out +=
             CatalogApp(
                 name = a.getString("name"),
@@ -103,6 +111,16 @@ object StoreCatalog {
                 versionCode = if (a.has("versionCode")) a.getLong("versionCode") else null,
                 description = a.optString("description", ""),
                 category = catName,
+                minSdk = if (a.has("minSdk")) a.getInt("minSdk") else null,
+                longDescription = a.optString("longDescription").ifBlank { null },
+                iconUrl = a.optString("iconUrl").ifBlank { null },
+                author = a.optString("author").ifBlank { null },
+                homepage = a.optString("homepage").ifBlank { null },
+                submittedBy = a.optString("submittedBy").ifBlank { null },
+                devices =
+                    (0 until (devicesArr?.length() ?: 0)).mapNotNull {
+                      devicesArr?.optString(it)?.ifBlank { null }
+                    },
             )
       }
     }
@@ -112,6 +130,57 @@ object StoreCatalog {
   fun isInstalled(context: Context, pkg: String): Boolean =
       runCatching { context.packageManager.getPackageInfo(pkg, 0); true }
           .getOrDefault(false)
+
+  /** Whether [app] can run on this device (pure for tests). */
+  internal fun isCompatible(minSdk: Int?, deviceSdk: Int): Boolean =
+      minSdk == null || minSdk <= deviceSdk
+
+  fun isCompatible(app: CatalogApp): Boolean = isCompatible(app.minSdk, Build.VERSION.SDK_INT)
+
+  /** "Needs Android 11 or newer" label for an incompatible app (pure for tests). */
+  internal fun incompatibleLabel(minSdk: Int): String {
+    val release =
+        mapOf(26 to "8", 27 to "8.1", 28 to "9", 29 to "10", 30 to "11", 31 to "12", 32 to "12",
+            33 to "13", 34 to "14", 35 to "15", 36 to "16")
+    return "Needs Android ${release[minSdk] ?: "API $minSdk"}+"
+  }
+
+  fun installedVersionCode(context: Context, pkg: String): Long? =
+      runCatching {
+            val pi = context.packageManager.getPackageInfo(pkg, 0)
+            if (Build.VERSION.SDK_INT >= 28) pi.longVersionCode
+            else @Suppress("DEPRECATION") pi.versionCode.toLong()
+          }
+          .getOrNull()
+
+  /**
+   * Find updates for INSTALLED catalog apps: resolves the latest versionCode (the
+   * catalog pin, or live from the F-Droid API) and compares with what's on the
+   * device. Skips our own package — the launcher has its own self-updater.
+   * Calls [onResult] on the main thread with packageName -> latest versionCode.
+   */
+  fun findUpdates(context: Context, apps: List<CatalogApp>, onResult: (Map<String, Long>) -> Unit) {
+    io.execute {
+      val updates = mutableMapOf<String, Long>()
+      for (app in apps) {
+        if (app.packageName == context.packageName) continue
+        val installed = installedVersionCode(context, app.packageName) ?: continue
+        val latest =
+            app.versionCode
+                ?: if (app.source == "fdroid")
+                    runCatching {
+                          JSONObject(
+                                  httpGet(
+                                      "https://f-droid.org/api/v1/packages/${app.fdroidId ?: app.packageName}"))
+                              .getLong("suggestedVersionCode")
+                        }
+                        .getOrNull() ?: continue
+                else continue
+        if (latest > installed) updates[app.packageName] = latest
+      }
+      main.post { onResult(updates) }
+    }
+  }
 
   /**
    * Resolve -> download -> commit. [status] is called on the main thread with

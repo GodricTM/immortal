@@ -1,6 +1,6 @@
 {
-  "versionCode": 18,
-  "versionName": "1.17",
+  "versionCode": 19,
+  "versionName": "1.18",
   "apkUrl": "https://github.com/starbrightlab/immortal/releases/latest/download/immortal.apk",
-  "notes": "Immortal 1.17 — clearer install behaviour on Android 10 (Go/Mini/gen-2). The silent install helper stops after a reboot; when it's down, the store and APK browser now explain that installs have dropped to the system dialog (which can show ‘problem parsing the package’ on some apps) and how to restore silent one-tap installs, instead of failing silently."
+  "notes": "Immortal 1.18 — the App Store, redesigned: app icons, search, per-app detail pages (author, source, website, community credit), an Updates section for installed apps, Open buttons, and device-compatibility badges. Catalog schema v2 powers it, with CI-validated community submissions."
 }
