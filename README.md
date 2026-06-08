@@ -130,18 +130,20 @@ own helper, doesn't survive a reboot; the kit restarts it on its next run, or ru
 #### Simpler alternative: skip Shizuku
 
 Shizuku's server can fail to stay up on some Gen-1 firmware (Android 9 may kill it right after
-launch — the kit now detects this and tells you instead of falsely reporting success). If you'd
-rather not deal with Shizuku, there's a simpler path that a community tester confirmed works on a
-Gen-1 Portal+ (including split APKs): grant Aurora the install permission once over ADB, then use
-Aurora's **Session** installer.
+launch — the kit now detects this and tells you instead of falsely reporting success). You can skip
+Shizuku entirely: Aurora's **Session** installer hands its APKs to Immortal's own silent-install
+daemon, which just needs Aurora to hold `REQUEST_INSTALL_PACKAGES`.
+
+**When you install Aurora from the Immortal App Store, the daemon grants this for you automatically**
+(it runs as the shell user, so it can set the app-op). After that, set **Aurora → Settings →
+Installation → Installation method → Session** and installs work — no Shizuku, no broken dialog
+(community-verified on a Gen-1 Portal+, including split APKs).
+
+If you installed Aurora some other way (so the daemon never saw it), grant it once manually:
 
 ```bash
 adb shell appops set com.aurora.store REQUEST_INSTALL_PACKAGES allow
 ```
-
-Then in **Aurora → Settings → Installation → Installation method**, choose **Session**. Aurora's
-install then routes through Immortal's own silent-install daemon — no Shizuku, no broken dialog.
-(Like every non-root helper, the daemon is restarted by the kit after a reboot.)
 
 ## Releasing
 

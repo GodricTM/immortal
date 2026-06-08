@@ -11,6 +11,18 @@ Q="$1"
 [ -n "$Q" ] || Q=/sdcard/Android/data/com.immortal.launcher/files/installq
 mkdir -p "$Q" 2>/dev/null
 
+# Per-app post-install grants. We run as the shell user (uid 2000), so we can set
+# app-ops an ordinary app can't grant itself. Idempotent — safe to re-run.
+post_install_hooks() {
+  # Aurora Store installs Play-Store apps via its "Session" installer, which needs
+  # REQUEST_INSTALL_PACKAGES to hand the APK off (it then routes through this
+  # daemon). Grant it once Aurora is present so installs work without Shizuku.
+  # No-op if Aurora isn't installed.
+  if pm list packages com.aurora.store 2>/dev/null | grep -q "package:com.aurora.store"; then
+    appops set com.aurora.store REQUEST_INSTALL_PACKAGES allow 2>/dev/null
+  fi
+}
+
 while true; do
   for f in "$Q"/*.apk; do
     [ -e "$f" ] || continue
@@ -25,7 +37,7 @@ while true; do
     rm -f "$t" 2>/dev/null
     echo "$out" > "$f.log" 2>/dev/null
     case "$out" in
-      *Success*) mv "$f" "$f.done" 2>/dev/null ;;
+      *Success*) mv "$f" "$f.done" 2>/dev/null; post_install_hooks ;;
       *)         mv "$f" "$f.failed" 2>/dev/null ;;
     esac
   done
