@@ -501,7 +501,7 @@ private fun AppDetailScreen(
             modifier = Modifier.padding(top = 8.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-          Chip(if (app.source == "fdroid") "F-Droid" else "Direct download", Color(0xFF2E6BE6))
+          Chip(if (app.source == "fdroid") "F-Droid" else "Direct download", MaterialTheme.colorScheme.primary)
           if (!compatible) Chip(StoreCatalog.incompatibleLabel(app.minSdk ?: 0), Color(0xFFB9552E))
           if (app.devices.size == 1)
               Chip(

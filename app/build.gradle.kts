@@ -56,8 +56,6 @@ android {
       if (keystorePropsFile.exists()) signingConfig = signingConfigs.getByName("release")
     }
     debug {
-      // Lets a debug build install alongside a provisioned release for testing.
-      applicationIdSuffix = ".debug"
     }
   }
   compileOptions {
@@ -74,9 +72,14 @@ dependencies {
   implementation(libs.androidx.compose.ui)
   implementation(libs.androidx.compose.ui.graphics)
   implementation(libs.androidx.compose.ui.tooling.preview)
+  implementation(libs.androidx.compose.ui.android)
   implementation(libs.androidx.core.ktx)
   implementation(libs.androidx.lifecycle.runtime.ktx)
   debugImplementation(libs.androidx.compose.ui.tooling)
+
+  // Piper TTS - Sherpa-ONNX AAR (local) + Commons Compress for tar.bz2 extraction
+  implementation(fileTree(mapOf("dir" to "libs", "include" to listOf("*.aar"))))
+  implementation(libs.commons.compress)
 
   // Unit tests (pure JVM — no device/emulator). org.json provides a real
   // implementation so JSON-parsing logic can be tested off-device (the android.jar

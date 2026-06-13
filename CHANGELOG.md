@@ -15,12 +15,46 @@ A push-to-talk voice button in the header, and a tidier top bar.
 - **Clock moved to the top-left corner**, with the screensaver and "hey" buttons grouped to its right — cleaner now that there's more than one button up there.
 - **Provisioning kit:** Shizuku is now installed + started on **every** Portal (not just the Gen-1), as a generally useful privileged broker. New **opt-in "Restore Amazon Alexa"** step revives the original on-device Alexa client (`./provision.sh --alexa`, or answer the prompt during setup).
 
+## Unreleased
+
+Work in progress for the next contribution/revision. These changes are local and not yet part of a tagged release.
+
+- **Welcome-back overlay:** when the Portal's presence sensor wakes the screensaver, a brief (3 s) overlay fades in over the photo frame showing a time-of-day greeting ("Good morning / afternoon / evening"), the current time, and the date. Tapping dismisses it early. Shown on every presence-triggered start (`PhotoDreamService` and `DreamPolicy` relaunch); skipped for the manual preview. Togglable via `ScreensaverConfig.welcomeEnabled` (persisted in `immortal_screensaver` prefs, key `welcome_enabled`; on by default).
+- **OFL font compliance:** replaced the four personal-use-only TTF fonts bundled in `assets/fonts/` with redistribution-safe OFL-1.1 alternatives — DSEG7Classic-Regular (`digital_7.ttf`), DSEG14Classic-Regular (`segment_led.ttf`), Orbitron Regular (`technology.ttf`), Orbitron Bold (`technology_bold.ttf`). Added `assets/fonts/OFL.txt` with credits and licence text. Filenames are unchanged so `DigitalClockView.kt` needed no edits. The build is now clean for open-source redistribution.
+- **Digital clock screensaver:** added a second Dream service for a configurable digital/analog clock, with a full-screen preview, a Clock settings tile, optional local font support, color/font/size/layout/background/glow/style controls, optional seconds/date, and screensaver activation controls.
+- **Sleep timer:** added a dedicated Sleep tile and settings page with a live countdown, start/stop controls, pause-audio option, close-app option, and a sleep flow that disables Immortal's screensaver before locking the screen.
+- **System-wide back shortcut:** added an Immortal accessibility BACK service plus an optional right-edge overlay swipe. The current revision also fixes the back-action recursion so the accessibility service now calls Android's real `GLOBAL_ACTION_BACK`.
+- **Launcher dashboard:** added optional Calendar agenda and system stats widgets, custom accent colors, custom image/blur backgrounds, an explicit new-folder button, persisted empty folders, a bottom-right folder back button, and a Portal-home shortcut tile.
+- **Settings polish:** expanded Immortal settings for weather, calendar, stats, clock format, accent color, background, and screensaver activation; removed Contacts from the curated Settings folder; moved sleep controls out of Screensaver settings into their own page.
+- **Build/runtime plumbing:** added calendar, overlay, foreground-service, and accessibility metadata needed by the new widgets and back gesture; added `ui-android` Compose dependency for the current UI work.
+
+## 1.34 (2026-06-09)
+
+Calls bridge fix, a real screensaver off-switch, and practical screen-off controls.
+
+- **Calls bridge:** routes through the stock launcher's `portal://launcher/home` deep link where available and suppresses Immortal's aggressive photo-frame relaunch during the handoff, fixing the issue where opening Calls could immediately kick the user back into Immortal.
+- **Screensaver off-switch:** the photo-frame master toggle now sticks. When disabled, Immortal stops forcing its screensaver back on, so the Portal can sleep normally or the user can use another setup.
+- **Idle screen-off:** added an optional timer that turns the screen off after the screensaver has been running for a chosen period with no interaction.
+- **Overnight sleep:** added an optional daily sleep window so the screen stays off between configured times.
+- **Provisioning:** activates Immortal's force-lock device admin during setup and removes it during restore. This is used only for the new screen-off features.
+- **Release:** bumped the app to `versionCode` 35 / `versionName` 1.34 and pointed the OTA manifest at the new build.
+
 ## 1.30 (2026-06-08)
 
 A 24-hour clock option — by community request.
 
 - New **Clock ▸ Time format** control in Settings folder → Immortal: **Auto** (follows the Portal's system 24-hour setting), **12h**, or **24h**. Auto by default, so existing setups are unchanged.
 - The choice applies everywhere the time is shown: the home-screen header clock, the screensaver/photo-frame clock, and the hourly forecast labels (e.g. `13` instead of `1 PM`). The launcher and screensaver re-read the setting on resume, so it takes effect as soon as you go back home.
+
+## 1.29 (2026-06-08)
+
+Optional home-screen weather forecast widget.
+
+- New **Home-screen forecast** control in Settings folder -> Immortal -> Weather: Off, Hourly, or 7-day. Off by default.
+- The launcher can render a full-width forecast below the app grid, with swipeable hourly and 7-day pages.
+- Forecast data comes from one keyless Open-Meteo request and respects the user's Fahrenheit/Celsius setting.
+- Failure handling is quiet: the widget retries when unavailable and keeps the last good forecast rather than blanking on a failed refresh.
+- Added focused tests around forecast URL construction, parsing, time cutoff behavior, and edge cases.
 
 ## 1.28 (2026-06-07)
 

@@ -35,6 +35,11 @@ class PhotoFramePreviewActivity : ComponentActivity() {
   private lateinit var frame: PhotoFrameController
   private var powerReceiver: BroadcastReceiver? = null
 
+  companion object {
+    /** Pass true when starting this activity from [DreamPolicy] (presence-triggered relaunch). */
+    const val EXTRA_SHOW_WELCOME = "show_welcome"
+  }
+
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
     // Immersive fullscreen.
@@ -50,7 +55,8 @@ class PhotoFramePreviewActivity : ComponentActivity() {
       return
     }
     applyKeepScreenOn()
-    frame = PhotoFrameController(this)
+    val showWelcome = intent.getBooleanExtra(EXTRA_SHOW_WELCOME, false)
+    frame = PhotoFrameController(this, showWelcome = showWelcome)
     frame.onExit = { finish() }
     setContentView(frame.view)
     frame.start()

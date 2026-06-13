@@ -4,4 +4,6 @@
      LICENSE file in the root directory of this source tree. -->
 <resources>
     <string name="app_name">Immortal</string>
+    <string name="back_gesture_service_description">Swipe from the right edge of the screen to go back in any app. Immortal must be enabled in Accessibility settings for this to work.</string>
+    <string name="back_gesture_service_label">Immortal Back</string>
 </resources>

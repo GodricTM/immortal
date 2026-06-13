@@ -14,6 +14,8 @@ import android.graphics.Bitmap
 import android.net.Uri
 import android.os.BatteryManager
 import android.os.Bundle
+import android.os.StatFs
+import android.view.View
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -31,6 +33,8 @@ import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -41,6 +45,8 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -77,10 +83,14 @@ import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.scale
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.vector.PathParser
@@ -113,6 +123,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
+import android.app.ActivityManager
 
 private data class AppEntry(
     val label: String,
@@ -132,6 +143,7 @@ class HomeActivity : ComponentActivity() {
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
     enterImmersive()
+    if (intent?.action == "com.immortal.launcher.CLOSE_CURRENT_APP") moveTaskToBack(true)
     // First launch: show the friendly tour once so new users aren't dropped in cold.
     if (!HelpActivity.hasSeen(this)) {
       window.decorView.post {
@@ -161,6 +173,9 @@ class HomeActivity : ComponentActivity() {
                 startActivity(Intent(this, PhotoFramePreviewActivity::class.java))
               }
             },
+            onOpenCamera = {
+              runCatching { startActivity(Intent(this, CameraPreviewActivity::class.java)) }
+            },
             onExitHome = { launchStockHome() },
             onUninstall = { pkg ->
               // System uninstall dialog; no special permission needed.
@@ -186,8 +201,14 @@ class HomeActivity : ComponentActivity() {
 
   // Self-heal: if anything (e.g. the stock launcher) reset our screensaver
   // settings, put them back every time Immortal comes to the foreground.
+  override fun onNewIntent(intent: Intent) {
+    super.onNewIntent(intent)
+    if (intent.action == "com.immortal.launcher.CLOSE_CURRENT_APP") moveTaskToBack(true)
+  }
+
   override fun onResume() {
     super.onResume()
+    if (intent?.action == "com.immortal.launcher.CLOSE_CURRENT_APP") moveTaskToBack(true)
     // The user is back on Immortal, so any stock-launcher call handoff is over:
     // allow the photo frame to resume its normal screensaver behaviour.
     DreamPolicy.inStockHandoff = false
@@ -271,6 +292,7 @@ private fun LauncherScreen(
     onOpenStore: () -> Unit,
     onOpenHelp: () -> Unit,
     onStartScreensaver: () -> Unit,
+    onOpenCamera: () -> Unit,
     onExitHome: () -> Unit,
     onUninstall: (String) -> Unit,
 ) {
@@ -310,6 +332,10 @@ private fun LauncherScreen(
   var tileSize by remember { mutableStateOf(ImmortalSettings.load(context).tileSize) }
   var weatherWidget by remember { mutableStateOf(ImmortalSettings.load(context).weatherWidget) }
   var weatherFahrenheit by remember { mutableStateOf(ImmortalSettings.useFahrenheit(context)) }
+  var backgroundType by remember { mutableStateOf(ImmortalSettings.load(context).backgroundType) }
+  var backgroundImagePath by remember { mutableStateOf(ImmortalSettings.load(context).backgroundImagePath) }
+  var calendarWidget by remember { mutableStateOf(ImmortalSettings.load(context).calendarWidget) }
+  var statsMode by remember { mutableStateOf(ImmortalSettings.load(context).statsMode) }
   val lifecycleOwner = LocalLifecycleOwner.current
   DisposableEffect(lifecycleOwner) {
     val obs = LifecycleEventObserver { _, e ->
@@ -318,6 +344,10 @@ private fun LauncherScreen(
         tileSize = s.tileSize
         weatherWidget = s.weatherWidget
         weatherFahrenheit = ImmortalSettings.useFahrenheit(context)
+        backgroundType = s.backgroundType
+        backgroundImagePath = s.backgroundImagePath
+        calendarWidget = s.calendarWidget
+        statsMode = s.statsMode
       }
     }
     lifecycleOwner.lifecycle.addObserver(obs)
@@ -333,7 +363,11 @@ private fun LauncherScreen(
   // string is an explicit "ungrouped" override (used when dragging out of a
   // folder), so it beats a curated default too.
   val assignments = remember { mutableStateMapOf<String, String>() }
-  LaunchedEffect(Unit) { assignments.putAll(UserLayout.load(context)) }
+  val emptyFolders = remember { mutableStateOf<Set<String>>(emptySet()) }
+  LaunchedEffect(Unit) {
+    assignments.putAll(UserLayout.load(context))
+    emptyFolders.value = UserLayout.loadEmptyFolders(context)
+  }
   val appsEff =
       remember(apps, assignments.toMap()) {
         apps.map { a ->
@@ -343,7 +377,9 @@ private fun LauncherScreen(
         }
       }
   val ungrouped = remember(appsEff) { appsEff.filter { it.folder == null } }
-  val folderNames = remember(appsEff) { appsEff.mapNotNull { it.folder }.distinct().sorted() }
+  val folderNames = remember(appsEff, emptyFolders.value) {
+    (appsEff.mapNotNull { it.folder } + emptyFolders.value).distinct().sorted()
+  }
 
   // --- drag-and-drop folder management (Manage mode) --------------------------
   val tileBounds = remember { mutableStateMapOf<String, Rect>() }
@@ -354,6 +390,8 @@ private fun LauncherScreen(
   var pendingPair by remember { mutableStateOf<Pair<String, String>?>(null) }
   // Folder currently being renamed.
   var renaming by remember { mutableStateOf<String?>(null) }
+  // Creating a new empty folder
+  var creatingFolder by remember { mutableStateOf(false) }
 
   fun persist() = UserLayout.save(context, assignments.toMap())
   fun assign(pkg: String, folder: String) {
@@ -366,6 +404,19 @@ private fun LauncherScreen(
     assignments[b] = n
     persist()
     openFolder = n
+  }
+  fun createEmptyFolder(name: String) {
+    val n = name.trim().ifEmpty { "Folder" }
+    val existing = folderNames.toSet()
+    var finalName = n
+    var counter = 1
+    while (existing.contains(finalName)) {
+      finalName = "$n $counter"
+      counter++
+    }
+    UserLayout.saveEmptyFolder(context, finalName)
+    emptyFolders.value = emptyFolders.value + finalName
+    openFolder = finalName
   }
   fun renameFolder(old: String, raw: String) {
     val new = raw.trim()
@@ -441,7 +492,44 @@ private fun LauncherScreen(
   }
 
   CompositionLocalProvider(LocalTileDp provides tileDpFor(tileSize)) {
-  Box(modifier = Modifier.fillMaxSize().background(Color(0xFF1A1A1A))) {
+  Box(modifier = Modifier.fillMaxSize()) {
+      // Background image layer
+      if (backgroundType != ImmortalSettings.BG_DARK && backgroundImagePath != null) {
+          BackgroundImage(
+              uriString = backgroundImagePath!!,
+              blur = backgroundType == ImmortalSettings.BG_BLUR,
+          )
+      } else {
+          Box(modifier = Modifier.fillMaxSize().background(Color(0xFF1A1A1A)))
+      }
+      Box(modifier = Modifier.fillMaxSize()
+      .pointerInput(Unit) {
+          // Right-edge back gesture: swipe from the last 64dp of the screen
+          // leftward to go back (close any open folder/overlay).
+          val edgeWidth = 64.dp.toPx()
+          var startX = 0f
+          var startY = 0f
+          awaitEachGesture {
+            val down = awaitFirstDown()
+            if (down.position.x > size.width - edgeWidth) {
+              startX = down.position.x
+              startY = down.position.y
+              var event: androidx.compose.ui.input.pointer.PointerEvent
+              do {
+                event = awaitPointerEvent()
+                if (event.changes.all { !it.pressed }) {
+                  val dx = event.changes.first().position.x - startX
+                  val dy = kotlin.math.abs(event.changes.first().position.y - startY)
+                  if (dx < -120f && dy < 80f && openFolder != null) {
+                    openFolder = null
+                  }
+                  break
+                }
+              } while (event.changes.any { it.pressed })
+            }
+          }
+      }
+  ) {
     Column(
         modifier =
             Modifier.fillMaxHeight()
@@ -459,7 +547,19 @@ private fun LauncherScreen(
                 // so header action buttons stay tappable.
                 .padding(start = 32.dp, end = 32.dp, top = 40.dp, bottom = 24.dp)
     ) {
-      HeaderBar(onScreensaver = onStartScreensaver)
+      HeaderBar(
+          onScreensaver = onStartScreensaver,
+          onClock = {
+            // Enable digital clock and reassert screensaver settings
+            DigitalClockConfig.setEnabled(context, true)
+            SettingsGuard.reaffirmScreensaver(context)
+            // Open the full-screen preview so the user can see the clock
+            // immediately; the system Dream will use this clock on the next idle.
+            val previewIntent = Intent(context, DigitalClockPreviewActivity::class.java)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            runCatching { context.startActivity(previewIntent) }
+          },
+      )
       Spacer(Modifier.size(20.dp))
       Box(
           modifier =
@@ -509,6 +609,8 @@ private fun LauncherScreen(
           // Special + folder tiles persist in Manage mode (non-uninstallable);
           // only regular apps get a delete badge and become draggable.
           item { PortalHomeTile(onExitHome) }
+          item { PortalHomeShortcutTile(onExitHome) }
+          item { CameraTile(onOpenCamera) }
           item { StoreTile(onOpenStore) }
           items(folderNames, key = { it }) { name ->
             FolderTile(
@@ -559,6 +661,15 @@ private fun LauncherScreen(
         Spacer(Modifier.size(16.dp))
         WeatherWidget(mode = weatherWidget, fahrenheit = weatherFahrenheit)
       }
+      // Optional calendar agenda widget, below the weather widget. Off by default.
+      if (calendarWidget == ImmortalSettings.CALENDAR_ON) {
+        Spacer(Modifier.size(16.dp))
+        CalendarWidget()
+      }
+      if (statsMode == ImmortalSettings.STATS_ON) {
+        Spacer(Modifier.size(16.dp))
+        SystemStatsWidget()
+      }
     }
 
     // Floating ghost of the app being dragged.
@@ -589,6 +700,13 @@ private fun LauncherScreen(
         onClick = { editMode = !editMode },
     )
 
+    if (editMode) {
+      NewFolderButton(
+          modifier = Modifier.align(Alignment.BottomEnd).padding(end = 112.dp, bottom = 32.dp),
+          onClick = { creatingFolder = true },
+      )
+    }
+
     openFolder?.let { name ->
       val folderApps = appsEff.filter { it.folder == name }
       if (folderApps.isEmpty()) {
@@ -614,11 +732,32 @@ private fun LauncherScreen(
                                 Intent(context, ImmortalSettingsActivity::class.java))
                           }
                         },
+                        FolderExtra("Clock", ICON_TIME) {
+                          openFolder = null
+                          runCatching {
+                            context.startActivity(
+                                Intent(context, ClockSettingsActivity::class.java))
+                          }
+                        },
                         FolderExtra("Screensaver", ICON_IMAGE) {
                           openFolder = null
                           runCatching {
                             context.startActivity(
                                 Intent(context, ScreensaverSettingsActivity::class.java))
+                          }
+                        },
+                        FolderExtra("Welcome", ICON_WAVING_HAND) {
+                          openFolder = null
+                          runCatching {
+                            context.startActivity(
+                                Intent(context, WelcomeSettingsActivity::class.java))
+                          }
+                        },
+                        FolderExtra("Sleep", ICON_TIME) {
+                          openFolder = null
+                          runCatching {
+                            context.startActivity(
+                                Intent(context, SleepSettingsActivity::class.java))
                           }
                         },
                         FolderExtra("Help", ICON_HELP) {
@@ -628,6 +767,13 @@ private fun LauncherScreen(
                 else emptyList(),
         )
       }
+    }
+
+    // Back button: shown when the Settings folder is open (and any other
+    // folder). Lets the user close the folder without using the system
+    // back button or tapping outside.
+    if (openFolder != null) {
+      FolderBackButton(onClick = { openFolder = null })
     }
 
     // Name a new folder (created by dropping one app on another).
@@ -657,7 +803,22 @@ private fun LauncherScreen(
           onCancel = { renaming = null },
       )
     }
+
+    // Create a new empty folder (from the + button in Manage mode).
+    if (creatingFolder) {
+      NameOverlay(
+          title = "New folder",
+          initial = UserLayout.nextFolderName(folderNames.toSet()),
+          confirmLabel = "Create",
+          onConfirm = {
+            createEmptyFolder(it)
+            creatingFolder = false
+          },
+          onCancel = { creatingFolder = false },
+      )
+    }
   }
+  } // outer background Box
   } // CompositionLocalProvider(LocalTileDp)
 }
 
@@ -687,7 +848,7 @@ private fun gridColumnsFor(size: String): Int =
     }
 
 @Composable
-private fun HeaderBar(onScreensaver: () -> Unit) {
+private fun HeaderBar(onScreensaver: () -> Unit, onClock: () -> Unit) {
   var now by remember { mutableStateOf(Date()) }
   androidx.compose.runtime.LaunchedEffect(Unit) {
     while (true) {
@@ -778,6 +939,17 @@ private fun HeaderBar(onScreensaver: () -> Unit) {
       ) {
         Box(contentAlignment = Alignment.Center) { MicGlyph() }
       }
+    }
+    Spacer(Modifier.size(12.dp))
+    Surface(
+        color = Color(0x33FFFFFF),
+        shape = androidx.compose.foundation.shape.CircleShape,
+        modifier =
+            Modifier.size(56.dp).tvFocusable(androidx.compose.foundation.shape.CircleShape) {
+              onClock()
+            },
+    ) {
+      Box(contentAlignment = Alignment.Center) { ClockIcon() }
     }
     Spacer(Modifier.weight(1f))
     Column(horizontalAlignment = Alignment.End) {
@@ -1068,6 +1240,44 @@ private fun StackedPhotoIcon() {
   }
 }
 
+/** Simple white line-art clock icon for the digital clock entry point. */
+@Composable
+private fun ClockIcon() {
+  Canvas(modifier = Modifier.size(30.dp)) {
+    val w = size.minDimension
+    val s = w * 0.075f
+    val stroke =
+        Stroke(
+            width = s,
+            cap = androidx.compose.ui.graphics.StrokeCap.Round,
+            join = androidx.compose.ui.graphics.StrokeJoin.Round,
+        )
+    // Clock face
+    drawCircle(
+        color = Color.White,
+        radius = w * 0.42f,
+        center = Offset(w * 0.5f, w * 0.5f),
+        style = stroke,
+    )
+    // Hour hand (pointing to 12)
+    drawLine(
+        color = Color.White,
+        start = Offset(w * 0.5f, w * 0.5f),
+        end = Offset(w * 0.5f, w * 0.22f),
+        strokeWidth = s,
+        cap = androidx.compose.ui.graphics.StrokeCap.Round,
+    )
+    // Minute hand (pointing to 3)
+    drawLine(
+        color = Color.White,
+        start = Offset(w * 0.5f, w * 0.5f),
+        end = Offset(w * 0.72f, w * 0.5f),
+        strokeWidth = s,
+        cap = androidx.compose.ui.graphics.StrokeCap.Round,
+    )
+  }
+}
+
 /** Bottom-right Manage / Done toggle. */
 @Composable
 private fun EditButton(editMode: Boolean, modifier: Modifier = Modifier, onClick: () -> Unit) {
@@ -1081,6 +1291,146 @@ private fun EditButton(editMode: Boolean, modifier: Modifier = Modifier, onClick
   ) {
     Box(contentAlignment = Alignment.Center) {
       Text(if (editMode) "✓" else "✎", color = Color.White, fontSize = 28.sp)
+    }
+  }
+}
+
+/**
+ * Floating back button shown in the bottom-right corner whenever a folder
+ * or overlay is open in the launcher. Tapping it closes the folder/overlay.
+ * Separate from the settings pages so we can position it over the folder
+ * overlay specifically.
+ */
+@Composable
+fun FolderBackButton(onClick: () -> Unit, modifier: Modifier = Modifier) {
+  val buttonColor = MaterialTheme.colorScheme.primary
+  Box(
+      modifier =
+          modifier
+              .fillMaxSize()
+              .padding(end = 36.dp, bottom = 32.dp)
+              .wrapContentSize(Alignment.BottomEnd),
+  ) {
+    Surface(
+        color = buttonColor,
+        shape = androidx.compose.foundation.shape.CircleShape,
+        onClick = onClick,
+        modifier = Modifier.size(64.dp),
+    ) {
+      Box(contentAlignment = Alignment.Center) {
+        Canvas(modifier = Modifier.size(36.dp)) {
+          val strokeWidth = 4.dp.toPx()
+          val path = Path().apply {
+            moveTo(size.width * 0.72f, size.height * 0.20f)
+            lineTo(size.width * 0.28f, size.height * 0.50f)
+            lineTo(size.width * 0.72f, size.height * 0.80f)
+          }
+          drawPath(
+              path = path,
+              color = Color.Black,
+              style = androidx.compose.ui.graphics.drawscope.Stroke(
+                  width = strokeWidth,
+                  cap = androidx.compose.ui.graphics.StrokeCap.Round,
+                  join = androidx.compose.ui.graphics.StrokeJoin.Round,
+              ),
+          )
+          drawLine(
+              color = Color.Black,
+              start = Offset(size.width * 0.68f, size.height * 0.50f),
+              end = Offset(size.width * 0.28f, size.height * 0.50f),
+              strokeWidth = strokeWidth,
+              cap = androidx.compose.ui.graphics.StrokeCap.Round,
+          )
+        }
+      }
+    }
+  }
+}
+
+private data class SystemStats(
+    val ramUsedMb: Int,
+    val ramTotalMb: Int,
+    val storageUsedGb: Float,
+    val storageTotalGb: Float,
+    val uptimeHours: Float,
+)
+
+@Composable
+private fun SystemStatsWidget() {
+  val context = androidx.compose.ui.platform.LocalContext.current
+  val reading = remember { mutableStateOf(SystemStats(0, 0, 0f, 0f, 0f)) }
+
+  LaunchedEffect(Unit) {
+    while (true) {
+      val am = context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
+      val mem = ActivityManager.MemoryInfo()
+      am.getMemoryInfo(mem)
+      val usedMb = ((mem.totalMem - mem.availMem) / 1_048_576L).toInt()
+      val totalMb = (mem.totalMem / 1_048_576L).toInt()
+      val uptimeHours =
+          runCatching { android.os.SystemClock.elapsedRealtime() / 3_600_000f }.getOrDefault(0f)
+
+      val stat = StatFs(context.filesDir.absolutePath)
+      val totalBytes = stat.totalBytes.toDouble()
+      val freeBytes = stat.availableBytes.toDouble()
+      val totalGb = (totalBytes / 1_073_741_824.0).toFloat()
+      val usedGb = ((totalBytes - freeBytes) / 1_073_741_824.0).toFloat().coerceAtLeast(0f)
+
+      reading.value = SystemStats(usedMb, totalMb, usedGb, totalGb, uptimeHours)
+      delay(10_000)
+    }
+  }
+
+  val r = reading.value
+  Surface(
+      color = MaterialTheme.colorScheme.surface.copy(alpha = 0.86f),
+      shape = RoundedCornerShape(18.dp),
+      modifier = Modifier.fillMaxWidth().padding(horizontal = 18.dp),
+  ) {
+    Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+      val ramPercent =
+          if (r.ramTotalMb > 0) (r.ramUsedMb * 100 / r.ramTotalMb).coerceIn(0, 100) else 0
+      val storagePercent =
+          if (r.storageTotalGb > 0f) (r.storageUsedGb * 100 / r.storageTotalGb).coerceIn(0f, 100f)
+          else 0f
+
+      Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+        Text("System", color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.Bold)
+        Text(
+            String.format("Uptime %.1fh", r.uptimeHours),
+            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.72f),
+        )
+      }
+      Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+        Text("RAM", color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.82f))
+        Text(
+            "${r.ramUsedMb}/${r.ramTotalMb} MB · $ramPercent%",
+            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.82f),
+        )
+      }
+      Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+        Text("Storage", color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.82f))
+        Text(
+            String.format("%.1f/%.1f GB · %.0f%%", r.storageUsedGb, r.storageTotalGb, storagePercent),
+            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.82f),
+        )
+      }
+    }
+  }
+}
+
+@Composable
+private fun NewFolderButton(modifier: Modifier = Modifier, onClick: () -> Unit) {
+  Surface(
+      color = MaterialTheme.colorScheme.primary,
+      shape = androidx.compose.foundation.shape.CircleShape,
+      modifier =
+          modifier.size(60.dp).tvFocusable(androidx.compose.foundation.shape.CircleShape) {
+            onClick()
+          },
+  ) {
+    Box(contentAlignment = Alignment.Center) {
+      Text("+", color = Color.White, fontSize = 32.sp, fontWeight = FontWeight.Bold)
     }
   }
 }
@@ -1181,6 +1531,36 @@ private fun PortalHomeTile(onClick: () -> Unit) {
   )
 }
 
+/**
+ * Dedicated "Portal Home" shortcut. Use this to jump to the stock Portal
+ * launcher when you need features only it provides (Messenger, etc.).
+ * Distinct from the "Calls" tile above so the user can reach the Portal
+ * home without having to go through the calling flow.
+ */
+@Composable
+private fun PortalHomeShortcutTile(onClick: () -> Unit) {
+  BuiltInTile(
+      label = "Portal",
+      background = Color(0xFF1877F2),
+      glyph = ICON_PORTAL,
+      onClick = onClick,
+  )
+}
+
+/**
+ * Camera tile: opens a full-screen camera preview showing the Portal's
+ * front-facing camera feed. Tap anywhere to exit.
+ */
+@Composable
+private fun CameraTile(onClick: () -> Unit) {
+  BuiltInTile(
+      label = "Camera",
+      background = Color(0xFF9C27B0),
+      glyph = ICON_CAMERA,
+      onClick = onClick,
+  )
+}
+
 // Material-style glyph paths (24x24 viewport), rendered crisply as vectors.
 private const val ICON_CALL =
     "M6.62 10.79c1.44 2.83 3.76 5.14 6.59 6.59l2.2-2.2c.27-.27.67-.36 1.02-.24 1.12.37 2.33.57 3.57.57.55 0 1 .45 1 1V20c0 .55-.45 1-1 1-9.39 0-17-7.61-17-17 0-.55.45-1 1-1h3.5c.55 0 1 .45 1 1 0 1.25.2 2.45.57 3.57.11.35.03.74-.25 1.02l-2.2 2.2z"
@@ -1189,10 +1569,23 @@ private const val ICON_REFRESH =
     "M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"
 private const val ICON_IMAGE =
     "M21 19V5c0-1.1-.9-2-2-2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2zM8.5 13.5l2.5 3.01L14.5 12l4.5 6H5l3.5-4.5z"
+private const val ICON_CAMERA =
+    "M9 2L7.17 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2h-3.17L15 2H9zm3 15c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5z"
+private const val ICON_WAVING_HAND =
+    "M23 17c0 3.31-2.69 6-6 6v-1.5c2.48 0 4.5-2.02 4.5-4.5H23zM1 7c0-3.31 2.69-6 6-6v1.5C4.52 2.5 2.5 4.52 2.5 7H1zm7.01-1.5L7 7v3.5l1.01 1.5L10 13.5l-1 1.5v3.5l1.01 1.5 7 .01L18 18.5v-3.5l-1-1.5 1.99-1.5L18 10v-3.5l-1.01-1.5-7-.01zM13 7h2.5l1.5 1.5-1.5 1.5H13V7z"
 private const val ICON_HELP =
     "M11 18h2v-2h-2v2zm1-16C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm0-14c-2.21 0-4 1.79-4 4h2c0-1.1.9-2 2-2s2 .9 2 2c0 2-3 1.75-3 5h2c0-2.25 3-2.5 3-5 0-2.21-1.79-4-4-4z"
+// Contact / address-book icon for the Contacts tile in Settings.
+private const val ICON_CONTACT =
+    "M20 0H4v2h16V0zM4 24h16v-2H4v2zM20 4H4c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm-8 2.5c1.93 0 3.5 1.57 3.5 3.5s-1.57 3.5-3.5 3.5-3.5-1.57-3.5-3.5 1.57-3.5 3.5-3.5zM18 18H6v-1c0-2 4-3.1 6-3.1s6 1.1 6 3.1v1z"
 private const val ICON_GEAR =
     "M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"
+// Simple clock face: circle with hour and minute hands.
+private const val ICON_TIME =
+    "M11.99 2C6.47 2 2 6.48 2 12s4.47 10 9.99 10C17.52 22 22 17.52 22 12S17.52 2 11.99 2zM12 20c-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8-3.58 8-8 8zm.5-13H11v6l5.25 3.15.75-1.23-4.5-2.67z"
+// Simple home icon for the Portal home shortcut tile.
+private const val ICON_PORTAL =
+    "M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z"
 
 /** A non-app tile injected into a folder (e.g. the Screensaver settings entry). */
 private data class FolderExtra(val label: String, val glyph: String, val onClick: () -> Unit)
@@ -1637,5 +2030,297 @@ private fun loadApps(context: Context): List<AppEntry> {
       // debug/launcher activity that would otherwise show as a duplicate.
       .distinctBy { it.component.packageName }
       .sortedBy { it.label.lowercase(Locale.getDefault()) }
+      .let { discovered ->
+        // Inject Portal built-ins (no LAUNCHER filter, but user-facing).
+        val extras = Curation.portalBuiltins.mapNotNull { (label, component, folder) ->
+          runCatching {
+            pm.getPackageInfo(component.packageName, 0) // throws if not installed
+            val icon = pm.getApplicationIcon(component.packageName).toBitmap(144, 144).asImageBitmap()
+            AppEntry(label = label, component = component, icon = icon, folder = folder)
+          }.getOrNull()
+        }
+        // Skip any that the main scan already found (shouldn't happen, but guard it).
+        val existing = discovered.map { it.component.packageName }.toSet()
+        discovered + extras.filter { it.component.packageName !in existing }
+      }
+}
+
+@Composable
+private fun BackgroundImage(uriString: String, blur: Boolean) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val bitmap by produceState<android.graphics.Bitmap?>(initialValue = null, uriString) {
+        value = withContext(kotlinx.coroutines.Dispatchers.IO) {
+            runCatching {
+                val uri = android.net.Uri.parse(uriString)
+                context.contentResolver.openInputStream(uri)?.use { stream ->
+                    android.graphics.BitmapFactory.decodeStream(stream)
+                }
+            }.getOrNull()
+        }
+    }
+    Box(modifier = Modifier.fillMaxSize().background(Color(0xFF1A1A1A))) {
+        bitmap?.let { bmp ->
+            Image(
+                bitmap = bmp.asImageBitmap(),
+                contentDescription = null,
+                contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                modifier = Modifier.fillMaxSize()
+            )
+            // Dark overlay for readability
+            Box(modifier = Modifier.fillMaxSize().background(Color(0x99000000)))
+        }
+    }
+}
+
+@Composable
+private fun QuickSettingsPanel(onDismiss: () -> Unit) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    var brightness by remember { mutableStateOf(50) }
+    var volume by remember { mutableStateOf(50) }
+    var wifiOn by remember { mutableStateOf(false) }
+    var bluetoothOn by remember { mutableStateOf(false) }
+
+    // Load initial values
+    LaunchedEffect(Unit) {
+        try {
+            val sysBrightness = android.provider.Settings.System.getInt(
+                context.contentResolver, android.provider.Settings.System.SCREEN_BRIGHTNESS)
+            brightness = (sysBrightness * 100 / 255).coerceIn(0, 100)
+        } catch (_: Exception) {}
+        try {
+            val audio = context.getSystemService(android.content.Context.AUDIO_SERVICE) as android.media.AudioManager
+            volume = audio.getStreamVolume(android.media.AudioManager.STREAM_MUSIC) * 100 /
+                    audio.getStreamMaxVolume(android.media.AudioManager.STREAM_MUSIC).coerceAtLeast(1)
+        } catch (_: Exception) {}
+        try {
+            wifiOn = android.net.wifi.WifiManager::class.java.let {
+                val wm = context.applicationContext.getSystemService(it) as android.net.wifi.WifiManager
+                wm.isWifiEnabled
+            }
+        } catch (_: Exception) {}
+        try {
+            bluetoothOn = android.bluetooth.BluetoothAdapter::class.java.let {
+                val adapter = android.bluetooth.BluetoothAdapter.getDefaultAdapter()
+                adapter?.isEnabled == true
+            }
+        } catch (_: Exception) {}
+    }
+
+    fun setBrightness(value: Int) {
+        brightness = value
+        runCatching {
+            android.provider.Settings.System.putInt(
+                context.contentResolver,
+                android.provider.Settings.System.SCREEN_BRIGHTNESS,
+                (value * 255 / 100).coerceIn(0, 255)
+            )
+        }
+    }
+
+    fun setVolume(value: Int) {
+        volume = value
+        runCatching {
+            val audio = context.getSystemService(android.content.Context.AUDIO_SERVICE) as android.media.AudioManager
+            val maxVol = audio.getStreamMaxVolume(android.media.AudioManager.STREAM_MUSIC)
+            audio.setStreamVolume(android.media.AudioManager.STREAM_MUSIC, value * maxVol / 100, 0)
+        }
+    }
+
+    fun toggleWifi() {
+        runCatching {
+            val wm = context.applicationContext.getSystemService(android.content.Context.WIFI_SERVICE) as android.net.wifi.WifiManager
+            wifiOn = !wifiOn
+            wm.isWifiEnabled = wifiOn
+        }
+    }
+
+    fun toggleBluetooth() {
+        runCatching {
+            val adapter = android.bluetooth.BluetoothAdapter.getDefaultAdapter()
+            if (adapter != null) {
+                if (adapter.isEnabled) adapter.disable() else adapter.enable()
+                bluetoothOn = !bluetoothOn
+            }
+        }
+    }
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color(0xCC000000))
+            .clickable(interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }, indication = null) { onDismiss() }
+    ) {
+        Surface(
+            color = Color(0xFF1C1C1E),
+            shape = RoundedCornerShape(bottomStart = 24.dp, bottomEnd = 24.dp),
+            modifier = Modifier.fillMaxWidth().align(Alignment.TopCenter)
+        ) {
+            Column(
+                modifier = Modifier.padding(24.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                Text("Quick settings", color = Color.White, fontSize = 24.sp, fontWeight = FontWeight.SemiBold)
+
+                // Brightness slider
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("☀", color = Color.White, fontSize = 20.sp)
+                    Spacer(Modifier.size(12.dp))
+                    Text("Brightness", color = Color.White, fontSize = 16.sp, modifier = Modifier.weight(1f))
+                    Text("$brightness%", color = Color(0xFF9A9A9A), fontSize = 14.sp)
+                }
+                androidx.compose.material3.Slider(
+                    value = brightness.toFloat(),
+                    onValueChange = { setBrightness(it.toInt()) },
+                    valueRange = 0f..100f,
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                // Volume slider
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("🔊", color = Color.White, fontSize = 20.sp)
+                    Spacer(Modifier.size(12.dp))
+                    Text("Volume", color = Color.White, fontSize = 16.sp, modifier = Modifier.weight(1f))
+                    Text("$volume%", color = Color(0xFF9A9A9A), fontSize = 14.sp)
+                }
+                androidx.compose.material3.Slider(
+                    value = volume.toFloat(),
+                    onValueChange = { setVolume(it.toInt()) },
+                    valueRange = 0f..100f,
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                // WiFi and Bluetooth toggles
+                Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                    QuickToggle(
+                        label = "WiFi",
+                        icon = "📶",
+                        isOn = wifiOn,
+                        onToggle = { toggleWifi() },
+                        modifier = Modifier.weight(1f)
+                    )
+                    QuickToggle(
+                        label = "Bluetooth",
+                        icon = "🔵",
+                        isOn = bluetoothOn,
+                        onToggle = { toggleBluetooth() },
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun QuickToggle(
+    label: String,
+    icon: String,
+    isOn: Boolean,
+    onToggle: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        color = if (isOn) MaterialTheme.colorScheme.primary else Color(0xFF2A2A2C),
+        shape = RoundedCornerShape(12.dp),
+        modifier = modifier
+            .height(70.dp)
+            .clickable { onToggle() }
+    ) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center,
+            modifier = Modifier.fillMaxSize()
+        ) {
+            Text(icon, fontSize = 24.sp)
+            Spacer(Modifier.size(4.dp))
+            Text(label, color = Color.White, fontSize = 12.sp)
+        }
+    }
+}
+
+@Composable
+private fun CalendarWidget() {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    var events by remember { mutableStateOf<List<CalendarEvent>>(emptyList()) }
+    var hasPermission by remember { mutableStateOf(CalendarHelper.hasPermission(context)) }
+
+    LaunchedEffect(Unit) {
+        // Request permission if not granted
+        if (!hasPermission) {
+            val activity = context as? android.app.Activity
+            activity?.requestPermissions(arrayOf(android.Manifest.permission.READ_CALENDAR), 2001)
+        }
+        events = CalendarHelper.upcoming(context)
+        hasPermission = CalendarHelper.hasPermission(context)
+    }
+
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val obs = LifecycleEventObserver { _, _ ->
+            hasPermission = CalendarHelper.hasPermission(context)
+            if (hasPermission) {
+                events = CalendarHelper.upcoming(context)
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(obs)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(obs) }
+    }
+
+    Surface(
+        color = Color(0x14FFFFFF),
+        shape = RoundedCornerShape(20.dp),
+        modifier = Modifier.fillMaxWidth().padding(top = 4.dp)
+    ) {
+        Column(modifier = Modifier.padding(horizontal = 20.dp, vertical = 16.dp)) {
+            Text(
+                "Upcoming events",
+                color = Color(0xFFBFBFBF),
+                fontSize = 14.sp,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.padding(bottom = 12.dp)
+            )
+            if (!hasPermission) {
+                Text(
+                    "Calendar permission needed. Grant it in Android Settings to see events here.",
+                    color = Color(0xFF9A9A9A),
+                    fontSize = 14.sp,
+                )
+            } else if (events.isEmpty()) {
+                Text(
+                    "No upcoming events in the next 7 days.",
+                    color = Color(0xFF9A9A9A),
+                    fontSize = 14.sp,
+                )
+            } else {
+                events.take(5).forEach { event ->
+                    CalendarEventRow(event)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun CalendarEventRow(event: CalendarEvent) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val timeText = remember(event.begin) {
+        val cal = java.util.Calendar.getInstance().apply { timeInMillis = event.begin }
+        if (event.allDay) {
+            val dayFmt = java.text.SimpleDateFormat("MMM d", java.util.Locale.getDefault())
+            "All day · ${dayFmt.format(cal.time)}"
+        } else {
+            val timeFmt = java.text.SimpleDateFormat("h:mm a", java.util.Locale.getDefault())
+            "Today · ${timeFmt.format(cal.time)}"
+        }
+    }
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(event.title, color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Medium)
+            Text(timeText, color = Color(0xFF9A9A9A), fontSize = 12.sp)
+        }
+    }
 }
 

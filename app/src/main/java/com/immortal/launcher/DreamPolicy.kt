@@ -126,7 +126,10 @@ object DreamPolicy {
     runCatching {
       context.startActivity(
           Intent(context, PhotoFramePreviewActivity::class.java)
-              .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP))
+              .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+              // The dream bounced = Portal's presence sensor saw someone arrive.
+              // Show the welcome-back overlay on this relaunch.
+              .putExtra(PhotoFramePreviewActivity.EXTRA_SHOW_WELCOME, true))
     }
         .onFailure { Log.w(TAG, "frame relaunch failed", it) }
   }

@@ -22,7 +22,10 @@ services. Touch models and the remote-driven **Portal TV** are both supported.
   use the keyless built-in feed (Lorem Picsum, Unsplash-ready); weather is keyless Open-Meteo + IP
   geolocation. It cooperates with the Portal's presence sensor so it runs as a **permanent frame**
   while someone's around (and on mains power), and on the battery-powered **Portal Go** an optional
-  "sleep when nobody's around" setting saves power. Swipe to change photos, tap to exit.
+  "sleep when nobody's around" setting saves power. Swipe to change photos, tap to exit. When
+  presence wakes the frame a **welcome-back overlay** briefly shows a time-of-day greeting, the
+  current time, and the date before fading into the photos (tap to dismiss early; togglable in
+  screensaver settings).
 - **App Store** (`StoreActivity` / `StoreCatalog`) — a hosted JSON catalog
   ([`catalog.json`](catalog.json), schema v2) rendered with app icons, search, per-app detail
   pages (author, source, website, credit), device-compatibility badges, and an "Updates" section

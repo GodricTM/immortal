@@ -56,6 +56,19 @@
           "homepage": "https://antennapod.org"
         },
         {
+          "name": "HippoMuncher",
+          "packageName": "com.family.hippomuncher",
+          "source": "url",
+          "apkUrl": "https://github.com/veereshai/HippoMuncher/releases/latest/download/HippoMuncher.apk",
+          "minSdk": 28,
+          "description": "Head-tracking arcade game — tilt your head to feed the hungry hippo.",
+          "longDescription": "A hands-free family game made for the Portal's front camera: on-device face detection enables head-tilt steering of a hippo catching fruit while avoiding hazards. Includes three difficulty levels with per-difficulty scoring.",
+          "iconUrl": "https://raw.githubusercontent.com/veereshai/HippoMuncher/main/app/src/main/ic_launcher-playstore.png",
+          "author": "veereshai",
+          "homepage": "https://github.com/veereshai/HippoMuncher",
+          "submittedBy": "veereshai"
+        },
+        {
           "name": "Transistor",
           "packageName": "org.y20k.transistor",
           "source": "fdroid",
@@ -148,6 +161,18 @@
           "iconUrl": "https://f-droid.org/repo/org.fossify.calendar/en-US/icon.png",
           "author": "Fossify",
           "homepage": "https://github.com/FossifyOrg/Calendar"
+        },
+        {
+          "name": "Portal Calendar",
+          "packageName": "com.portal.calendar",
+          "source": "url",
+          "apkUrl": "https://github.com/thefloppytaco/portal-calendar/releases/download/v2.10/portal-calendar-v2.10.apk",
+          "minSdk": 28,
+          "description": "Turn a Portal into an always-on family calendar and chore board.",
+          "longDescription": "A Skylight-style family hub built for the Portal: multi-calendar sync, two-way Google events, shared lists, meal planning, and a kids' chore board with stars.",
+          "author": "thefloppytaco",
+          "homepage": "https://github.com/thefloppytaco/portal-calendar",
+          "submittedBy": "thefloppytaco"
         }
       ]
     },

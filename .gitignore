@@ -24,8 +24,16 @@ keystore.properties
 provisioning/apks/*.apk
 _chk*.png
 
+# Local device/debug captures.
+*.log
+*-dump.txt
+
+# Optional local clock fonts; verify licenses before force-adding any .ttf.
+app/src/main/assets/fonts/*.ttf
+
 # Internal strategy/planning notes — never publish.
 _planning/
+CHANGELOG_IMMORTAL.md
 
 # Reverse-engineering research — never publish (repo is public). Decompilation
 # working dir, APKs pulled off the device, and internal findings docs.

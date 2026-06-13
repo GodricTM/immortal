@@ -45,11 +45,20 @@ object ScreensaverConfig {
       // Idle screen-off (off by default): minutes the screensaver runs before the
       // screen turns off. 0 = never (Immortal's always-on photo frame).
       val idleSleepMin: Int = 0,
+      // Sleep timer: a one-shot countdown before sleep.
+      val sleepTimerEnabled: Boolean = false,
+      val sleepTimerMin: Int = 30,
+      val pauseAudioOnSleep: Boolean = true,
+      val closeAppOnSleep: Boolean = true,
       // Overnight screen-off (off by default): keep the screen off between two times
       // each night. Times are minutes-from-midnight (e.g. 22:00 = 1320).
       val overnightEnabled: Boolean = false,
       val overnightStartMin: Int = 22 * 60,
       val overnightEndMin: Int = 7 * 60,
+      // Welcome-back overlay: shown for ~3s when the screensaver first starts
+      // (i.e. when presence is detected and the Portal wakes from sleep). Shows
+      // a greeting, the time, and the date. Dismissed by tap or auto-fade.
+      val welcomeEnabled: Boolean = true,
   ) {
     /** True when the idle screen-off timeout is active. */
     val idleSleepOn: Boolean
@@ -76,9 +85,14 @@ object ScreensaverConfig {
         includeVideo = p.getBoolean("include_video", true),
         batterySaver = p.getBoolean("battery_saver", true),
         idleSleepMin = p.getInt("idle_sleep_min", 0),
+        sleepTimerEnabled = p.getBoolean("sleep_timer_enabled", false),
+        sleepTimerMin = p.getInt("sleep_timer_min", 30),
+        pauseAudioOnSleep = p.getBoolean("pause_audio_on_sleep", true),
+        closeAppOnSleep = p.getBoolean("close_app_on_sleep", true),
         overnightEnabled = p.getBoolean("overnight_enabled", false),
         overnightStartMin = p.getInt("overnight_start_min", 22 * 60),
         overnightEndMin = p.getInt("overnight_end_min", 7 * 60),
+        welcomeEnabled = p.getBoolean("welcome_enabled", true),
     )
   }
 
@@ -110,6 +124,23 @@ object ScreensaverConfig {
 
   fun setIdleSleepMin(c: Context, min: Int) =
       prefs(c).edit().putInt("idle_sleep_min", clampIdle(min)).apply()
+
+  fun setSleepTimerEnabled(c: Context, on: Boolean) =
+      prefs(c).edit().putBoolean("sleep_timer_enabled", on).apply()
+
+  fun setSleepTimerMin(c: Context, min: Int) =
+      prefs(c).edit().putInt("sleep_timer_min", clampSleepTimer(min)).apply()
+
+  fun setPauseAudioOnSleep(c: Context, on: Boolean) =
+      prefs(c).edit().putBoolean("pause_audio_on_sleep", on).apply()
+
+  fun setCloseAppOnSleep(c: Context, on: Boolean) =
+      prefs(c).edit().putBoolean("close_app_on_sleep", on).apply()
+
+  fun clampSleepTimer(min: Int): Int = min.coerceIn(1, 240)
+
+  fun setWelcomeEnabled(c: Context, on: Boolean) =
+      prefs(c).edit().putBoolean("welcome_enabled", on).apply()
 
   fun setOvernightEnabled(c: Context, on: Boolean) =
       prefs(c).edit().putBoolean("overnight_enabled", on).apply()

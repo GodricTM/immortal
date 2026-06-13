@@ -61,4 +61,43 @@ object UserLayout {
     while ("Folder $i" in existing) i++
     return "Folder $i"
   }
+
+  private const val EMPTY_FOLDERS_KEY = "empty_folders"
+
+  fun loadEmptyFolders(context: Context): Set<String> {
+    val raw = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        .getString(EMPTY_FOLDERS_KEY, null) ?: return emptySet()
+    return deserializeSet(raw)
+  }
+
+  fun saveEmptyFolder(context: Context, folderName: String) {
+    val existing = loadEmptyFolders(context).toMutableSet()
+    existing.add(folderName)
+    context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        .edit()
+        .putString(EMPTY_FOLDERS_KEY, serializeSet(existing))
+        .apply()
+  }
+
+  fun removeEmptyFolder(context: Context, folderName: String) {
+    val existing = loadEmptyFolders(context).toMutableSet()
+    existing.remove(folderName)
+    context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        .edit()
+        .putString(EMPTY_FOLDERS_KEY, serializeSet(existing))
+        .apply()
+  }
+
+  private fun serializeSet(set: Set<String>): String {
+    val obj = JSONObject()
+    obj.put("folders", org.json.JSONArray(set.toList()))
+    return obj.toString()
+  }
+
+  private fun deserializeSet(raw: String): Set<String> =
+      runCatching {
+        val obj = JSONObject(raw)
+        val arr = obj.getJSONArray("folders")
+        buildSet { for (i in 0 until arr.length()) add(arr.getString(i)) }
+      }.getOrDefault(emptySet())
 }

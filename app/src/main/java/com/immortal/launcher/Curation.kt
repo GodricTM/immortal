@@ -7,6 +7,8 @@
 
 package com.immortal.launcher
 
+import android.content.ComponentName
+
 /**
  * Which stock apps to hide, stash in folders, or relabel in the launcher grid.
  * Editable here (and a natural candidate for remote config later, like the
@@ -67,6 +69,17 @@ object Curation {
           "com.facebook.portal.aiservice" to "AI Service",
           "com.android.quicksearchbox" to "Google Search",
       )
+
+  /**
+   * Apps that have no LAUNCHER intent filter but are still user-facing on Portal.
+   * Injected into the home grid if the package is installed.
+   * Triple of (displayLabel, ComponentName, folderName-or-null).
+   */
+  val portalBuiltins = listOf(
+      Triple("Messenger",  ComponentName("com.facebook.aloha.app.messenger", "com.facebook.alohacommon.pef.RootActivity"), null as String?),
+      Triple("WhatsApp",   ComponentName("com.facebook.aloha.app.whatsapp",  "com.facebook.alohacommon.pef.RootActivity"), null as String?),
+      Triple("Easter Egg", ComponentName("com.android.systemui",              "com.android.systemui.egg.MLandActivity"),     null as String?),
+  )
 
   fun isHidden(
       packageName: String,

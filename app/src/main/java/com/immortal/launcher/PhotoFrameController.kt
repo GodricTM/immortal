@@ -18,6 +18,7 @@ import android.graphics.drawable.GradientDrawable
 import android.os.BatteryManager
 import android.os.Handler
 import android.os.Looper
+import android.speech.tts.TextToSpeech
 import android.view.GestureDetector
 import android.view.Gravity
 import android.view.MotionEvent
@@ -30,6 +31,7 @@ import android.widget.VideoView
 import java.net.HttpURLConnection
 import java.net.URL
 import java.text.SimpleDateFormat
+import java.util.Calendar
 import java.util.Date
 import java.util.Locale
 import java.util.concurrent.Executors
@@ -55,6 +57,8 @@ import org.json.JSONObject
  */
 class PhotoFrameController(
     private val context: Context,
+    /** Show the welcome-back overlay when [start] is called (set true for presence-triggered starts). */
+    val showWelcome: Boolean = false,
     private val unsplashKey: String = "",
     private val unsplashQuery: String = "nature,landscape,scenic",
     private val weatherRefreshMs: Long = 30 * 60_000L,
@@ -73,6 +77,15 @@ class PhotoFrameController(
   private var weatherText: String = ""
 
   private var settings = ScreensaverConfig.Settings()
+
+  // Welcome-back overlay state.
+  private lateinit var welcomeOverlay: View
+  private var welcomeVisible = false
+  private val dismissWelcomeRunnable = Runnable { dismissWelcomeAnimated() }
+  private var tts: TextToSpeech? = null
+  private var piperTts: PiperTTS? = null
+  @Volatile private var ttsReady = false
+  @Volatile private var pendingSpeech: String? = null
 
   // Local-folder playback state.
   private var localMode = false
@@ -104,6 +117,12 @@ class PhotoFrameController(
       MotionEvent.ACTION_UP -> {
         val dx = ev.x - downX
         val dy = ev.y - downY
+        // A tap while the welcome overlay is showing dismisses it early
+        // rather than exiting the screensaver.
+        if (welcomeVisible && abs(dx) < 48 && abs(dy) < 48) {
+          dismissWelcome()
+          return
+        }
         if (abs(dx) > 120 && abs(dx) > abs(dy) * 1.5f) {
           if (dx < 0) next() else prev()
         } else if (abs(dx) < 48 && abs(dy) < 48) {
@@ -118,6 +137,38 @@ class PhotoFrameController(
   fun start() {
     settings = ScreensaverConfig.load(context)
     applyFit()
+
+    // Initialize Android TTS immediately — ready in ~200ms, well within the overlay window.
+    tts = TextToSpeech(context) { status ->
+      if (status == TextToSpeech.SUCCESS && !ttsReady) {
+        tts?.language = Locale.US
+        tts?.setPitch(1.0f)
+        tts?.setSpeechRate(0.9f)
+        ttsReady = true
+        pendingSpeech?.let { text ->
+          tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, null)
+          pendingSpeech = null
+        }
+      }
+    }
+
+    // Also initialize Piper TTS in background for higher-quality neural voice.
+    // If Piper wins the race (cached models on fast hardware), it speaks instead.
+    piperTts = PiperTTS(context)
+    piperTts?.initialize { success ->
+      if (success && !ttsReady) {
+        ttsReady = true
+        pendingSpeech?.let { text ->
+          piperTts?.speak(text)
+          pendingSpeech = null
+        }
+      } else if (!success) {
+        piperTts?.shutdown()
+        piperTts = null
+      }
+    }
+
+    if (showWelcome && settings.welcomeEnabled) showWelcomeOverlay()
     tick.run()
     refreshWeather.run()
     if (settings.usesFolder) {
@@ -150,6 +201,14 @@ class PhotoFrameController(
   fun stop() {
     ui.removeCallbacksAndMessages(null)
     if (this::videoView.isInitialized) runCatching { videoView.stopPlayback() }
+    piperTts?.stop()
+    piperTts?.shutdown()
+    piperTts = null
+    tts?.stop()
+    tts?.shutdown()
+    tts = null
+    ttsReady = false
+    pendingSpeech = null
     io.shutdownNow()
   }
 
@@ -200,7 +259,144 @@ class PhotoFrameController(
     row.addView(weather)
     col.addView(row)
 
+    // Welcome-back overlay — added last so it renders above photos and scrim.
+    welcomeOverlay = buildWelcomeOverlay()
+    welcomeOverlay.visibility = View.GONE
+    root.addView(welcomeOverlay, FrameLayout.LayoutParams(MATCH, MATCH))
+
     return root
+  }
+
+  // --- welcome-back overlay ----------------------------------------------------
+
+  private fun buildWelcomeOverlay(): View {
+    val welcomeCfg = WelcomeConfig.load(context)
+
+    val overlay = FrameLayout(context)
+    // Semi-opaque dark scrim so the photo is faintly visible behind the greeting.
+    val bgAlpha = (welcomeCfg.backgroundOpacity * 255).toInt()
+    overlay.setBackgroundColor((bgAlpha shl 24) or 0x000000)
+
+    val col = LinearLayout(context)
+    col.orientation = LinearLayout.VERTICAL
+    col.gravity = Gravity.CENTER_HORIZONTAL
+    // Add horizontal padding to prevent text cutoff at screen edges
+    col.setPadding(dp(40), dp(20), dp(40), dp(20))
+
+    val hour = Calendar.getInstance().get(Calendar.HOUR_OF_DAY)
+    val greeting = when {
+      hour < 5  -> welcomeCfg.greetingNight
+      hour < 12 -> welcomeCfg.greetingMorning
+      hour < 17 -> welcomeCfg.greetingAfternoon
+      hour < 22 -> welcomeCfg.greetingEvening
+      else      -> welcomeCfg.greetingNight
+    }
+    val fullGreeting = if (welcomeCfg.userName.isNotBlank()) {
+      "$greeting, ${welcomeCfg.userName}"
+    } else {
+      greeting
+    }
+
+    if (welcomeCfg.showGreeting) {
+      val greetingView = text(welcomeCfg.greetingSize, welcomeCfg.greetingColor, false)
+      greetingView.text = fullGreeting
+      greetingView.gravity = Gravity.CENTER
+      greetingView.letterSpacing = welcomeCfg.greetingLetterSpacing
+      greetingView.maxLines = 2
+      val greetingLp = LinearLayout.LayoutParams(
+          LinearLayout.LayoutParams.MATCH_PARENT,
+          LinearLayout.LayoutParams.WRAP_CONTENT)
+      col.addView(greetingView, greetingLp)
+    }
+
+    if (welcomeCfg.showClock) {
+      val clockPattern = if (ImmortalSettings.use24HourClock(context)) "H:mm" else "h:mm"
+      val clockView = text(welcomeCfg.clockSize, welcomeCfg.clockColor, true)
+      clockView.text = SimpleDateFormat(clockPattern, Locale.getDefault()).format(Date())
+      clockView.gravity = Gravity.CENTER
+      clockView.maxLines = 1
+      val clockLp = LinearLayout.LayoutParams(
+          LinearLayout.LayoutParams.MATCH_PARENT,
+          LinearLayout.LayoutParams.WRAP_CONTENT)
+      col.addView(clockView, clockLp)
+    }
+
+    if (welcomeCfg.showDate) {
+      val dateView = text(welcomeCfg.dateSize, welcomeCfg.dateColor, false)
+      dateView.text = SimpleDateFormat("EEEE, MMM d", Locale.getDefault()).format(Date())
+      dateView.gravity = Gravity.CENTER
+      dateView.maxLines = 1
+      val dateLp = LinearLayout.LayoutParams(
+          LinearLayout.LayoutParams.MATCH_PARENT,
+          LinearLayout.LayoutParams.WRAP_CONTENT)
+      dateLp.topMargin = dp(4)
+      col.addView(dateView, dateLp)
+    }
+
+    // Use MATCH_PARENT width with the padding above to ensure text stays visible
+    overlay.addView(col, FrameLayout.LayoutParams(MATCH, WRAP, Gravity.CENTER))
+    return overlay
+  }
+
+  private fun showWelcomeOverlay() {
+    val welcomeCfg = WelcomeConfig.load(context)
+    welcomeVisible = true
+    welcomeOverlay.alpha = 0f
+    welcomeOverlay.visibility = View.VISIBLE
+    welcomeOverlay.animate().alpha(1f).setDuration(500).start()
+
+    // Speak the greeting if TTS is enabled
+    if (welcomeCfg.enableTts) {
+      val hour = Calendar.getInstance().get(Calendar.HOUR_OF_DAY)
+      val greeting = when {
+        hour < 5  -> welcomeCfg.greetingNight
+        hour < 12 -> welcomeCfg.greetingMorning
+        hour < 17 -> welcomeCfg.greetingAfternoon
+        hour < 22 -> welcomeCfg.greetingEvening
+        else      -> welcomeCfg.greetingNight
+      }
+      val fullGreeting = if (welcomeCfg.userName.isNotBlank()) {
+        "$greeting, ${welcomeCfg.userName}"
+      } else {
+        greeting
+      }
+      // Speak immediately if TTS is ready, otherwise queue it
+      if (ttsReady) {
+        if (piperTts != null) {
+          piperTts?.speak(fullGreeting)
+        } else {
+          tts?.speak(fullGreeting, TextToSpeech.QUEUE_FLUSH, null, null)
+        }
+      } else {
+        pendingSpeech = fullGreeting
+      }
+    }
+
+    // Auto-dismiss after configured duration.
+    ui.postDelayed(dismissWelcomeRunnable, welcomeCfg.durationMs.toLong())
+  }
+
+  /** Dismiss immediately (e.g. on tap). */
+  private fun dismissWelcome() {
+    if (!welcomeVisible) return
+    ui.removeCallbacks(dismissWelcomeRunnable)
+    piperTts?.stop()
+    tts?.stop()
+    pendingSpeech = null
+    dismissWelcomeAnimated()
+  }
+
+  private fun dismissWelcomeAnimated() {
+    welcomeVisible = false
+    // Stop ongoing speech but leave pendingSpeech intact so it fires if TTS wasn't
+    // ready before the overlay auto-dismissed. User tap (dismissWelcome) cancels it.
+    piperTts?.stop()
+    tts?.stop()
+    welcomeOverlay.animate()
+        .alpha(0f)
+        .setDuration(600)
+        .withEndAction { welcomeOverlay.visibility = View.GONE }
+        .start()
   }
 
   private fun applyFit() {

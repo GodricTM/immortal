@@ -16,13 +16,18 @@ import android.util.Log
 class SleepReceiver : BroadcastReceiver() {
   override fun onReceive(context: Context, intent: Intent) {
     when (intent.action) {
+      SleepScheduler.ACTION_SLEEP_TIMER -> {
+        Log.i(TAG, "sleep timer reached")
+        val settings = ScreensaverConfig.load(context)
+        SleepScheduler.sleepNow(
+            context,
+            pauseAudio = settings.pauseAudioOnSleep,
+            closeApp = settings.closeAppOnSleep,
+        )
+      }
       SleepScheduler.ACTION_IDLE -> {
         Log.i(TAG, "idle timeout reached → sleep")
-        // Turn the system Dream off first so the docked Portal doesn't immediately
-        // re-light the screensaver; HomeActivity.onResume re-enables it on the next
-        // touch/return.
-        SettingsGuard.setSystemScreensaverEnabled(context, false)
-        ScreenControl.sleep(context)
+        SleepScheduler.sleepNow(context, pauseAudio = false, closeApp = false)
       }
       SleepScheduler.ACTION_OVERNIGHT_START -> {
         Log.i(TAG, "overnight start → sleep")

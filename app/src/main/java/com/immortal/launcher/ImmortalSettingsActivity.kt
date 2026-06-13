@@ -10,10 +10,15 @@ package com.immortal.launcher
 import android.app.Activity
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -23,10 +28,15 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -58,20 +68,41 @@ import com.immortal.launcher.ui.theme.SampleAppTheme
 class ImmortalSettingsActivity : ComponentActivity() {
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
-    setContent { SampleAppTheme(darkTheme = true) { ImmortalSettingsScreen() } }
+    val context = this
+    var accentKey by mutableStateOf(ImmortalSettings.load(context).accentColor)
+    setContent {
+      SampleAppTheme(darkTheme = true, accentKey = accentKey) {
+        ImmortalSettingsScreen(accentKey = accentKey, onAccentChange = { accentKey = it })
+      }
+    }
   }
 }
 
 @Composable
-private fun ImmortalSettingsScreen() {
+private fun ImmortalSettingsScreen(
+    accentKey: String? = null,
+    onAccentChange: ((String) -> Unit)? = null,
+) {
   val context = LocalContext.current
   var settings by remember { mutableStateOf(ImmortalSettings.load(context)) }
+  var clockConfig by remember { mutableStateOf(DigitalClockConfig.load(context)) }
+
+  // File picker for background image
+  val imagePickerLauncher = rememberLauncherForActivityResult(
+      contract = ActivityResultContracts.GetContent()
+  ) { uri: android.net.Uri? ->
+      uri?.let {
+          ImmortalSettings.setBackgroundImagePath(context, it.toString())
+          settings = ImmortalSettings.load(context)
+      }
+  }
 
   // Remote support: focus the first control on open; Back exits the screen.
   val activity = context as? Activity
   val firstFocus = remember { FocusRequester() }
   LaunchedEffect(Unit) { runCatching { firstFocus.requestFocus() } }
 
+  Box(modifier = Modifier.fillMaxSize()) {
   Column(
       modifier =
           Modifier.fillMaxSize()
@@ -152,6 +183,33 @@ private fun ImmortalSettingsScreen() {
               },
           )
         }
+        Divider()
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(18.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+          Column(modifier = Modifier.weight(1f)) {
+            Text("Calendar agenda", color = Color.White, fontSize = 17.sp)
+            Text(
+                "Show upcoming events below your apps. Requires calendar permission.",
+                color = Color(0xFF9A9A9A),
+                fontSize = 13.sp,
+                modifier = Modifier.padding(top = 2.dp),
+            )
+          }
+          Segmented(
+              options =
+                  listOf(
+                      "Off" to ImmortalSettings.CALENDAR_OFF,
+                      "On" to ImmortalSettings.CALENDAR_ON,
+                  ),
+              selected = settings.calendarWidget,
+              onSelect = {
+                ImmortalSettings.setCalendarWidget(context, it)
+                settings = settings.copy(calendarWidget = it)
+              },
+          )
+        }
       }
 
       Spacer(Modifier.size(26.dp))
@@ -182,6 +240,38 @@ private fun ImmortalSettingsScreen() {
               onSelect = {
                 ImmortalSettings.setTileSize(context, it)
                 settings = settings.copy(tileSize = it)
+              },
+          )
+        }
+      }
+
+      Spacer(Modifier.size(26.dp))
+
+      SectionLabel("Home widgets")
+      Card {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(18.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+          Column(modifier = Modifier.weight(1f)) {
+            Text("System statistics", color = Color.White, fontSize = 17.sp)
+            Text(
+                "Show RAM, storage, battery, and temperature on the Immortal homepage.",
+                color = Color(0xFF9A9A9A),
+                fontSize = 13.sp,
+                modifier = Modifier.padding(top = 2.dp),
+            )
+          }
+          Segmented(
+              options =
+                  listOf(
+                      "Off" to ImmortalSettings.STATS_OFF,
+                      "On" to ImmortalSettings.STATS_ON,
+                  ),
+              selected = settings.statsMode,
+              onSelect = {
+                ImmortalSettings.setStatsMode(context, it)
+                settings = settings.copy(statsMode = it)
               },
           )
         }
@@ -220,15 +310,114 @@ private fun ImmortalSettingsScreen() {
         }
       }
 
+      Spacer(Modifier.size(26.dp))
+
+      SectionLabel("Accent color")
+      Card {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(18.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+          Column(modifier = Modifier.weight(1f)) {
+            Text("Theme color", color = Color.White, fontSize = 17.sp)
+            Text(
+                "Choose the accent color for buttons and highlights.",
+                color = Color(0xFF9A9A9A),
+                fontSize = 13.sp,
+                modifier = Modifier.padding(top = 2.dp),
+            )
+          }
+        }
+        AccentColorGrid(
+            selected = settings.accentColor,
+              onSelect = {
+                ImmortalSettings.setAccentColor(context, it)
+                settings = settings.copy(accentColor = it)
+                onAccentChange?.invoke(it)
+              },
+        )
+      }
+
+      Spacer(Modifier.size(26.dp))
+
+      SectionLabel("Background")
+      Card {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(18.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+          Column(modifier = Modifier.weight(1f)) {
+            Text("Background style", color = Color.White, fontSize = 17.sp)
+            Text(
+                "Choose a background for the home screen.",
+                color = Color(0xFF9A9A9A),
+                fontSize = 13.sp,
+                modifier = Modifier.padding(top = 2.dp),
+            )
+          }
+          Segmented(
+              options =
+                  listOf(
+                      "Dark" to ImmortalSettings.BG_DARK,
+                      "Image" to ImmortalSettings.BG_IMAGE,
+                      "Blur" to ImmortalSettings.BG_BLUR,
+                  ),
+              selected = settings.backgroundType,
+              onSelect = {
+                ImmortalSettings.setBackgroundType(context, it)
+                settings = settings.copy(backgroundType = it)
+              },
+          )
+        }
+        if (settings.backgroundType != ImmortalSettings.BG_DARK) {
+          Divider()
+          Row(
+              modifier = Modifier.fillMaxWidth().padding(18.dp),
+              verticalAlignment = Alignment.CenterVertically,
+          ) {
+            Column(modifier = Modifier.weight(1f)) {
+              Text("Background image", color = Color.White, fontSize = 17.sp)
+              Text(
+                  if (settings.backgroundImagePath != null)
+                      "Image set: ${settings.backgroundImagePath}"
+                  else
+                      "No image selected",
+                  color = Color(0xFF9A9A9A),
+                  fontSize = 13.sp,
+                  modifier = Modifier.padding(top = 2.dp),
+              )
+            }
+            Surface(
+                color = MaterialTheme.colorScheme.primary,
+                shape = RoundedCornerShape(10.dp),
+                modifier = Modifier.tvFocusable(RoundedCornerShape(10.dp)) {
+                  imagePickerLauncher.launch("image/*")
+                },
+            ) {
+              Text(
+                  "Choose",
+                  color = Color.White,
+                  fontSize = 15.sp,
+                  modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
+              )
+            }
+          }
+        }
+      }
+
+      Spacer(Modifier.size(26.dp))
+
       Text(
           "Changes apply as soon as you go back to the home screen.",
-          color = Color(0xFF7C7C7C),
-          fontSize = 13.sp,
-          modifier = Modifier.padding(top = 10.dp, start = 4.dp, end = 4.dp),
-      )
+           color = Color(0xFF7C7C7C),
+           fontSize = 13.sp,
+           modifier = Modifier.padding(top = 10.dp, start = 4.dp, end = 4.dp),
+       )
+      }
+    }
+    FolderBackButton(onClick = { activity?.finish() })
     }
   }
-}
 
 @Composable
 private fun SectionLabel(text: String) {
@@ -262,17 +451,18 @@ private fun Segmented(
     options: List<Pair<String, String>>,
     selected: String,
     onSelect: (String) -> Unit,
+    modifier: Modifier = Modifier,
 ) {
   Row(
-      modifier = Modifier.background(Color(0xFF2A2A2C), RoundedCornerShape(12.dp)).padding(3.dp),
+      modifier = modifier.background(Color(0xFF2A2A2C), RoundedCornerShape(12.dp)).padding(3.dp),
       horizontalArrangement = Arrangement.spacedBy(2.dp),
   ) {
     options.forEach { (label, value) ->
       val on = value == selected
       Surface(
-          color = if (on) Color(0xFF2E6BE6) else Color.Transparent,
+          color = if (on) MaterialTheme.colorScheme.primary else Color.Transparent,
           shape = RoundedCornerShape(10.dp),
-          modifier = Modifier.tvFocusable(RoundedCornerShape(10.dp)) { onSelect(value) },
+          modifier = Modifier.clickable { onSelect(value) },
       ) {
         Text(
             label,
@@ -281,6 +471,52 @@ private fun Segmented(
             modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
         )
       }
+    }
+  }
+}
+
+@Composable
+private fun AccentColorGrid(
+    selected: String,
+    onSelect: (String) -> Unit,
+) {
+  val colors = listOf(
+      ImmortalSettings.ACCENT_BLUE to Color(0xFF2196F3),
+      ImmortalSettings.ACCENT_RED to Color(0xFFF44336),
+      ImmortalSettings.ACCENT_GREEN to Color(0xFF4CAF50),
+      ImmortalSettings.ACCENT_PURPLE to Color(0xFF9C27B0),
+      ImmortalSettings.ACCENT_ORANGE to Color(0xFFFF9800),
+      ImmortalSettings.ACCENT_PINK to Color(0xFFE91E63),
+      ImmortalSettings.ACCENT_TEAL to Color(0xFF009688),
+      ImmortalSettings.ACCENT_YELLOW to Color(0xFFFFEB3B),
+      ImmortalSettings.ACCENT_INDIGO to Color(0xFF3F51B5),
+      ImmortalSettings.ACCENT_CYAN to Color(0xFF00BCD4),
+      ImmortalSettings.ACCENT_LIME to Color(0xFFCDDC39),
+      ImmortalSettings.ACCENT_AMBER to Color(0xFFFFC107),
+      ImmortalSettings.ACCENT_DEEP_PURPLE to Color(0xFF673AB7),
+      ImmortalSettings.ACCENT_BROWN to Color(0xFF795548),
+      ImmortalSettings.ACCENT_CORAL to Color(0xFFFF6F61),
+      ImmortalSettings.ACCENT_MINT to Color(0xFF98FF98),
+  )
+  LazyVerticalGrid(
+      columns = GridCells.Fixed(8),
+      horizontalArrangement = Arrangement.spacedBy(12.dp),
+      verticalArrangement = Arrangement.spacedBy(12.dp),
+      modifier = Modifier.padding(horizontal = 18.dp, vertical = 12.dp).height(120.dp),
+  ) {
+    items(colors.size) { index ->
+      val (key, color) = colors[index]
+      val isSelected = key == selected
+      Box(
+          modifier = Modifier
+              .size(48.dp)
+              .background(color, CircleShape)
+              .then(
+                  if (isSelected) Modifier.border(3.dp, Color.White, CircleShape)
+                  else Modifier
+              )
+              .clickable { onSelect(key) },
+      )
     }
   }
 }

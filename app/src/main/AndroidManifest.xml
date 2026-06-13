@@ -9,8 +9,23 @@
          required, so the app installs on every model. -->
     <uses-feature android:name="android.software.leanback" android:required="false" />
     <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
+    <!-- Camera is not required — the button gracefully hides if unavailable. -->
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
+    <uses-feature android:name="android.hardware.camera.autofocus" android:required="false" />
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Camera preview button: show live camera feed. -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <!-- Calendar widget: read upcoming events from the device calendar. -->
+    <uses-permission android:name="android.permission.READ_CALENDAR" />
+    <!-- System-wide back-swipe gesture: draw a transparent overlay on the
+         right edge of the screen. The user must grant "Draw over other apps"
+         at runtime. -->
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+    <!-- The overlay back-gesture service runs in the background so the swipe
+         works in any app. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <!-- Store: install and remove apps on-device via PackageInstaller. -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <uses-permission android:name="android.permission.REQUEST_DELETE_PACKAGES" />
@@ -109,12 +124,53 @@
             android:launchMode="singleTask"
             android:theme="@style/Theme.SampleApp" />
 
+        <!-- Camera preview: full-screen live camera feed, opened from the
+             Camera tile in the launcher. Excluded from recents. -->
+        <activity
+            android:name=".CameraPreviewActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:screenOrientation="landscape"
+            android:theme="@style/Theme.SampleApp" />
+
         <!-- Screensaver settings (source folder/USB, fit, interval, …), opened from
              the Screensaver tile in the launcher's Settings folder. -->
         <activity
             android:name=".ScreensaverSettingsActivity"
             android:exported="false"
             android:label="Screensaver"
+            android:theme="@style/Theme.SampleApp" />
+
+        <!-- Welcome overlay settings (greetings, colors, sizes, duration), opened from
+             the Welcome tile in the launcher's Settings folder. -->
+        <activity
+            android:name=".WelcomeSettingsActivity"
+            android:exported="false"
+            android:label="Welcome"
+            android:theme="@style/Theme.SampleApp" />
+
+        <!-- Sleep timer settings, opened from the Sleep tile in the launcher's Settings folder. -->
+        <activity
+            android:name=".SleepSettingsActivity"
+            android:exported="false"
+            android:label="Sleep"
+            android:theme="@style/Theme.SampleApp" />
+
+        <!-- Clock settings (digital clock style, color, font, size, layout, background,
+             glow, show date, show seconds, screensaver activation), opened from the
+             Clock tile in the launcher's Settings folder. -->
+        <activity
+            android:name=".ClockSettingsActivity"
+            android:exported="false"
+            android:label="Clock"
+            android:theme="@style/Theme.SampleApp" />
+
+        <!-- Full-screen digital clock preview, opened from the Preview button in
+             Clock settings. Excluded from recents. -->
+        <activity
+            android:name=".DigitalClockPreviewActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
             android:theme="@style/Theme.SampleApp" />
 
         <!-- Immortal's own settings (weather unit, home-screen forecast widget, tile
@@ -196,6 +252,34 @@
             </intent-filter>
         </receiver>
 
+        <!-- System-wide "Go back" accessibility service. User enables once in
+             Android Settings → Accessibility, then it exposes a global BACK
+             action in the accessibility navigation bar. -->
+        <service
+            android:name=".ImmortalBackGestureService"
+            android:exported="true"
+            android:label="@string/back_gesture_service_label"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/back_gesture_service_config" />
+        </service>
+
+        <!-- System-wide back-swipe gesture via a transparent overlay. Runs as
+             a foreground service and draws a thin strip on the right edge
+             that detects leftward swipes. Requires SYSTEM_ALERT_WINDOW. -->
+        <service
+            android:name=".SystemBackGestureService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="System-wide back-swipe gesture overlay" />
+        </service>
+
         <!-- Internal alarms for the idle and overnight screen-off features. -->
         <receiver
             android:name=".SleepReceiver"
@@ -204,6 +288,17 @@
         <!-- Custom screensaver (Dream), set via secure setting screensaver_components. -->
         <service
             android:name=".PhotoDreamService"
+            android:exported="true"
+            android:permission="android.permission.BIND_DREAM_SERVICE">
+            <intent-filter>
+                <action android:name="android.service.dreams.DreamService" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </service>
+
+        <!-- Digital clock screensaver (Dream), alternative to the photo frame. -->
+        <service
+            android:name=".DigitalClockDreamService"
             android:exported="true"
             android:permission="android.permission.BIND_DREAM_SERVICE">
             <intent-filter>

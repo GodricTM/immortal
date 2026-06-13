@@ -32,6 +32,7 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
@@ -124,20 +125,21 @@ private fun ScreensaverSettingsScreen() {
   val firstFocus = remember { FocusRequester() }
   LaunchedEffect(Unit) { runCatching { firstFocus.requestFocus() } }
 
-  Column(
-      modifier =
-          Modifier.fillMaxSize()
-              .onPreviewKeyEvent { e ->
-                if (e.key == Key.Back) {
-                  if (e.type == KeyEventType.KeyUp) activity?.finish()
-                  true
-                } else false
-              }
-              .background(Color(0xFF101012))
-              .verticalScroll(rememberScrollState())
-              .padding(horizontal = 28.dp, vertical = 32.dp),
-  ) {
-    Column(modifier = Modifier.widthIn(max = 1100.dp).focusRequester(firstFocus).focusGroup()) {
+  Box(modifier = Modifier.fillMaxSize()) {
+    Column(
+        modifier =
+            Modifier.fillMaxSize()
+                .onPreviewKeyEvent { e ->
+                  if (e.key == Key.Back) {
+                    if (e.type == KeyEventType.KeyUp) activity?.finish()
+                    true
+                  } else false
+                }
+                .background(Color(0xFF101012))
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 28.dp, vertical = 32.dp),
+    ) {
+      Column(modifier = Modifier.widthIn(max = 1100.dp).focusRequester(firstFocus).focusGroup()) {
       Text("Screensaver", color = Color.White, fontSize = 34.sp, fontWeight = FontWeight.SemiBold)
       Text(
           "Choose what shows on the photo frame when your Portal is idle.",
@@ -318,11 +320,13 @@ private fun ScreensaverSettingsScreen() {
 
       Spacer(Modifier.size(28.dp))
       Surface(
-          color = Color(0xFF2E6BE6),
+          color = MaterialTheme.colorScheme.primary,
           shape = RoundedCornerShape(16.dp),
           modifier =
               Modifier.fillMaxWidth().tvFocusable(RoundedCornerShape(16.dp), focusScale = 1f) {
-                context.startActivity(Intent(context, PhotoFramePreviewActivity::class.java))
+                val intent = Intent(context, PhotoFramePreviewActivity::class.java)
+                intent.putExtra(PhotoFramePreviewActivity.EXTRA_SHOW_WELCOME, true)
+                context.startActivity(intent)
               },
       ) {
         Text(
@@ -337,6 +341,8 @@ private fun ScreensaverSettingsScreen() {
       } // end if (settings.enabled)
     }
   }
+  FolderBackButton(onClick = { activity?.finish() })
+ }
 }
 
 private fun folderSubtitle(usesFolder: Boolean, name: String?, count: Int?): String =
@@ -579,7 +585,7 @@ private fun Segmented(
     options.forEach { (label, value) ->
       val on = value == selected
       Surface(
-          color = if (on) Color(0xFF2E6BE6) else Color.Transparent,
+          color = if (on) MaterialTheme.colorScheme.primary else Color.Transparent,
           shape = RoundedCornerShape(10.dp),
           modifier = Modifier.tvFocusable(RoundedCornerShape(10.dp)) { onSelect(value) },
       ) {
