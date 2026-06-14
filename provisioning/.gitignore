@@ -3,6 +3,9 @@ platform-tools/
 *.zip
 # Local machine-specific config overrides (source after config.env)
 local.env
-# Working directories created at runtime
+
+# Alexa-restore work dir: downloaded stock falcon (~120MB) + bsdiff + reconstructed apk
 alexa/
-apks/
+
+# Downloaded/staged client APKs (immortal.apk is fetched from the release on first run)
+apks/*.apk

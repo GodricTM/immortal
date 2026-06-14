@@ -337,9 +337,25 @@ function Get-Sha256($path) { (Get-FileHash -Algorithm SHA256 -Path $path).Hash.T
 function Restore-Alexa {
   $fp = if ($cfg["FALCON_PKG"]) { $cfg["FALCON_PKG"] } else { "com.amazon.alexa.multimodal.falcon" }
   $sim = "$fp/com.amazon.alexa.multimodal.falcon.SIMActivity"
+  # SETUP entry: fresh device -> falcon OOBE -> Amazon CBL linking code; linked -> bootstraps the
+  # connection and yields to the launcher. (SIMActivity only ever shows the debug client.)
+  $setup = "$fp/com.amazon.alexa.multimodal.LaunchActivity"
   $work = Join-Path $ScriptDir "alexa"
   New-Item -ItemType Directory -Force -Path $work | Out-Null
   Step "Restoring Amazon Alexa (reviving the original falcon client)"
+
+  # Gate: Android 10+ Portals (e.g. the Portal Go) HARD-BLOCK background mic capture for
+  # sideloaded apps - even a foregroundServiceType=microphone FGS is silenced - so falcon never
+  # receives audio during the wake/button handoff (verified on a clean provision). Alexa revival
+  # is supported on A9-and-below ONLY for now; the launcher itself still installs fine on A10.
+  # Override with ALEXA_FORCE_A10=1 to attempt anyway (for testing other A10 families).
+  $sdk = 0; try { $sdk = [int]("$(A shell getprop ro.build.version.sdk)".Trim()) } catch {}
+  if ($sdk -ge 29 -and $env:ALEXA_FORCE_A10 -ne "1") {
+    Warn "Skipping Alexa - not supported on this Portal yet (Android 10+, SDK $sdk blocks background mic for sideloaded apps)."
+    Write-Host "  The launcher is installed and working; only the Alexa restore is skipped." -ForegroundColor DarkGray
+    Write-Host "  (A10 support is in research. To attempt it anyway for testing: set ALEXA_FORCE_A10=1 then re-run with -Alexa.)" -ForegroundColor DarkGray
+    return
+  }
 
   # 1. Obtain the patched+signed falcon APK - a local build if given, else
   #    reconstruct it byte-identically from the public stock APK + our diff.
@@ -395,6 +411,15 @@ function Restore-Alexa {
   A shell appops set $fp SYSTEM_ALERT_WINDOW allow | Out-Null
   Ok "falcon provisioned"
 
+  # 3b. Surface the Amazon sign-in now (right after install) so a fresh Portal shows the linking
+  #     code immediately and the user can register while the rest of setup runs. Clear logcat so the
+  #     ReadyState we watch for below is from this launch onward. (No-op for already-linked Portals.)
+  Step "Opening Alexa to link your Amazon account"
+  A logcat -c | Out-Null
+  A shell dumpsys deviceidle whitelist +$fp | Out-Null   # skip the "run in background?" prompt -> straight to the code
+  A shell am start -n $setup | Out-Null
+  Warn "If this Portal isn't linked yet, an Amazon sign-in is now on screen - go to amazon.com/code and enter the code shown (you can do this while the rest of setup runs)."
+
   # 4. millennium = the "hey" wake-word app (drives falcon hands-free).
   $mp = if ($cfg["MILLENNIUM_PKG"]) { $cfg["MILLENNIUM_PKG"] } else { "com.millennium" }
   $mapk = $null
@@ -410,15 +435,27 @@ function Restore-Alexa {
   }
   if ("$(A shell pm path $mp)".Trim()) { A shell pm grant $mp android.permission.RECORD_AUDIO | Out-Null }
 
-  # 5. Launch falcon, guide the Amazon account link, wait for ReadyState.
-  Step "Launching falcon to connect"
-  A shell am start -n $sim | Out-Null
-  Warn "If this Portal isn't linked to your Amazon account yet, finish the on-screen Alexa sign-in now. (Already-linked devices reconnect automatically.)"
-  Write-Host "  Waiting for Alexa to connect (needs Wi-Fi + a linked account)..." -ForegroundColor DarkGray
-  A logcat -c | Out-Null
-  $ready = $false
-  for ($i = 0; $i -lt 24; $i++) {
-    if (A logcat -d | Select-String "in ReadyState" -Quiet) { $ready = $true; break }
+  # 5. Wait for ReadyState - EVENT-DRIVEN, not on a timer. falcon logs `AccountRegisteredCondition:
+  # isMet` the instant the Amazon account is linked, and never before, so it's a precise "sign-in just
+  # completed" signal that can't fire mid-sign-in. Already-linked Portals self-connect (we just see
+  # `in ReadyState`); a fresh one parks in IgnoreWhileDisconnectedState after `isMet`, so we give it a
+  # short grace then force-stop+relaunch to kick it (re-kicking if stuck). We only kick AFTER `isMet`,
+  # so an in-progress sign-in is never interrupted. The cap is just a safety net. See provision.sh.
+  Step "Waiting for Alexa to connect"
+  Write-Host "  Finish any on-screen Amazon sign-in (amazon.com/code) - this connects automatically once you do..." -ForegroundColor DarkGray
+  $ready = $false; $regAt = -1; $lastKick = -100
+  for ($i = 0; $i -lt 72; $i++) {                     # ~6 min safety cap (72 x 5s)
+    $log = A logcat -d
+    if ($log | Select-String "in ReadyState" -Quiet) { $ready = $true; break }
+    if ($regAt -lt 0 -and ($log | Select-String "AccountRegisteredCondition: isMet" -Quiet)) {
+      $regAt = $i; Step "Amazon account linked - connecting Alexa"
+    }
+    # registered + not yet connected: ~20s grace for self-connect, then kick; re-kick every ~40s if stuck.
+    if ($regAt -ge 0 -and ($i - $regAt) -ge 4 -and ($i - $lastKick) -ge 8) {
+      A shell am force-stop $fp | Out-Null
+      A shell am start -n $setup | Out-Null   # bootstraps the connection + yields to the launcher
+      $lastKick = $i
+    }
     Start-Sleep -Seconds 5
   }
   if ($ready) {
@@ -426,7 +463,7 @@ function Restore-Alexa {
     Ok "Alexa connected (ReadyState) - say 'Hey Alexa, what's the weather?'"
     Write-Host "  Once linked, you can hide falcon's icon from the launcher - it runs headless." -ForegroundColor DarkGray
   } else {
-    Warn "Alexa didn't connect within ~2 min. Check Wi-Fi + that the Amazon account is linked, then re-run with -Alexa."
+    Warn "Alexa didn't connect within ~6 min. Check Wi-Fi + that the Amazon account is linked, then re-run with -Alexa."
   }
 }
 

@@ -1,6 +1,6 @@
 {
-  "versionCode": 37,
-  "versionName": "1.36",
+  "versionCode": 39,
+  "versionName": "1.38",
   "apkUrl": "https://github.com/starbrightlab/immortal/releases/latest/download/immortal.apk",
-  "notes": "Immortal 1.36 — A push-to-talk \"hey\" voice button in the header: tap to wake your assistant (no wake word needed), long-press to choose which assistant. The clock moved to the top-left corner. The provisioning kit now installs Shizuku on every Portal and can restore the original Amazon Alexa app. (Includes the 1.35 changes.)"
+  "notes": "Immortal 1.38 — Two fixes. Photo-frame screensaver: photos from a folder now display the right way up — portrait shots from phone cameras were appearing sideways (and some landscapes upside-down) because the camera's rotation tag wasn't being applied. Overnight sleep: tapping the screen during the overnight window now wakes the device and lets you use it normally, instead of waking briefly and immediately locking again."
 }
