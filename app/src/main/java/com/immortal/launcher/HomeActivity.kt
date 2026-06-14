@@ -155,11 +155,13 @@ class HomeActivity : ComponentActivity() {
         LauncherScreen(
             onLaunch = { cn ->
               runCatching {
-                startActivity(
-                    Intent(Intent.ACTION_MAIN)
-                        .addCategory(Intent.CATEGORY_LAUNCHER)
-                        .setComponent(cn)
-                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                val customAction = Curation.customLaunchAction[cn.packageName]
+                val intent = if (customAction != null)
+                  Intent(customAction).setComponent(cn).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                else
+                  Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
+                      .setComponent(cn).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                startActivity(intent)
               }
             },
             onOpenStore = {

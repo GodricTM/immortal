@@ -15,18 +15,55 @@ A push-to-talk voice button in the header, and a tidier top bar.
 - **Clock moved to the top-left corner**, with the screensaver and "hey" buttons grouped to its right — cleaner now that there's more than one button up there.
 - **Provisioning kit:** Shizuku is now installed + started on **every** Portal (not just the Gen-1), as a generally useful privileged broker. New **opt-in "Restore Amazon Alexa"** step revives the original on-device Alexa client (`./provision.sh --alexa`, or answer the prompt during setup).
 
-## Unreleased
+## 1.37 (2026-06-14)
 
-Work in progress for the next contribution/revision. These changes are local and not yet part of a tagged release.
+A major expansion of the screensaver, back navigation, home screen widgets, and
+Piper neural TTS. Authored by **@GodricTM**.
 
-- **Welcome-back overlay:** when the Portal's presence sensor wakes the screensaver, a brief (3 s) overlay fades in over the photo frame showing a time-of-day greeting ("Good morning / afternoon / evening"), the current time, and the date. Tapping dismisses it early. Shown on every presence-triggered start (`PhotoDreamService` and `DreamPolicy` relaunch); skipped for the manual preview. Togglable via `ScreensaverConfig.welcomeEnabled` (persisted in `immortal_screensaver` prefs, key `welcome_enabled`; on by default).
-- **OFL font compliance:** replaced the four personal-use-only TTF fonts bundled in `assets/fonts/` with redistribution-safe OFL-1.1 alternatives — DSEG7Classic-Regular (`digital_7.ttf`), DSEG14Classic-Regular (`segment_led.ttf`), Orbitron Regular (`technology.ttf`), Orbitron Bold (`technology_bold.ttf`). Added `assets/fonts/OFL.txt` with credits and licence text. Filenames are unchanged so `DigitalClockView.kt` needed no edits. The build is now clean for open-source redistribution.
-- **Digital clock screensaver:** added a second Dream service for a configurable digital/analog clock, with a full-screen preview, a Clock settings tile, optional local font support, color/font/size/layout/background/glow/style controls, optional seconds/date, and screensaver activation controls.
-- **Sleep timer:** added a dedicated Sleep tile and settings page with a live countdown, start/stop controls, pause-audio option, close-app option, and a sleep flow that disables Immortal's screensaver before locking the screen.
-- **System-wide back shortcut:** added an Immortal accessibility BACK service plus an optional right-edge overlay swipe. The current revision also fixes the back-action recursion so the accessibility service now calls Android's real `GLOBAL_ACTION_BACK`.
-- **Launcher dashboard:** added optional Calendar agenda and system stats widgets, custom accent colors, custom image/blur backgrounds, an explicit new-folder button, persisted empty folders, a bottom-right folder back button, and a Portal-home shortcut tile.
-- **Settings polish:** expanded Immortal settings for weather, calendar, stats, clock format, accent color, background, and screensaver activation; removed Contacts from the curated Settings folder; moved sleep controls out of Screensaver settings into their own page.
-- **Build/runtime plumbing:** added calendar, overlay, foreground-service, and accessibility metadata needed by the new widgets and back gesture; added `ui-android` Compose dependency for the current UI work.
+- **Welcome-back overlay:** when the Portal's presence sensor wakes the screensaver,
+  a brief (3 s) overlay fades in over the photo frame showing a time-of-day greeting
+  ("Good morning / afternoon / evening"), the current time, and the date. Tapping
+  dismisses it early. Shown on every presence-triggered start (`PhotoDreamService` and
+  `DreamPolicy` relaunch); skipped for the manual preview. Togglable via
+  `ScreensaverConfig.welcomeEnabled` (on by default).
+- **Piper neural TTS:** the welcome overlay can speak the greeting via `PiperTTS`,
+  a Sherpa-ONNX wrapper using the `en_US-lessac-medium` voice (~16 MB download on
+  first use). Android system TTS starts immediately as a fast-path fallback; Piper
+  wins if it's ready first. Off by default; enabled in Welcome settings.
+- **Digital clock screensaver:** a second Dream service (`DigitalClockDreamService`)
+  shows a configurable full-screen digital or analog clock. Clock settings tile with
+  font, color, size, layout, background, glow, and style controls; optional
+  seconds display and date line; full-screen preview; screensaver activation controls.
+- **Sleep timer:** a dedicated Sleep tile and settings page with a live countdown,
+  start/stop controls, pause-audio option, close-app option, and a sleep flow that
+  disables Immortal's screensaver before locking the screen.
+- **System-wide back shortcut:** `ImmortalBackGestureService` (accessibility) plus an
+  optional right-edge swipe overlay (`SystemBackGestureService`). Fixes the
+  back-action recursion so the accessibility service fires Android's real
+  `GLOBAL_ACTION_BACK`.
+- **Launcher dashboard:** optional Calendar agenda widget (next 7 days), system stats
+  widget (RAM / storage / uptime), custom accent colors (16 options), custom
+  image/blur background, explicit new-folder button, persisted empty folders,
+  bottom-right folder back button, and a Portal-home shortcut tile.
+- **Settings polish:** expanded Immortal settings for weather, calendar, stats, clock
+  format, accent color, background, and screensaver activation; moved sleep controls
+  into their own page.
+- **Easter Egg tile:** injects the Android 9 Pie Easter Egg
+  (`com.android.systemui/.egg.MLandActivity` — the cat-herding / MLand game) as a
+  persistent home-grid tile on any Portal where it's present.
+- **Dual NIU overlay fix (provisioner):** the `--overlay-fix` step now disables both
+  `com.facebook.aloha.rro.niu.android` *and* `com.facebook.aloha.rro.niu.settings`,
+  fixing Settings white-on-white in addition to the installer dialog on Gen-1.
+- **OFL font compliance:** replaced the four personal-use-only TTF fonts with
+  redistribution-safe OFL-1.1 alternatives (DSEG7Classic, DSEG14Classic, Orbitron).
+  Added `assets/fonts/OFL.txt`. The build is now clean for open-source redistribution.
+- **CLAUDE.md:** AI agent navigation guide documenting hardware targets, architecture,
+  key constraints, and build/deploy workflow — for automated coding assistance in
+  future sessions.
+- **`deploy.bat`:** Windows one-shot build-and-deploy helper (wraps `gradlew
+  assembleDebug` + `adb install -r`).
+- **Build/runtime plumbing:** calendar, overlay, foreground-service, and accessibility
+  metadata; `ui-android` Compose dependency; Sherpa-ONNX AAR via local `libs/`.
 
 ## 1.34 (2026-06-09)
 

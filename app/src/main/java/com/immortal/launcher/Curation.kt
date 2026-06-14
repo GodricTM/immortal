@@ -75,11 +75,15 @@ object Curation {
    * Injected into the home grid if the package is installed.
    * Triple of (displayLabel, ComponentName, folderName-or-null).
    */
+  // Messenger and WhatsApp (com.facebook.aloha.app.{messenger,whatsapp}) are gated
+  // by the Aloha shell — their RootActivity needs a contact-ID extra supplied by the
+  // Aloha contacts app, which is itself gated. Neither can be launched standalone.
+  // Access them via the "Portal Home" bridge tile instead.
   val portalBuiltins = listOf(
-      Triple("Messenger",  ComponentName("com.facebook.aloha.app.messenger", "com.facebook.alohacommon.pef.RootActivity"), null as String?),
-      Triple("WhatsApp",   ComponentName("com.facebook.aloha.app.whatsapp",  "com.facebook.alohacommon.pef.RootActivity"), null as String?),
-      Triple("Easter Egg", ComponentName("com.android.systemui",              "com.android.systemui.egg.MLandActivity"),     null as String?),
+      Triple("Easter Egg", ComponentName("com.android.systemui", "com.android.systemui.egg.MLandActivity"), null as String?),
   )
+
+  val customLaunchAction = emptyMap<String, String>()
 
   fun isHidden(
       packageName: String,

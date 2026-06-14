@@ -23,10 +23,19 @@ keystore.properties
 # Built APKs / staged release artifacts and scratch screenshots.
 provisioning/apks/*.apk
 _chk*.png
+screen.png
 
 # Local device/debug captures.
 *.log
 *-dump.txt
+
+# Claude Code session files — machine-specific, not project state.
+.claude/
+.openclaude/
+
+# Sherpa-ONNX AAR (55 MB — too large for plain git; get it from
+# https://github.com/k2-fsa/sherpa-onnx/releases and place in app/libs/).
+app/libs/*.aar
 
 # Optional local clock fonts; verify licenses before force-adding any .ttf.
 app/src/main/assets/fonts/*.ttf
