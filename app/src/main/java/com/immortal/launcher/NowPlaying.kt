@@ -39,6 +39,29 @@ object NowPlaying {
     return flat.split(":").any { it.equals(me, ignoreCase = true) }
   }
 
+  /** Can we grant the listener ourselves (so the user doesn't need the Settings UI)? */
+  fun canSelfEnable(context: Context): Boolean = SettingsGuard.canWriteSecureSettings(context)
+
+  /**
+   * Grant our notification-listener access by writing the `enabled_notification_listeners`
+   * secure setting directly. Portal's notification-listener Settings screen is unreliable
+   * (often missing or un-toggleable), but we hold `WRITE_SECURE_SETTINGS`, so we add
+   * ourselves to the list and the framework binds the service. Returns true on success.
+   */
+  fun enableListener(context: Context): Boolean {
+    if (listenerEnabled(context)) return true
+    if (!SettingsGuard.canWriteSecureSettings(context)) return false
+    return runCatching {
+      val resolver = context.contentResolver
+      val me = ComponentName(context, NowPlayingListenerService::class.java).flattenToString()
+      val parts = (Settings.Secure.getString(resolver, "enabled_notification_listeners") ?: "")
+          .split(":").filter { it.isNotBlank() }.toMutableList()
+      if (parts.none { it.equals(me, ignoreCase = true) }) parts.add(me)
+      Settings.Secure.putString(resolver, "enabled_notification_listeners", parts.joinToString(":"))
+      listenerEnabled(context)
+    }.getOrElse { Log.w(TAG, "enableListener failed", it); false }
+  }
+
   /** The current track from the most relevant active session, or null. */
   fun current(context: Context): Track? {
     if (!listenerEnabled(context)) return null

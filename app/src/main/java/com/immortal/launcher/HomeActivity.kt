@@ -722,7 +722,7 @@ private fun LauncherScreen(
       // all on a single horizontally-scrolling line so they don't stack up and eat
       // the app grid's vertical space.
       HomeControlStrip(
-          showTabs = showTabs && folderNames.isNotEmpty(),
+          showTabs = showTabs,
           tabs = folderNames,
           selectedTab = selectedTab,
           onSelectTab = { selectedTab = it },
@@ -779,9 +779,27 @@ private fun LauncherScreen(
               verticalArrangement = Arrangement.spacedBy(20.dp),
               modifier = Modifier.focusRequester(homeGridFocus).focusGroup(),
           ) {
-            // When a category tab is selected, the grid shows just that folder's apps.
             val activeTab = if (showTabs) selectedTab else null
-            if (activeTab != null) {
+            // "Apps" tab: every installed app, flattened — no built-in tiles, no folders.
+            if (activeTab == TAB_APPS) {
+              val apps = appsEff.filter { it.component.packageName !in hiddenPkgs }
+              items(apps, key = { it.component.packageName }) { app ->
+                val pkg = app.component.packageName
+                AppTile(
+                    app = app,
+                    editMode = editMode,
+                    dimmed = dragPkg == pkg,
+                    modifier = Modifier.onGloballyPositioned { tileBounds[APP_KEY + pkg] = it.boundsInWindow() },
+                    onDelete = { onUninstall(pkg) },
+                    onHide = { hideApp(pkg) },
+                    onAppInfo = { openAppInfo(context, pkg) },
+                    onClick = { onLaunch(app.component) },
+                )
+              }
+              return@LazyVerticalGrid
+            }
+            // A real folder tab (e.g. Settings): just that folder's apps.
+            if (activeTab != null && activeTab != TAB_TOOLS) {
               val tabApps = appsEff.filter { it.folder == activeTab && it.component.packageName !in hiddenPkgs }
               items(tabApps, key = { it.component.packageName }) { app ->
                 val pkg = app.component.packageName
@@ -798,6 +816,8 @@ private fun LauncherScreen(
               }
               return@LazyVerticalGrid
             }
+            // Otherwise: "All" (activeTab == null) or "Tools" (TAB_TOOLS). Both show the
+            // built-in tiles below; "All" additionally shows folders + installed apps.
             // Special + folder tiles persist in Manage mode (non-uninstallable);
             // only regular apps get a delete badge and become draggable.
             item { PortalHomeTile(onExitHome) }
@@ -812,32 +832,36 @@ private fun LauncherScreen(
             if (DailyContent.modeOf(dailyTileMode) != DailyContent.Mode.OFF) {
               item { DailyTile(mode = dailyTileMode, onClick = { showDaily = true }) }
             }
-            items(folderNames, key = { it }) { name ->
-              FolderTile(
-                  name = name,
-                  apps = appsEff.filter { it.folder == name },
-                  modifier =
-                      Modifier.onGloballyPositioned {
-                        tileBounds[FOLDER_KEY + name] = it.boundsInWindow()
-                      },
-                  onClick = { openFolder = name },
-              )
-            }
-            items(ungrouped, key = { it.component.packageName }) { app ->
-              val pkg = app.component.packageName
-              AppTile(
-                  app = app,
-                  editMode = editMode,
-                  dimmed = dragPkg == pkg,
-                  modifier =
-                      Modifier.onGloballyPositioned {
-                        tileBounds[APP_KEY + pkg] = it.boundsInWindow()
-                      },
-                  onDelete = { onUninstall(pkg) },
-                  onHide = { hideApp(pkg) },
-                  onAppInfo = { openAppInfo(context, pkg) },
-                  onClick = { onLaunch(app.component) },
-              )
+            // Folders + loose installed apps belong to the "All" view only; the
+            // "Tools" tab stops at the built-in tiles above (+ Updates below).
+            if (activeTab == null) {
+              items(folderNames, key = { it }) { name ->
+                FolderTile(
+                    name = name,
+                    apps = appsEff.filter { it.folder == name },
+                    modifier =
+                        Modifier.onGloballyPositioned {
+                          tileBounds[FOLDER_KEY + name] = it.boundsInWindow()
+                        },
+                    onClick = { openFolder = name },
+                )
+              }
+              items(ungrouped, key = { it.component.packageName }) { app ->
+                val pkg = app.component.packageName
+                AppTile(
+                    app = app,
+                    editMode = editMode,
+                    dimmed = dragPkg == pkg,
+                    modifier =
+                        Modifier.onGloballyPositioned {
+                          tileBounds[APP_KEY + pkg] = it.boundsInWindow()
+                        },
+                    onDelete = { onUninstall(pkg) },
+                    onHide = { hideApp(pkg) },
+                    onAppInfo = { openAppInfo(context, pkg) },
+                    onClick = { onLaunch(app.component) },
+                )
+              }
             }
             // Always-present Updates tile, parked at the end of the grid. Tapping
             // installs a ready update, or forces a fresh check when up to date.
@@ -1251,6 +1275,11 @@ private fun LauncherScreen(
 
 private const val APP_KEY = "app:"
 private const val FOLDER_KEY = "folder:"
+
+// Virtual category tabs (alongside "All" + real folder names). Sentinel-prefixed so
+// they can never collide with a user folder literally named "Apps" or "Tools".
+private const val TAB_APPS = "Apps"
+private const val TAB_TOOLS = "Tools"
 
 // Overnight re-sleep timings. A wake with no interaction is treated as stray and
 // sleeps again after the short grace; once the user actually touches the screen we
@@ -2276,7 +2305,10 @@ private fun HomeControlStrip(
   ) {
     if (showTabs) {
       TabChip("All", selectedTab == null) { onSelectTab(null) }
-      tabs.forEach { name -> TabChip(name, selectedTab == name) { onSelectTab(name) } }
+      TabChip("Apps", selectedTab == TAB_APPS) { onSelectTab(TAB_APPS) }
+      TabChip("Tools", selectedTab == TAB_TOOLS) { onSelectTab(TAB_TOOLS) }
+      tabs.filter { it != TAB_APPS && it != TAB_TOOLS }
+          .forEach { name -> TabChip(name, selectedTab == name) { onSelectTab(name) } }
       // Thin separator between navigation tabs and the info/timer chips.
       Box(Modifier.size(width = 1.dp, height = 22.dp).background(Color(0x33FFFFFF)))
     }
@@ -3482,18 +3514,26 @@ private fun NowPlayingOverlay(onDismiss: () -> Unit) {
                 Text(track!!.artist, color = Color(0xFFBFBFBF), fontSize = 15.sp, maxLines = 1)
           }
           !listenerOn -> {
+            val canSelf = remember { NowPlaying.canSelfEnable(context) }
             Text("To show the track name and album art, give Immortal permission to read " +
                 "media notifications.", color = Color(0xFF9A9A9A), fontSize = 14.sp,
                 textAlign = TextAlign.Center)
             Surface(color = MaterialTheme.colorScheme.primary, shape = RoundedCornerShape(12.dp),
                 modifier = Modifier.tvFocusable(RoundedCornerShape(12.dp), focusScale = 1f) {
-                  runCatching {
-                    context.startActivity(
-                        Intent("android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS")
-                            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                  // Prefer flipping the secure setting ourselves (Portal's listener
+                  // settings UI is unreliable); fall back to it only if we can't.
+                  if (NowPlaying.enableListener(context)) {
+                    listenerOn = true
+                  } else {
+                    runCatching {
+                      context.startActivity(
+                          Intent("android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS")
+                              .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                    }
                   }
                 }) {
-              Text("Enable now-playing access", color = Color.White, fontSize = 15.sp,
+              Text(if (canSelf) "Enable now-playing" else "Enable now-playing access",
+                  color = Color.White, fontSize = 15.sp,
                   fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(horizontal = 18.dp, vertical = 10.dp))
             }
           }
