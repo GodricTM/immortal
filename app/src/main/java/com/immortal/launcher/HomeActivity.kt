@@ -45,6 +45,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -2032,6 +2033,8 @@ private fun DashboardPage() {
   var calendarOn by remember { mutableStateOf(ImmortalSettings.load(context).calendarWidget == ImmortalSettings.CALENDAR_ON) }
   var statsOn by remember { mutableStateOf(ImmortalSettings.load(context).statsMode == ImmortalSettings.STATS_ON) }
   var timeProgressOn by remember { mutableStateOf(ImmortalSettings.load(context).showTimeProgress) }
+  var clockOn by remember { mutableStateOf(ImmortalSettings.load(context).showDashClock) }
+  var countdownsOn by remember { mutableStateOf(ImmortalSettings.load(context).showDashCountdowns) }
   Column(
       modifier =
           Modifier.fillMaxSize()
@@ -2040,14 +2043,16 @@ private fun DashboardPage() {
       horizontalAlignment = Alignment.CenterHorizontally,
   ) {
     Spacer(Modifier.size(8.dp))
-    Text(timeFmt.format(now), color = Color.White, fontSize = 96.sp, fontWeight = FontWeight.Bold)
-    Text(
-        SimpleDateFormat("EEEE, MMMM d", Locale.getDefault()).format(now),
-        color = Color(0xFFDADADA),
-        fontSize = 22.sp,
-    )
+    if (clockOn) {
+      Text(timeFmt.format(now), color = Color.White, fontSize = 96.sp, fontWeight = FontWeight.Bold)
+      Text(
+          SimpleDateFormat("EEEE, MMMM d", Locale.getDefault()).format(now),
+          color = Color(0xFFDADADA),
+          fontSize = 22.sp,
+      )
+    }
     Spacer(Modifier.size(20.dp))
-    CountdownChips()
+    if (countdownsOn) CountdownChips()
     if (timeProgressOn) {
       Spacer(Modifier.size(12.dp))
       TimeProgressCard()
@@ -2063,9 +2068,19 @@ private fun DashboardPage() {
     Spacer(Modifier.size(20.dp))
     // Widget chooser: add/remove the dashboard widgets right here.
     DashboardWidgetChooser(
+        clockOn = clockOn,
+        countdownsOn = countdownsOn,
         calendarOn = calendarOn,
         statsOn = statsOn,
         timeProgressOn = timeProgressOn,
+        onClock = {
+          clockOn = it
+          ImmortalSettings.setShowDashClock(context, it)
+        },
+        onCountdowns = {
+          countdownsOn = it
+          ImmortalSettings.setShowDashCountdowns(context, it)
+        },
         onCalendar = {
           calendarOn = it
           ImmortalSettings.setCalendarWidget(context, if (it) ImmortalSettings.CALENDAR_ON else ImmortalSettings.CALENDAR_OFF)
@@ -2086,17 +2101,29 @@ private fun DashboardPage() {
 /** Inline chooser at the bottom of the dashboard page for toggling its widgets. */
 @Composable
 private fun DashboardWidgetChooser(
+    clockOn: Boolean,
+    countdownsOn: Boolean,
     calendarOn: Boolean,
     statsOn: Boolean,
     timeProgressOn: Boolean,
+    onClock: (Boolean) -> Unit,
+    onCountdowns: (Boolean) -> Unit,
     onCalendar: (Boolean) -> Unit,
     onStats: (Boolean) -> Unit,
     onTimeProgress: (Boolean) -> Unit,
 ) {
   Column(horizontalAlignment = Alignment.CenterHorizontally) {
-    Text("Dashboard widgets", color = Color(0xFF8A8A8A), fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+    Text("Edit this page", color = Color(0xFF8A8A8A), fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+    Spacer(Modifier.size(4.dp))
+    Text("Tap to show or hide each widget", color = Color(0xFF6A6A6A), fontSize = 12.sp)
     Spacer(Modifier.size(10.dp))
-    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+    FlowRow(
+        horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.CenterHorizontally),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+        modifier = Modifier.fillMaxWidth(0.9f),
+    ) {
+      WidgetToggleChip("🕑  Clock", clockOn) { onClock(!clockOn) }
+      WidgetToggleChip("🎈  Countdowns", countdownsOn) { onCountdowns(!countdownsOn) }
       WidgetToggleChip("📅  Calendar", calendarOn) { onCalendar(!calendarOn) }
       WidgetToggleChip("📊  System stats", statsOn) { onStats(!statsOn) }
       WidgetToggleChip("⏳  Time progress", timeProgressOn) { onTimeProgress(!timeProgressOn) }

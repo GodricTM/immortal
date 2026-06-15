@@ -29,8 +29,8 @@ object NotesConfig {
 
   fun clearText(context: Context) = prefs(context).edit().remove(KEY_TEXT).apply()
 
-  /** Single voice-memo file. */
-  fun audioFile(context: Context): File = File(context.filesDir, "leave_note.m4a")
+  /** Single voice-memo file (WAV — see AudioNote for why not compressed). */
+  fun audioFile(context: Context): File = File(context.filesDir, "leave_note.wav")
 
   fun hasAudioNote(context: Context): Boolean = audioFile(context).let { it.exists() && it.length() > 0 }
 

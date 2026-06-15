@@ -115,6 +115,9 @@ object ImmortalSettings {
       val showDayProgress: Boolean = false,
       // "Year is N% gone" card (week/month/year bars, year dots, month grid) on the dashboard page.
       val showTimeProgress: Boolean = false,
+      // Dashboard-page elements that are editable from its inline widget chooser.
+      val showDashClock: Boolean = true,
+      val showDashCountdowns: Boolean = true,
       val activateOnSleep: Boolean = ACTIVATE_ON_SLEEP_DEFAULT,
       val activateOnDock: Boolean = ACTIVATE_ON_DOCK_DEFAULT,
       // Show today's sunrise/sunset under the header weather.
@@ -162,11 +165,19 @@ object ImmortalSettings {
         dashboardPage = p.getBoolean("dashboard_page", false),
         showNextEvent = p.getBoolean("show_next_event", false),
         showTimeProgress = p.getBoolean("show_time_progress", false),
+        showDashClock = p.getBoolean("show_dash_clock", true),
+        showDashCountdowns = p.getBoolean("show_dash_countdowns", true),
     )
   }
 
   fun setShowTimeProgress(c: Context, on: Boolean) =
       prefs(c).edit().putBoolean("show_time_progress", on).apply()
+
+  fun setShowDashClock(c: Context, on: Boolean) =
+      prefs(c).edit().putBoolean("show_dash_clock", on).apply()
+
+  fun setShowDashCountdowns(c: Context, on: Boolean) =
+      prefs(c).edit().putBoolean("show_dash_countdowns", on).apply()
 
   fun setShowNextEvent(c: Context, on: Boolean) =
       prefs(c).edit().putBoolean("show_next_event", on).apply()
