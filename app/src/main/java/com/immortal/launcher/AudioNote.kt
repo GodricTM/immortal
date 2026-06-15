@@ -9,164 +9,77 @@ package com.immortal.launcher
 
 import android.content.Context
 import android.media.AudioAttributes
-import android.media.AudioFormat
-import android.media.AudioRecord
 import android.media.MediaPlayer
 import android.media.MediaRecorder
+import android.os.Build
 import android.util.Log
-import java.io.BufferedOutputStream
-import java.io.File
-import java.io.FileOutputStream
-import java.io.RandomAccessFile
 
 /**
  * Records and plays the single "leave a note" voice memo to [NotesConfig.audioFile].
- *
- * Why [AudioRecord]/WAV instead of [MediaRecorder]/AAC: on Portal the one mic a
- * sideloaded app can reach is shared with the device's always-on listeners, which
- * keep reclaiming the input ("dead IAudioRecord, creating a new one" in logcat).
- * MediaRecorder's AAC encoder simply stops getting frames when that happens and
- * finalises a clip ~0.25 s long no matter how long you hold the button. A raw
- * [AudioRecord] read loop recovers from the reclaim and keeps producing samples,
- * so we get a full-length take; we write it straight to WAV (no encoder to starve)
- * and apply a little gain because the near-field handset mic is quiet.
- *
- * One instance owns one recording/player at a time; call [release] when done.
+ * Uses the standard handset mic (RECORD_AUDIO) — the far-field array needs a Meta-
+ * signed permission Immortal can't hold, which is fine for a short up-close memo.
+ * One instance owns one recorder/player at a time; call [release] when done.
  */
 class AudioNote(private val context: Context) {
   private val TAG = "ImmortalNote"
-  private val sampleRate = 44100
-  private val gain = 3.5f // near-field handset mic is quiet; lift it to audible
-
-  @Volatile private var capturing = false
-  private var recordThread: Thread? = null
-  @Volatile private var peak = 0
-  private var recordStartMs = 0L
+  private var recorder: MediaRecorder? = null
   private var player: MediaPlayer? = null
 
-  val isRecording: Boolean get() = capturing
+  val isRecording: Boolean get() = recorder != null
   val isPlaying: Boolean get() = player?.isPlaying == true
 
-  private val pcmFile: File get() = File(context.filesDir, "leave_note.pcm")
-
   /** Begin recording to the note file (overwrites any previous memo). */
-  fun startRecording(): Boolean {
+  fun startRecording(): Boolean = runCatching {
     stopPlaying()
-    val minBuf = AudioRecord.getMinBufferSize(
-        sampleRate, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
-    val bufSize = if (minBuf > 0) minBuf * 2 else sampleRate
-    // MIC first — VOICE_RECOGNITION collides with the wake-word engine.
-    val sources = intArrayOf(
-        MediaRecorder.AudioSource.MIC,
-        MediaRecorder.AudioSource.VOICE_COMMUNICATION,
-        MediaRecorder.AudioSource.DEFAULT,
-    )
-    var record: AudioRecord? = null
-    for (src in sources) {
-      val r = runCatching {
-        AudioRecord(src, sampleRate, AudioFormat.CHANNEL_IN_MONO,
-            AudioFormat.ENCODING_PCM_16BIT, bufSize)
-      }.getOrNull()
-      if (r != null && r.state == AudioRecord.STATE_INITIALIZED) { record = r; break }
-      runCatching { r?.release() }
-    }
-    val rec = record ?: run { Log.w(TAG, "no usable AudioRecord source"); return false }
+    val file = NotesConfig.audioFile(context)
+    @Suppress("DEPRECATION")
+    val rec = if (Build.VERSION.SDK_INT >= 31) MediaRecorder(context) else MediaRecorder()
+    file.delete() // start fresh; a leftover/partial file can't be appended to
+    rec.setAudioSource(MediaRecorder.AudioSource.MIC)
+    rec.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
+    rec.setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
+    // Explicit, widely-supported params. Without these some devices write a file
+    // whose header the player later refuses ("records but won't play").
+    rec.setAudioChannels(1)
+    rec.setAudioSamplingRate(44100)
+    rec.setAudioEncodingBitRate(128000)
+    rec.setOutputFile(file.absolutePath)
+    rec.prepare()
+    rec.start()
+    recordStartMs = System.currentTimeMillis()
+    recorder = rec
+    true
+  }.getOrElse { Log.w(TAG, "startRecording failed", it); false }
 
-    return runCatching {
-      runCatching { pcmFile.delete() }
-      NotesConfig.audioFile(context).delete()
-      val out = BufferedOutputStream(FileOutputStream(pcmFile))
-      rec.startRecording()
-      capturing = true
-      peak = 0
-      recordStartMs = System.currentTimeMillis()
-      recordThread = Thread {
-        val buf = ShortArray(bufSize / 2)
-        val bytes = ByteArray(buf.size * 2)
-        try {
-          while (capturing) {
-            val n = rec.read(buf, 0, buf.size)
-            if (n <= 0) continue
-            var localPeak = peak
-            var bi = 0
-            for (i in 0 until n) {
-              val raw = buf[i].toInt()
-              val a = if (raw < 0) -raw else raw
-              if (a > localPeak) localPeak = a
-              var v = (raw * gain).toInt()
-              if (v > 32767) v = 32767 else if (v < -32768) v = -32768
-              bytes[bi++] = (v and 0xFF).toByte()
-              bytes[bi++] = ((v shr 8) and 0xFF).toByte()
-            }
-            peak = localPeak
-            out.write(bytes, 0, bi)
-          }
-        } catch (t: Throwable) {
-          Log.w(TAG, "capture loop ended", t)
-        } finally {
-          runCatching { out.flush(); out.close() }
-          runCatching { rec.stop() }
-          runCatching { rec.release() }
-        }
-      }.also { it.start() }
-      Log.i(TAG, "recording started (AudioRecord/WAV)")
-      true
-    }.getOrElse {
-      Log.w(TAG, "startRecording failed", it)
-      capturing = false
-      runCatching { rec.release() }
-      false
-    }
-  }
-
-  /** Stop and finalize the recording. Returns true if a playable file resulted. */
-  fun stopRecording(): Boolean {
-    if (!capturing && recordThread == null) return NotesConfig.hasAudioNote(context)
-    val tooShort = System.currentTimeMillis() - recordStartMs < 400
-    capturing = false
-    runCatching { recordThread?.join(2000) }
-    recordThread = null
-    val wav = NotesConfig.audioFile(context)
-    val pcmLen = pcmFile.length()
-    if (tooShort || pcmLen <= 0) {
-      Log.w(TAG, "recording too short / empty — discarding (pcm=$pcmLen)")
-      runCatching { pcmFile.delete() }
-      return false
-    }
-    val ok = runCatching { writeWav(pcmFile, wav, sampleRate) }.isSuccess
-    runCatching { pcmFile.delete() }
-    Log.i(TAG, "wrote ${wav.length()} bytes WAV (${pcmLen / (sampleRate * 2.0)} s) ok=$ok")
-    return ok && wav.exists() && wav.length() > 44
-  }
+  private var recordStartMs = 0L
 
   /** Peak input level since the last poll, 0..32767. ~0 means the mic is hearing
    *  near-silence (speaker too far from the device). Drives the UI meter. */
-  fun peakLevel(): Int = peak.also { peak = 0 }
+  fun peakLevel(): Int = runCatching { recorder?.maxAmplitude ?: 0 }.getOrDefault(0)
 
-  /** Wrap raw 16-bit mono PCM in a canonical 44-byte WAV header. */
-  private fun writeWav(pcm: File, wav: File, rate: Int) {
-    val dataLen = pcm.length().toInt()
-    val totalLen = dataLen + 36
-    val byteRate = rate * 2 // mono, 16-bit
-    RandomAccessFile(wav, "rw").use { raf ->
-      raf.setLength(0)
-      fun le32(v: Int) = byteArrayOf(
-          (v and 0xFF).toByte(), ((v shr 8) and 0xFF).toByte(),
-          ((v shr 16) and 0xFF).toByte(), ((v shr 24) and 0xFF).toByte())
-      fun le16(v: Int) = byteArrayOf((v and 0xFF).toByte(), ((v shr 8) and 0xFF).toByte())
-      raf.write("RIFF".toByteArray()); raf.write(le32(totalLen)); raf.write("WAVE".toByteArray())
-      raf.write("fmt ".toByteArray()); raf.write(le32(16)); raf.write(le16(1)) // PCM
-      raf.write(le16(1)) // mono
-      raf.write(le32(rate)); raf.write(le32(byteRate)); raf.write(le16(2)); raf.write(le16(16))
-      raf.write("data".toByteArray()); raf.write(le32(dataLen))
-      pcm.inputStream().use { it.copyTo(java.io.FileOutputStream(raf.fd)) }
+  /** Stop and finalize the recording. Returns true if a playable file resulted. */
+  fun stopRecording(): Boolean {
+    val r = recorder ?: return NotesConfig.hasAudioNote(context)
+    recorder = null
+    // MediaRecorder.stop() throws if stopped almost immediately (no encoded frames),
+    // leaving a corrupt file. Guard against a too-short tap.
+    val tooShort = System.currentTimeMillis() - recordStartMs < 500
+    val stopped = runCatching { r.stop() }.isSuccess
+    runCatching { r.release() }
+    if (!stopped || tooShort) {
+      Log.w(TAG, "recording too short / stop failed — discarding")
+      runCatching { NotesConfig.audioFile(context).delete() }
+      return false
     }
+    val f = NotesConfig.audioFile(context)
+    Log.i(TAG, "recorded ${f.length()} bytes to ${f.absolutePath}")
+    return f.exists() && f.length() > 0
   }
 
   /** Play the saved memo, invoking [onDone] when it finishes (or fails). */
   fun play(onDone: () -> Unit = {}) {
     val file = NotesConfig.audioFile(context)
-    if (!file.exists() || file.length() <= 44) {
+    if (!file.exists() || file.length() == 0L) {
       Log.w(TAG, "play: no file (${file.length()} bytes)"); onDone(); return
     }
     runCatching {
@@ -176,6 +89,7 @@ class AudioNote(private val context: Context) {
           AudioAttributes.Builder()
               .setUsage(AudioAttributes.USAGE_MEDIA)
               .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH).build())
+      // Use a file descriptor — more reliable than a path string across devices.
       java.io.FileInputStream(file).use { fis -> mp.setDataSource(fis.fd) }
       mp.setOnCompletionListener { stopPlaying(); onDone() }
       mp.setOnErrorListener { _, what, extra ->

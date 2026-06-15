@@ -61,8 +61,7 @@ DailyContent          — bundled daily quote / word / trivia (deterministic by 
 NowPlayingListenerService + NowPlaying — read the active MediaSession (track + art)
                         for the now-playing screensaver. Needs notification-listener
                         access enabled once by the user.
-NotesConfig / AudioNote — "leave a note": typed sticky + voice memo (AudioRecord→WAV +
-                        MediaPlayer; see "Microphone reality" below for why not MediaRecorder).
+NotesConfig / AudioNote — "leave a note": typed sticky + voice memo (MediaRecorder/Player).
 Transit               — Dublin departures via SmartDublin RTPI (keyless).
 CameraConfig          — saved rtsp:// camera URLs for CameraViewerActivity.
 LanAudio              — server-less LAN PCM-over-TCP audio for IntercomActivity.
@@ -254,17 +253,15 @@ can force it).
 
 **Microphone reality on Portal:** a sideloaded app only reaches the single
 near-field handset mic (the far-field beamformed array is behind a Meta-signed
-permission), and that mic is **shared with the device's always-on listeners**,
-which keep reclaiming the input (`dead IAudioRecord, creating a new one` in
-logcat). This breaks `MediaRecorder`: its AAC encoder stops getting frames the
-moment the mic is reclaimed and finalises a clip ~0.25 s long no matter how long
-you record — and `AudioSource.VOICE_RECOGNITION` is worse (it collides directly
-with the wake-word engine). So `AudioNote` (leave-a-note voice memo) records with
-**`AudioRecord` straight to WAV** (no encoder to starve; the read loop recovers
-from the reclaim and yields a full-length take), using `AudioSource.MIC`, with a
-~3.5× software gain because the near-field mic is quiet. The overlay still shows a
-live input meter + "speak closer" hint. A voice from across the room reads as
-near-silence — that part is physics, not fixable.
+permission), and that mic is shared with the device's always-on listeners. So
+`AudioNote` (leave-a-note voice memo) uses a plain `MediaRecorder` (MIC source,
+44.1 kHz AAC) and records best when the user speaks close to the device; the
+overlay shows a live input meter (`MediaRecorder.maxAmplitude`) + "speak closer"
+hint. A voice from across the room reads as near-silence.
+
+NOTE (2026-06-15): An AudioRecord→WAV rewrite was tried to dodge the mic
+contention but recorded worse in practice and was reverted to MediaRecorder.
+Don't re-attempt without testing capture quality on real hardware first.
 
 Release builds require `keystore.properties` at repo root or
 `~/.immortal-signing/keystore.properties`. See `app/build.gradle.kts` for details.
