@@ -30,12 +30,22 @@ object PingService {
 
   @Volatile private var socket: DatagramSocket? = null
   @Volatile private var running = false
+  private var multicastLock: android.net.wifi.WifiManager.MulticastLock? = null
 
   /** Begin listening for pings (idempotent). */
   fun start(context: Context) {
     if (running) return
     running = true
     val app = context.applicationContext
+    // Wi-Fi hardware filters out broadcast/multicast frames unless a lock is held, so
+    // without this the listener would simply never receive a ping on most devices.
+    runCatching {
+      val wifi = app.getSystemService(Context.WIFI_SERVICE) as android.net.wifi.WifiManager
+      multicastLock = wifi.createMulticastLock("immortal-ping").apply {
+        setReferenceCounted(false)
+        acquire()
+      }
+    }.onFailure { Log.w(TAG, "multicast lock failed (broadcast receive may not work)", it) }
     thread(name = "immortal-ping-listener", isDaemon = true) {
       runCatching {
             val s = DatagramSocket(PORT).apply { broadcast = true; reuseAddress = true }

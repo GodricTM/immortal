@@ -40,6 +40,9 @@
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
     <!-- Stats widget: IP address from Wi-Fi connection info. -->
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <!-- "Ping the other room": hold a Wi-Fi multicast lock so the LAN broadcast ping is
+         actually received (the radio filters broadcast frames otherwise). -->
+    <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
     <!-- Header volume button: adjust media volume. -->
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
     <!-- "Leave a note" voice memo: record a short message from the handset mic. -->
