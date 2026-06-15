@@ -717,19 +717,20 @@ private fun LauncherScreen(
             runCatching { context.startActivity(previewIntent) }
           },
       )
-      Spacer(Modifier.size(20.dp))
-      CountdownChips(version = homeResumeVersion)
-      TimerChips(version = timerVersion + homeResumeVersion, onAdd = { showTimerAdd = true },
-          onChanged = { timerVersion++ })
+      Spacer(Modifier.size(16.dp))
+      // One consolidated strip: category tabs + countdown chips + kitchen timers,
+      // all on a single horizontally-scrolling line so they don't stack up and eat
+      // the app grid's vertical space.
+      HomeControlStrip(
+          showTabs = showTabs && folderNames.isNotEmpty(),
+          tabs = folderNames,
+          selectedTab = selectedTab,
+          onSelectTab = { selectedTab = it },
+          countdownVersion = homeResumeVersion,
+          timerVersion = timerVersion + homeResumeVersion,
+          onTimerChanged = { timerVersion++ },
+      )
       HomeNoteCard(version = noteVersion, onEdit = { showNote = true })
-      if (showTabs && folderNames.isNotEmpty()) {
-        CategoryTabs(
-            categories = folderNames,
-            selected = selectedTab,
-            onSelect = { selectedTab = it },
-        )
-        Spacer(Modifier.size(12.dp))
-      }
       // The scrolling app grid, parameterized by its area modifier so it can be
       // hosted either directly (single page) or inside a HorizontalPager page.
       @Composable
@@ -959,6 +960,24 @@ private fun LauncherScreen(
             modifier = Modifier.size(96.dp).clip(androidx.compose.foundation.shape.CircleShape),
         )
       }
+    }
+    // Quick timer shortcut: bottom-left, stacked directly above the Alexa button.
+    Box(
+        contentAlignment = Alignment.Center,
+        modifier =
+            Modifier.align(Alignment.BottomStart)
+                .padding(start = 36.dp, bottom = 140.dp + bottomButtonLift)
+                .size(96.dp)
+                .tvFocusable(shape = androidx.compose.foundation.shape.CircleShape) {
+                  showTimerAdd = true
+                },
+    ) {
+      Image(
+          painter = painterResource(R.drawable.timer_icon),
+          contentDescription = "New timer",
+          contentScale = ContentScale.Fit,
+          modifier = Modifier.size(96.dp).clip(androidx.compose.foundation.shape.CircleShape),
+      )
     }
     // Manage / Done toggle lives in the bottom-right corner.
     EditButton(
@@ -2225,15 +2244,26 @@ private fun CountdownChips(version: Int = 0) {
   Spacer(Modifier.size(14.dp))
 }
 
-/** Live kitchen timers as chips (soonest first) plus a "+ Timer" chip. Each chip
- *  ticks down; tapping it cancels that timer. Leans on [TimerConfig]/[ChimePlayer]. */
+/** The single home control/info strip: category tabs, then countdown chips, then
+ *  live kitchen timers + a "+ Timer" chip — all on one horizontally-scrolling line
+ *  so nothing stacks. Tapping a timer cancels it. Leans on [CountdownConfig],
+ *  [TimerConfig], [ChimePlayer]. */
 @Composable
-private fun TimerChips(version: Int, onAdd: () -> Unit, onChanged: () -> Unit) {
+private fun HomeControlStrip(
+    showTabs: Boolean,
+    tabs: List<String>,
+    selectedTab: String?,
+    onSelectTab: (String?) -> Unit,
+    countdownVersion: Int,
+    timerVersion: Int,
+    onTimerChanged: () -> Unit,
+) {
   val context = androidx.compose.ui.platform.LocalContext.current
   var nowTick by remember { mutableStateOf(System.currentTimeMillis()) }
   LaunchedEffect(Unit) { while (true) { nowTick = System.currentTimeMillis(); delay(1000) } }
+  val countdowns = remember(countdownVersion) { CountdownConfig.loadSorted(context) }
   // Re-read once per second so timers the background receiver removed disappear too.
-  val timers = remember(version, nowTick / 1000) {
+  val timers = remember(timerVersion, nowTick / 1000) {
     TimerConfig.load(context).sortedBy { it.endAtMillis }
   }
   Row(
@@ -2244,13 +2274,34 @@ private fun TimerChips(version: Int, onAdd: () -> Unit, onChanged: () -> Unit) {
       horizontalArrangement = Arrangement.spacedBy(10.dp),
       verticalAlignment = Alignment.CenterVertically,
   ) {
+    if (showTabs) {
+      TabChip("All", selectedTab == null) { onSelectTab(null) }
+      tabs.forEach { name -> TabChip(name, selectedTab == name) { onSelectTab(name) } }
+      // Thin separator between navigation tabs and the info/timer chips.
+      Box(Modifier.size(width = 1.dp, height = 22.dp).background(Color(0x33FFFFFF)))
+    }
+    countdowns.forEach { e ->
+      Surface(
+          color = MaterialTheme.colorScheme.surface.copy(alpha = 0.86f),
+          shape = RoundedCornerShape(14.dp),
+      ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+          Text("${e.emoji} ", fontSize = 16.sp)
+          Text(e.label, color = MaterialTheme.colorScheme.onSurface, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+          Text("  ·  ${e.phrase()}", color = MaterialTheme.colorScheme.primary, fontSize = 15.sp)
+        }
+      }
+    }
     timers.forEach { t ->
       val rem = (t.endAtMillis - nowTick).coerceAtLeast(0)
       Surface(
           color = MaterialTheme.colorScheme.primary.copy(alpha = 0.90f),
           shape = RoundedCornerShape(14.dp),
           modifier = Modifier.tvFocusable(RoundedCornerShape(14.dp), focusScale = 1f) {
-            TimerConfig.remove(context, t.id); onChanged()
+            TimerConfig.remove(context, t.id); onTimerChanged()
           },
       ) {
         Row(
@@ -2264,16 +2315,8 @@ private fun TimerChips(version: Int, onAdd: () -> Unit, onChanged: () -> Unit) {
         }
       }
     }
-    Surface(
-        color = Color(0x22FFFFFF),
-        shape = RoundedCornerShape(14.dp),
-        modifier = Modifier.tvFocusable(RoundedCornerShape(14.dp), focusScale = 1f) { onAdd() },
-    ) {
-      Text("＋ Timer", color = Color(0xFFDADADA), fontSize = 15.sp, fontWeight = FontWeight.SemiBold,
-          modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp))
-    }
   }
-  Spacer(Modifier.size(14.dp))
+  Spacer(Modifier.size(12.dp))
 }
 
 /** mm:ss, or h:mm:ss past an hour. */
