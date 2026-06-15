@@ -62,7 +62,14 @@ class DigitalClockDreamService : DreamService() {
 
   private val tick = object : Runnable {
     override fun run() {
-      controller?.let { DigitalClockView.update(it, settings) }
+      controller?.let {
+        DigitalClockView.update(it, settings)
+        // Anti-burn-in: drift the whole clock along a slow, invisible path so the lit
+        // pixels of an always-on screen don't ghost in over time.
+        val now = System.currentTimeMillis()
+        it.root.translationX = AntiBurnIn.offsetX(now, 14f)
+        it.root.translationY = AntiBurnIn.offsetY(now, 14f)
+      }
       handler.postDelayed(this, if (settings.showSeconds) 500L else 1_000L)
     }
   }

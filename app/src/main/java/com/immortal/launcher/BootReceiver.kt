@@ -23,6 +23,8 @@ class BootReceiver : BroadcastReceiver() {
       ChimeScheduler.reschedule(context)
       // And re-arm any kitchen timers that were mid-run when we rebooted.
       TimerConfig.rearmAll(context)
+      // Re-arm the sunrise wake-light alarm.
+      SunriseScheduler.reschedule(context)
     }
   }
 }

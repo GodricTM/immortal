@@ -1,5 +1,65 @@
 # Changelog
 
+## 1.40 (2026-06-15)
+
+A large batch of ambient, kitchen, bedroom and "go outside and look" features.
+Authored by **@GodricTM**. Everything here is keyless and works offline-first (no
+Google services), per Portal constraints.
+
+**Sky & "go outside" tiles**
+
+- **ISS Pass predictor** — a tile that tells you when the International Space Station
+  flies over *your* location ("Visible pass Fri 9:42 PM ✨"), the direction it rises
+  and sets, how high it climbs, and whether it'll be bright enough to actually spot.
+  The orbit is propagated on-device with a self-contained SGP4 model (validated against
+  the standard NORAD test vector); only a one-off keyless orbital-element fetch needs the
+  network, then it works offline for days.
+- **Aurora tile** — lights up green *only when there's a real chance of aurora at this
+  device's location*, in any country and either hemisphere. It compares the live
+  planetary K-index (NOAA SWPC) to your geomagnetic latitude and the auroral oval, and
+  shows the Kp number and which horizon to face.
+- **Constellation night background** — a new "Stars" background that shows the real night
+  sky for your location and time behind the app grid after dark, fading in through dusk.
+
+**Kitchen & quick tools**
+
+- **Stopwatch / count-up** with lap marks, for workouts, steeping, anything.
+- **Converter** — length, weight, volume, speed and temperature offline, plus live
+  currency (European Central Bank rates, cached so it keeps working offline).
+- **Wave to advance (experimental):** wave a hand in front of the camera to move to the
+  next photo in the frame — no touch needed for floury or wet hands. Uses the standard
+  camera only; **off by default** (Screensaver settings → Gestures).
+
+**Bedroom**
+
+- **Sunrise alarm / wake light** — at the time you set, the screen brightens gradually
+  from a deep ember to daylight over a chosen ramp, with an optional gentle chime at the
+  end. Turns a bedroom Portal into a wake light.
+- **Lamp mode** — fills the screen with warm white at a chosen brightness and warmth: an
+  instant nightlight, reading light, or video-call fill light.
+- **Bedtime stories** — a small library of public-domain children's tales shown in big,
+  calm text and read aloud through the device's voice.
+- **Anti-burn-in** — the always-on digital clock now drifts along a slow, invisible path
+  so a screen that's never off ages evenly.
+
+**Household & connected**
+
+- **Ping the other room** — tap to light up every other Portal in the house with a tone
+  and a spoken room name. A contact-free intercom-lite over your Wi-Fi, with nothing to
+  sign in to and no server.
+- **Calendar packs** — add the calendar that fits your household: Irish bank holidays and
+  saints' days, or daily Islamic prayer times computed for your location. These sit
+  alongside the existing Romanian name-days / Orthodox feast lines.
+
+**Knowing your device**
+
+- **What's New** — a tile showing the launcher's recent self-updates, so a device that
+  improves itself quietly isn't a black box.
+- **Request an app** — opens a prefilled request so the household can signal which apps
+  they'd like added.
+- **"Did you know" tips** — an occasional card surfacing a feature you might not have
+  found yet.
+
 ## 1.39 (2026-06-14)
 
 One fix from a user bug report (merged from upstream starbrightlab).

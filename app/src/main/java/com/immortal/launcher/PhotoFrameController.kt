@@ -116,6 +116,9 @@ class PhotoFrameController(
   private val history = ArrayList<Bitmap>()
   private var index = -1
 
+  // Optional contact-free "wave to advance" (Camera2 motion; opt-in, off by default).
+  private var gestureCamera: GestureCamera? = null
+
   /** Host (dream / preview activity) sets this to dismiss the frame on tap. */
   var onExit: (() -> Unit)? = null
 
@@ -191,6 +194,14 @@ class PhotoFrameController(
     // Start the ambient soundscape (no-op when set to Off).
     runCatching { soundscape.start(settings.soundscape, settings.soundscapeVolume) }
 
+    // Optional "wave to advance" — wholly guarded; any failure just disables it so the
+    // always-on dream process is never put at risk.
+    if (settings.gestureWave) {
+      runCatching {
+        gestureCamera = GestureCamera(context) { ui.post { runCatching { next() } } }.also { it.start() }
+      }
+    }
+
     // Schedule the ambient dashboard cycle (first card after ~45s).
     if (settings.ambientDashboard) ui.postDelayed(dashboardCycle, 45_000L)
 
@@ -227,6 +238,8 @@ class PhotoFrameController(
   fun stop() {
     ui.removeCallbacks(dashboardCycle)
     ui.removeCallbacksAndMessages(null)
+    runCatching { gestureCamera?.stop() }
+    gestureCamera = null
     runCatching { soundscape.stop() }
     if (this::videoView.isInitialized) runCatching { videoView.stopPlayback() }
     tts?.stop()

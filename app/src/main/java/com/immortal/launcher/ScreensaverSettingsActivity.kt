@@ -337,6 +337,23 @@ private fun ScreensaverSettingsScreen() {
         )
       }
 
+      Spacer(Modifier.size(26.dp))
+      SectionLabel("Gestures (experimental)")
+      Card {
+        ToggleRow("Wave to advance", settings.gestureWave) {
+          ScreensaverConfig.setGestureWave(context, it)
+          settings = settings.copy(gestureWave = it)
+        }
+        Text(
+            "Wave a hand in front of the camera to move to the next photo — no touch " +
+                "needed (handy with floury or wet hands). Uses the standard camera only and " +
+                "needs the camera permission. Experimental; turn off if it misfires.",
+            fontSize = 13.sp,
+            color = Color(0xFF9A9A9A),
+            modifier = Modifier.padding(start = 18.dp, end = 18.dp, top = 4.dp, bottom = 14.dp),
+        )
+      }
+
       val hasBattery = remember { DreamPolicy.hasBattery(context) }
       SectionLabel("Power")
       Surface(color = Color(0xFF1C1C1E), shape = RoundedCornerShape(18.dp)) {

@@ -489,6 +489,38 @@ private fun ImmortalSettingsScreen(
 
       Card {
         Column(modifier = Modifier.fillMaxWidth().padding(18.dp)) {
+          Text("Calendar packs", color = Color.White, fontSize = 17.sp)
+          Text(
+              "Add the calendar that fits your household. These show in the header alongside " +
+                  "the name-day / feast lines above.",
+              color = Color(0xFF9A9A9A),
+              fontSize = 13.sp,
+              modifier = Modifier.padding(top = 2.dp, bottom = 8.dp),
+          )
+          CalendarPacks.AVAILABLE.forEach { pack ->
+            var on by remember { mutableStateOf(CalendarPacks.isEnabled(context, pack.id)) }
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
+            ) {
+              Column(modifier = Modifier.weight(1f)) {
+                Text(pack.title, color = Color.White, fontSize = 16.sp)
+                Text(pack.blurb, color = Color(0xFF9A9A9A), fontSize = 13.sp,
+                    modifier = Modifier.padding(top = 2.dp))
+              }
+              Switch(checked = on, onCheckedChange = {
+                on = it
+                CalendarPacks.setEnabled(context, pack.id, it)
+              })
+            }
+          }
+        }
+      }
+
+      Spacer(Modifier.size(14.dp))
+
+      Card {
+        Column(modifier = Modifier.fillMaxWidth().padding(18.dp)) {
           Text("Daily tile", color = Color.White, fontSize = 17.sp)
           Text(
               "Show a home-screen tile with a fresh quote, word, or trivia question each day.",
@@ -597,6 +629,7 @@ private fun ImmortalSettingsScreen(
                       "Dark" to ImmortalSettings.BG_DARK,
                       "Gradient" to ImmortalSettings.BG_GRADIENT,
                       "Sky" to ImmortalSettings.BG_SKY,
+                      "Stars" to ImmortalSettings.BG_STARS,
                       "Image" to ImmortalSettings.BG_IMAGE,
                       "Blur" to ImmortalSettings.BG_BLUR,
                   ),

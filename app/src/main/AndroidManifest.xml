@@ -193,6 +193,42 @@
             android:label="Intercom"
             android:theme="@style/Theme.SampleApp" />
 
+        <!-- Lamp mode: full-screen warm-white light panel. -->
+        <activity
+            android:name=".LampActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:screenOrientation="landscape"
+            android:label="Lamp"
+            android:theme="@style/Theme.SampleApp" />
+
+        <!-- Bedtime stories: public-domain tales read aloud via TTS. -->
+        <activity
+            android:name=".BedtimeStoryActivity"
+            android:exported="false"
+            android:screenOrientation="landscape"
+            android:label="Bedtime story"
+            android:theme="@style/Theme.SampleApp" />
+
+        <!-- Sunrise alarm settings. -->
+        <activity
+            android:name=".SunriseSettingsActivity"
+            android:exported="false"
+            android:label="Sunrise alarm"
+            android:theme="@style/Theme.SampleApp" />
+
+        <!-- Full-screen sunrise wake light, launched by SunriseReceiver at the alarm
+             time (shows over the lock screen and wakes the device). -->
+        <activity
+            android:name=".WakeLightActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:showWhenLocked="true"
+            android:turnScreenOn="true"
+            android:screenOrientation="landscape"
+            android:launchMode="singleTask"
+            android:theme="@style/Theme.SampleApp" />
+
         <!-- Clock settings (digital clock style, color, font, size, layout, background,
              glow, show date, show seconds, screensaver activation), opened from the
              Clock tile in the launcher's Settings folder. -->
@@ -331,6 +367,11 @@
         <!-- Internal alarms for the kitchen multi-timers (ring when each elapses). -->
         <receiver
             android:name=".TimerReceiver"
+            android:exported="false" />
+
+        <!-- Internal alarm for the sunrise wake light (launches WakeLightActivity). -->
+        <receiver
+            android:name=".SunriseReceiver"
             android:exported="false" />
 
         <!-- Notification listener used only to read the active media session for the

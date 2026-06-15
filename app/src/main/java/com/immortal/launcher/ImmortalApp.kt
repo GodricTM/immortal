@@ -38,5 +38,9 @@ class ImmortalApp : Application() {
     ChimeScheduler.reschedule(this)
     // Re-arm any kitchen timers that were still running (and drop expired ones).
     TimerConfig.rearmAll(this)
+    // Arm the next sunrise wake-light alarm per the user's config.
+    SunriseScheduler.reschedule(this)
+    // Start listening for "ping the other room" tones from other Portals on the LAN.
+    PingService.start(this)
   }
 }

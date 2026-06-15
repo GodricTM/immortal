@@ -47,6 +47,11 @@ object Weather {
           }
           .getOrDefault("")
 
+  /** Public accessor for the device's cached lat/lon (resolving + caching it once if
+   * needed). Used by location-aware features like the ISS pass predictor. Null on
+   * failure. */
+  fun coordinates(context: Context): Pair<Double, Double>? = location(context)
+
   /** Cached lat/lon, or a fresh geolocation (cached on success). */
   private fun location(context: Context): Pair<Double, Double>? {
     val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)

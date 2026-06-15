@@ -68,6 +68,50 @@ NowPlayingListenerService + NowPlaying — read the active MediaSession (track +
                         access enabled once by the user.
 NotesConfig / AudioNote — "leave a note": typed sticky + voice memo (MediaRecorder/Player).
 Transit               — Dublin departures via SmartDublin RTPI (keyless).
+IssPasses             — "space station overhead" predictor. Self-contained near-Earth
+                        SGP4 propagator + topocentric look angles; one keyless TLE
+                        fetch (Celestrak → wheretheiss.at), then all offline. Lists
+                        upcoming passes (start/peak/end time, max elevation, compass
+                        direction) + a naked-eye "visible" flag (sat sunlit & sky dark).
+                        UI: IssTile + IssOverlay on home. SGP4 validated against the
+                        canonical Vallado vector in IssPassesTest (offline).
+Aurora                — location-driven aurora chance. Keyless NOAA SWPC planetary
+                        K-index (now + 24h forecast peak) vs the device's geomagnetic
+                        latitude (dipole tilt) and the Kp-driven oval edge. Works any
+                        country / either hemisphere. UI: AuroraTile (lights up green
+                        only when there's a chance, shows Kp) + AuroraOverlay. Pure
+                        geomag/Kp logic unit-tested in AuroraTest (offline).
+Converter             — offline unit conversions (length/mass/volume/speed/temp) +
+                        keyless currency (Frankfurter/ECB, cached). ConverterTile +
+                        ConverterOverlay. Math unit-tested in ConverterTest.
+Tips                  — "Did you know" discoverability cards (one/day, dismissible).
+WhatChanged           — "What's new" from the launcher's GitHub releases (keyless).
+                        WhatChangedTile + overlay.
+LampActivity          — lamp mode: full-screen warm-white panel, brightness + warmth.
+Stories/BedtimeStoryActivity — public-domain kids' stories, big text + Android TTS read-aloud.
+SunriseConfig/SunriseScheduler/SunriseReceiver/WakeLightActivity/SunriseSettingsActivity —
+                        sunrise alarm / wake light: AlarmManager fires WakeLightActivity,
+                        which ramps screen brightness ember→day over N min + optional
+                        ChimePlayer crescendo. Re-armed in ImmortalApp + BootReceiver.
+                        nextTrigger unit-tested.
+StarField             — real night sky behind the grid after dark (BG_STARS background
+                        mode): compact bright-star catalogue projected to the device's
+                        horizon (alt/az from LST) + asterism lines; fades in through
+                        twilight. project()/LST unit-tested.
+AntiBurnIn            — slow Lissajous pixel-shift for always-on surfaces (applied to the
+                        digital-clock dream). Pure + unit-tested.
+PingService           — "ping the other room": serverless LAN UDP broadcast; every
+                        Immortal listens and rings ChimePlayer + speaks the room name.
+                        Started in ImmortalApp. PingTile sends.
+CalendarPacks/IrishHolidays/PrayerTimes — installable calendar packs (header lines): Irish
+                        bank holidays + saints (computed Easter), Islamic prayer times
+                        (computed by location). Toggled in ImmortalSettings; built-in
+                        Romanian/Orthodox stays on its existing flags.
+GestureCamera         — EXPERIMENTAL "wave to advance" for the photo frame via plain
+                        Camera2 frame-differencing (NEVER the gated Smart Camera SDK).
+                        Off by default (ScreensaverConfig.gestureWave); fully guarded so
+                        any failure self-disables rather than risking the dream process.
+                        Feasibility on real Portal hardware UNVERIFIED — keep opt-in.
 CameraConfig          — saved rtsp:// camera URLs for CameraViewerActivity.
 LanAudio              — server-less LAN PCM-over-TCP audio for IntercomActivity.
 TimeProgress          — week/month/year progress bars, 365-day year dots, fading

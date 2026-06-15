@@ -86,6 +86,7 @@ object ImmortalSettings {
   const val BG_BLUR = "blur"        // image with blur effect
   const val BG_GRADIENT = "gradient" // a built-in gradient wallpaper
   const val BG_SKY = "sky"          // sun-driven sky colour (tracks sunrise/sunset)
+  const val BG_STARS = "stars"      // real night sky after dark (StarField), dark by day
 
   // Built-in gradient wallpaper presets (top colour, bottom colour as 0xAARRGGBB).
   val GRADIENTS: List<Triple<String, Long, Long>> = listOf(
@@ -139,6 +140,16 @@ object ImmortalSettings {
   )
 
   private fun prefs(c: Context) = c.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+
+  /** A friendly name for this device, used when it pings other rooms over the LAN.
+   * Defaults to the hardware model until the user sets one. */
+  fun deviceRoomName(context: Context): String =
+      prefs(context).getString("room_name", null)?.takeIf { it.isNotBlank() }
+          ?: android.os.Build.MODEL ?: "Portal"
+
+  fun setDeviceRoomName(context: Context, name: String) {
+    prefs(context).edit().putString("room_name", name.trim()).apply()
+  }
 
   fun load(context: Context): Settings {
     val p = prefs(context)

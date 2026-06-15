@@ -76,6 +76,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
@@ -503,6 +504,11 @@ private fun LauncherScreen(
   var showTimerAdd by remember { mutableStateOf(false) }
   var timerVersion by remember { mutableStateOf(0) }
   var showTransit by remember { mutableStateOf(false) }
+  var showIss by remember { mutableStateOf(false) }
+  var showAurora by remember { mutableStateOf(false) }
+  var showStopwatch by remember { mutableStateOf(false) }
+  var showConverter by remember { mutableStateOf(false) }
+  var showWhatChanged by remember { mutableStateOf(false) }
   var showNowPlaying by remember { mutableStateOf(false) }
   // Bumped whenever a note changes so the home sticky card re-reads it.
   var noteVersion by remember { mutableStateOf(0) }
@@ -651,6 +657,7 @@ private fun LauncherScreen(
               )
           backgroundType == ImmortalSettings.BG_GRADIENT -> GradientBackground(backgroundGradient)
           backgroundType == ImmortalSettings.BG_SKY -> SkyBackground()
+          backgroundType == ImmortalSettings.BG_STARS -> StarFieldBackground()
           else -> Box(modifier = Modifier.fillMaxSize().background(Color(0xFF1A1A1A)))
       }
       // Day-progress bar: a thin line at the very top tracking how far through the day
@@ -828,6 +835,16 @@ private fun LauncherScreen(
             item { NowPlayingTile(onClick = { showNowPlaying = true }) }
             item { NoteTile(onClick = { showNote = true }) }
             item { TransitTile(onClick = { showTransit = true }) }
+            item { IssTile(onClick = { showIss = true }) }
+            item { AuroraTile(onClick = { showAurora = true }) }
+            item { StopwatchTile(onClick = { showStopwatch = true }) }
+            item { ConverterTile(onClick = { showConverter = true }) }
+            item { LampTile() }
+            item { BedtimeTile() }
+            item { SunriseTile() }
+            item { RequestAppTile() }
+            item { PingTile() }
+            item { WhatChangedTile(onClick = { showWhatChanged = true }) }
             item { MyNoiseTile() }
             if (DailyContent.modeOf(dailyTileMode) != DailyContent.Mode.OFF) {
               item { DailyTile(mode = dailyTileMode, onClick = { showDaily = true }) }
@@ -1188,6 +1205,28 @@ private fun LauncherScreen(
       TransitOverlay(onDismiss = { showTransit = false })
     }
 
+    // ISS overhead pass predictor overlay.
+    if (showIss) {
+      IssOverlay(onDismiss = { showIss = false })
+    }
+
+    // Aurora (Kp-index) outlook overlay.
+    if (showAurora) {
+      AuroraOverlay(onDismiss = { showAurora = false })
+    }
+
+    if (showStopwatch) {
+      StopwatchOverlay(onDismiss = { showStopwatch = false })
+    }
+
+    if (showConverter) {
+      ConverterOverlay(onDismiss = { showConverter = false })
+    }
+
+    if (showWhatChanged) {
+      WhatChangedOverlay(onDismiss = { showWhatChanged = false })
+    }
+
     if (showNowPlaying) {
       NowPlayingOverlay(onDismiss = { showNowPlaying = false })
     }
@@ -1527,6 +1566,12 @@ private fun HeaderBar(onScreensaver: () -> Unit, onClock: () -> Unit, onSleep: (
               modifier = Modifier.padding(top = 2.dp),
           )
         }
+      }
+      // Installable calendar packs (Irish holidays, prayer times) — added on top of the
+      // built-in Romanian/Orthodox lines above.
+      val packLines = remember(now) { CalendarPacks.headerLines(context) }
+      packLines.forEach { line ->
+        Text(line, color = Color(0xFFB0B0B0), fontSize = 14.sp, modifier = Modifier.padding(top = 2.dp))
       }
       if (showNextEvent) {
         val nextEvent by produceState<CalendarEvent?>(initialValue = null) {
@@ -2877,6 +2922,540 @@ private fun TransitOverlay(onDismiss: () -> Unit) {
 }
 
 @Composable
+private fun IssTile(onClick: () -> Unit) {
+  BuiltInTile(
+      label = "ISS Pass",
+      background = Color(0xFF1A237E),
+      glyph = ICON_SATELLITE,
+      onClick = onClick,
+  )
+}
+
+/** "When does the space station fly over?" overlay. Lists the next visible/overhead
+ *  passes for the device's location — start time, the direction it rises and sets,
+ *  how high it climbs, and a ✨ badge when it'll be bright enough to actually spot.
+ *  All computed on-device (SGP4) after a single keyless TLE fetch. */
+@Composable
+private fun IssOverlay(onDismiss: () -> Unit) {
+  val context = androidx.compose.ui.platform.LocalContext.current
+  var passes by remember { mutableStateOf<List<IssPasses.Pass>?>(null) }
+
+  LaunchedEffect(Unit) {
+    passes = withContext(Dispatchers.IO) { IssPasses.predict(context) }
+  }
+
+  BackHandler { onDismiss() }
+  Box(
+      contentAlignment = Alignment.Center,
+      modifier = Modifier.fillMaxSize().background(Color(0xCC000000))
+          .tvFocusable(RoundedCornerShape(0.dp), focusScale = 1f) { onDismiss() },
+  ) {
+    Surface(color = MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(24.dp),
+        modifier = Modifier.widthIn(max = 560.dp).padding(24.dp)) {
+      Column(modifier = Modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        Text("🛰️ Space station overhead", color = Color.White, fontSize = 22.sp,
+            fontWeight = FontWeight.Bold)
+        val p = passes
+        when {
+          p == null ->
+              Text("Finding passes…", color = Color(0xFFB0B0B0), fontSize = 16.sp)
+          p.isEmpty() ->
+              Text(
+                  "No passes found. Check the device is online so it can fetch the latest " +
+                      "orbit, and that your location is set (it follows the weather tile).",
+                  color = Color(0xFFB0B0B0), fontSize = 15.sp)
+          else -> {
+            // Lead with the headline the way you'd say it out loud.
+            val first = p.first()
+            Text(
+                buildString {
+                  append(if (first.visible) "Visible pass " else "Passes over ")
+                  append(IssPasses.timeLabel(first.startMillis))
+                  append(if (first.visible) " ✨" else "")
+                },
+                color = if (first.visible) Color(0xFFFFD54F) else Color.White,
+                fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
+            Column(
+                modifier = Modifier.fillMaxWidth().heightIn(max = 320.dp)
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+              p.forEach { pass ->
+                Surface(color = Color(0x18FFFFFF), shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.fillMaxWidth()) {
+                  Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                      Text(IssPasses.timeLabel(pass.startMillis), color = Color.White,
+                          fontSize = 16.sp, fontWeight = FontWeight.SemiBold,
+                          modifier = Modifier.weight(1f))
+                      if (pass.visible) {
+                        Surface(color = Color(0x33FFD54F), shape = RoundedCornerShape(8.dp)) {
+                          Text("✨ visible", color = Color(0xFFFFD54F), fontSize = 13.sp,
+                              fontWeight = FontWeight.SemiBold,
+                              modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp))
+                        }
+                      }
+                    }
+                    Text(
+                        "Rises ${pass.startDir} · peak ${pass.maxElevationDeg}° to the " +
+                            "${pass.peakDir} · sets ${pass.endDir}",
+                        color = Color(0xFFB8B8B8), fontSize = 14.sp)
+                  }
+                }
+              }
+            }
+            Text(
+                "Times are local. ✨ means it should be bright enough to see — go outside " +
+                    "and look up to the listed direction.",
+                color = Color(0xFF8A8A8A), fontSize = 12.sp)
+          }
+        }
+        Surface(color = Color(0x22FFFFFF), shape = RoundedCornerShape(14.dp),
+            modifier = Modifier.fillMaxWidth().tvFocusable(RoundedCornerShape(14.dp), focusScale = 1f) { onDismiss() }) {
+          Text("Close", color = Color.White, fontSize = 16.sp, textAlign = TextAlign.Center,
+              modifier = Modifier.padding(vertical = 10.dp).fillMaxWidth())
+        }
+      }
+    }
+  }
+}
+
+/** Aurora outlook tile — it stays a dim slate when there's nothing to see, and lights
+ *  up green (with the Kp number) when the oval is reaching, or near, your latitude.
+ *  Reads the outlook once in the background so the home grid never blocks on network. */
+@Composable
+private fun AuroraTile(onClick: () -> Unit) {
+  val context = androidx.compose.ui.platform.LocalContext.current
+  var status by remember { mutableStateOf<Aurora.Status?>(null) }
+  LaunchedEffect(Unit) { status = withContext(Dispatchers.IO) { Aurora.status(context) } }
+  val st = status
+  val background =
+      when (st?.chance) {
+        Aurora.Chance.LIKELY -> Color(0xFF00C853) // vivid: go outside
+        Aurora.Chance.POSSIBLE -> Color(0xFF2E7D32)
+        Aurora.Chance.SLIM -> Color(0xFF37474F)
+        else -> Color(0xFF263238) // none / unknown: dim
+      }
+  val label =
+      when (st?.chance) {
+        Aurora.Chance.LIKELY,
+        Aurora.Chance.POSSIBLE -> "Aurora Kp${Aurora.fmtKp(st.kpForecast)}"
+        else -> "Aurora"
+      }
+  BuiltInTile(label = label, background = background, glyph = ICON_AURORA, onClick = onClick)
+}
+
+/** "Any chance of northern/southern lights here tonight?" overlay — the Kp now + the
+ *  24 h forecast peak, what it means at this device's geomagnetic latitude, and which
+ *  way to look. Computed on-device after the keyless NOAA SWPC fetch. */
+@Composable
+private fun AuroraOverlay(onDismiss: () -> Unit) {
+  val context = androidx.compose.ui.platform.LocalContext.current
+  var status by remember { mutableStateOf<Aurora.Status?>(null) }
+  var loaded by remember { mutableStateOf(false) }
+
+  LaunchedEffect(Unit) {
+    status = withContext(Dispatchers.IO) { Aurora.status(context) }
+    loaded = true
+  }
+
+  BackHandler { onDismiss() }
+  Box(
+      contentAlignment = Alignment.Center,
+      modifier = Modifier.fillMaxSize().background(Color(0xCC000000))
+          .tvFocusable(RoundedCornerShape(0.dp), focusScale = 1f) { onDismiss() },
+  ) {
+    Surface(color = MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(24.dp),
+        modifier = Modifier.widthIn(max = 560.dp).padding(24.dp)) {
+      Column(modifier = Modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        Text("🌌 Aurora outlook", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+        val st = status
+        when {
+          !loaded -> Text("Checking the K-index…", color = Color(0xFFB0B0B0), fontSize = 16.sp)
+          st == null ->
+              Text(
+                  "Couldn't fetch the K-index. Check the device is online and that your " +
+                      "location is set (it follows the weather tile).",
+                  color = Color(0xFFB0B0B0), fontSize = 15.sp)
+          else -> {
+            val accent =
+                when (st.chance) {
+                  Aurora.Chance.LIKELY -> Color(0xFF69F0AE)
+                  Aurora.Chance.POSSIBLE -> Color(0xFFB9F6CA)
+                  Aurora.Chance.SLIM -> Color(0xFFB0BEC5)
+                  Aurora.Chance.NONE -> Color(0xFF90A4AE)
+                }
+            Text(st.headline, color = accent, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
+            Text(st.detail, color = Color(0xFFCFCFCF), fontSize = 15.sp, lineHeight = 21.sp)
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+              AuroraStat("Kp now", Aurora.fmtKp(st.kpNow), Modifier.weight(1f))
+              AuroraStat("Next 24 h peak", Aurora.fmtKp(st.kpForecast), Modifier.weight(1f))
+              AuroraStat("Look", st.lookToward, Modifier.weight(1f))
+            }
+            Text(
+                "Source: NOAA SWPC planetary K-index. Best after dark, away from city lights, " +
+                    "with a clear ${if (st.lookToward == "N") "northern" else "southern"} horizon.",
+                color = Color(0xFF8A8A8A), fontSize = 12.sp)
+          }
+        }
+        Surface(color = Color(0x22FFFFFF), shape = RoundedCornerShape(14.dp),
+            modifier = Modifier.fillMaxWidth().tvFocusable(RoundedCornerShape(14.dp), focusScale = 1f) { onDismiss() }) {
+          Text("Close", color = Color.White, fontSize = 16.sp, textAlign = TextAlign.Center,
+              modifier = Modifier.padding(vertical = 10.dp).fillMaxWidth())
+        }
+      }
+    }
+  }
+}
+
+@Composable
+private fun AuroraStat(label: String, value: String, modifier: Modifier = Modifier) {
+  Surface(color = Color(0x18FFFFFF), shape = RoundedCornerShape(12.dp), modifier = modifier) {
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        modifier = Modifier.padding(vertical = 10.dp).fillMaxWidth(),
+    ) {
+      Text(value, color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+      Text(label, color = Color(0xFF9A9A9A), fontSize = 12.sp, textAlign = TextAlign.Center)
+    }
+  }
+}
+
+@Composable
+private fun StopwatchTile(onClick: () -> Unit) {
+  BuiltInTile(label = "Stopwatch", background = Color(0xFF455A64), glyph = ICON_STOPWATCH, onClick = onClick)
+}
+
+/** A count-up stopwatch with lap marks — for workouts, steeping, anything. Runs while
+ *  the overlay is open; it's a quick tool, not a persisted timer (that's the chips). */
+@Composable
+private fun StopwatchOverlay(onDismiss: () -> Unit) {
+  var running by remember { mutableStateOf(false) }
+  // accumulated = time banked from previous runs; startedAt = when the current run began.
+  var accumulated by remember { mutableStateOf(0L) }
+  var startedAt by remember { mutableStateOf(0L) }
+  var nowTick by remember { mutableStateOf(0L) }
+  val laps = remember { mutableStateListOf<Long>() }
+
+  val elapsed = accumulated + if (running) (nowTick - startedAt).coerceAtLeast(0L) else 0L
+
+  LaunchedEffect(running) {
+    while (running) {
+      nowTick = System.currentTimeMillis()
+      delay(31)
+    }
+  }
+
+  BackHandler { onDismiss() }
+  Box(
+      contentAlignment = Alignment.Center,
+      modifier = Modifier.fillMaxSize().background(Color(0xCC000000))
+          .tvFocusable(RoundedCornerShape(0.dp), focusScale = 1f) { onDismiss() },
+  ) {
+    Surface(color = MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(24.dp),
+        modifier = Modifier.widthIn(max = 520.dp).padding(24.dp)) {
+      Column(modifier = Modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(16.dp),
+          horizontalAlignment = Alignment.CenterHorizontally) {
+        Text("⏱ Stopwatch", color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+        Text(formatStopwatch(elapsed), color = Color.White, fontSize = 56.sp,
+            fontWeight = FontWeight.Bold, fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace)
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+          StopwatchButton(if (running) "Pause" else "Start",
+              if (running) Color(0xFFB0BEC5) else Color(0xFF00C853)) {
+            if (running) {
+              accumulated = elapsed
+              running = false
+            } else {
+              startedAt = System.currentTimeMillis()
+              nowTick = startedAt
+              running = true
+            }
+          }
+          StopwatchButton(if (running) "Lap" else "Reset", Color(0xFF455A64)) {
+            if (running) laps.add(0, elapsed) else { accumulated = 0L; laps.clear() }
+          }
+        }
+        if (laps.isNotEmpty()) {
+          Column(
+              modifier = Modifier.fillMaxWidth().heightIn(max = 200.dp)
+                  .verticalScroll(rememberScrollState()),
+              verticalArrangement = Arrangement.spacedBy(6.dp),
+          ) {
+            laps.forEachIndexed { i, lap ->
+              Row(modifier = Modifier.fillMaxWidth()) {
+                Text("Lap ${laps.size - i}", color = Color(0xFF9A9A9A), fontSize = 15.sp,
+                    modifier = Modifier.weight(1f))
+                Text(formatStopwatch(lap), color = Color.White, fontSize = 15.sp,
+                    fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace)
+              }
+            }
+          }
+        }
+        Surface(color = Color(0x22FFFFFF), shape = RoundedCornerShape(14.dp),
+            modifier = Modifier.fillMaxWidth().tvFocusable(RoundedCornerShape(14.dp), focusScale = 1f) { onDismiss() }) {
+          Text("Close", color = Color.White, fontSize = 16.sp, textAlign = TextAlign.Center,
+              modifier = Modifier.padding(vertical = 10.dp).fillMaxWidth())
+        }
+      }
+    }
+  }
+}
+
+@Composable
+private fun StopwatchButton(label: String, color: Color, onClick: () -> Unit) {
+  Surface(color = color, shape = RoundedCornerShape(14.dp),
+      modifier = Modifier.width(130.dp).tvFocusable(RoundedCornerShape(14.dp), focusScale = 1.04f) { onClick() }) {
+    Text(label, color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.SemiBold,
+        textAlign = TextAlign.Center, modifier = Modifier.padding(vertical = 14.dp).fillMaxWidth())
+  }
+}
+
+private fun formatStopwatch(ms: Long): String {
+  val totalCs = ms / 10
+  val cs = totalCs % 100
+  val totalSec = totalCs / 100
+  val s = totalSec % 60
+  val m = totalSec / 60
+  return "%02d:%02d.%02d".format(m, s, cs)
+}
+
+@Composable
+private fun ConverterTile(onClick: () -> Unit) {
+  BuiltInTile(label = "Convert", background = Color(0xFF00838F), glyph = ICON_CONVERT, onClick = onClick)
+}
+
+/** Quick unit + currency converter. Units convert instantly offline; the Currency
+ *  category uses the keyless ECB feed (cached). */
+@Composable
+private fun ConverterOverlay(onDismiss: () -> Unit) {
+  val context = androidx.compose.ui.platform.LocalContext.current
+  val categories = remember { Converter.UNIT_CATEGORIES.map { it.first } + "Currency" }
+  var category by remember { mutableStateOf("Length") }
+  val units: List<String> =
+      remember(category) {
+        if (category == "Currency") Converter.CURRENCIES
+        else Converter.UNIT_CATEGORIES.first { it.first == category }.second.keys.toList()
+      }
+  var from by remember(category) { mutableStateOf(units.first()) }
+  var to by remember(category) { mutableStateOf(units.getOrElse(1) { units.first() }) }
+  var input by remember { mutableStateOf("1") }
+  var result by remember { mutableStateOf("") }
+
+  // Recompute on any change. Currency is async (network/cache); units are instant.
+  LaunchedEffect(category, from, to, input) {
+    val v = input.toDoubleOrNull()
+    if (v == null) { result = ""; return@LaunchedEffect }
+    result =
+        if (category == "Currency") {
+          val r = withContext(Dispatchers.IO) { Converter.convertCurrency(context, from, to, v) }
+          if (r == null) "—" else trimNum(r)
+        } else {
+          trimNum(Converter.convert(category, from, to, v))
+        }
+  }
+
+  BackHandler { onDismiss() }
+  Box(
+      contentAlignment = Alignment.Center,
+      modifier = Modifier.fillMaxSize().background(Color(0xCC000000))
+          .tvFocusable(RoundedCornerShape(0.dp), focusScale = 1f) { onDismiss() },
+  ) {
+    Surface(color = MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(24.dp),
+        modifier = Modifier.widthIn(max = 560.dp).padding(24.dp)) {
+      Column(modifier = Modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        Text("🔁 Converter", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+        ChipRow(categories, category) { category = it }
+        androidx.compose.material3.OutlinedTextField(
+            value = input,
+            onValueChange = { input = it.filter { c -> c.isDigit() || c == '.' || c == '-' } },
+            label = { Text("Value") },
+            singleLine = true,
+            keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                keyboardType = androidx.compose.ui.text.input.KeyboardType.Number),
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Text("From", color = Color(0xFF9A9A9A), fontSize = 13.sp)
+        ChipRow(units, from) { from = it }
+        Text("To", color = Color(0xFF9A9A9A), fontSize = 13.sp)
+        ChipRow(units, to) { to = it }
+        Surface(color = Color(0x18FFFFFF), shape = RoundedCornerShape(14.dp),
+            modifier = Modifier.fillMaxWidth()) {
+          Column(modifier = Modifier.padding(16.dp)) {
+            Text("$input $from =", color = Color(0xFF9A9A9A), fontSize = 14.sp)
+            Text(if (result.isBlank()) "…" else "$result $to", color = Color.White,
+                fontSize = 28.sp, fontWeight = FontWeight.Bold)
+            if (category == "Currency")
+                Text("ECB reference rate (cached).", color = Color(0xFF8A8A8A), fontSize = 12.sp)
+          }
+        }
+        Surface(color = Color(0x22FFFFFF), shape = RoundedCornerShape(14.dp),
+            modifier = Modifier.fillMaxWidth().tvFocusable(RoundedCornerShape(14.dp), focusScale = 1f) { onDismiss() }) {
+          Text("Close", color = Color.White, fontSize = 16.sp, textAlign = TextAlign.Center,
+              modifier = Modifier.padding(vertical = 10.dp).fillMaxWidth())
+        }
+      }
+    }
+  }
+}
+
+/** A horizontally-scrolling single-select chip row. */
+@Composable
+private fun ChipRow(options: List<String>, selected: String, onSelect: (String) -> Unit) {
+  Row(
+      modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+      horizontalArrangement = Arrangement.spacedBy(8.dp),
+  ) {
+    options.forEach { opt ->
+      val on = opt == selected
+      Surface(
+          color = if (on) MaterialTheme.colorScheme.primary else Color(0x22FFFFFF),
+          shape = RoundedCornerShape(12.dp),
+          modifier = Modifier.tvFocusable(RoundedCornerShape(12.dp), focusScale = 1.04f) { onSelect(opt) },
+      ) {
+        Text(opt, color = Color.White, fontSize = 15.sp,
+            fontWeight = if (on) FontWeight.Bold else FontWeight.Normal,
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp))
+      }
+    }
+  }
+}
+
+private fun trimNum(d: Double): String {
+  if (d.isNaN() || d.isInfinite()) return "—"
+  val r = if (kotlin.math.abs(d) >= 1000 || d == d.toLong().toDouble()) "%,.2f".format(d)
+          else "%.4g".format(d)
+  return r.trimEnd('0').trimEnd('.').ifBlank { "0" }
+}
+
+@Composable
+private fun WhatChangedTile(onClick: () -> Unit) {
+  BuiltInTile(label = "What's New", background = Color(0xFF5D4037), glyph = ICON_HISTORY, onClick = onClick)
+}
+
+/** Recent self-updates, from the launcher's GitHub releases — so a device that improves
+ *  itself isn't a black box. */
+@Composable
+private fun WhatChangedOverlay(onDismiss: () -> Unit) {
+  val context = androidx.compose.ui.platform.LocalContext.current
+  var releases by remember { mutableStateOf<List<WhatChanged.Release>?>(null) }
+  val installedVersion = remember {
+    runCatching { context.packageManager.getPackageInfo(context.packageName, 0).versionName }
+        .getOrNull() ?: "?"
+  }
+  LaunchedEffect(Unit) { releases = withContext(Dispatchers.IO) { WhatChanged.recent() } }
+
+  BackHandler { onDismiss() }
+  Box(
+      contentAlignment = Alignment.Center,
+      modifier = Modifier.fillMaxSize().background(Color(0xCC000000))
+          .tvFocusable(RoundedCornerShape(0.dp), focusScale = 1f) { onDismiss() },
+  ) {
+    Surface(color = MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(24.dp),
+        modifier = Modifier.widthIn(max = 600.dp).padding(24.dp)) {
+      Column(modifier = Modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Text("🗒 What's new", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+        Text("This Immortal: $installedVersion", color = Color(0xFF9A9A9A), fontSize = 13.sp)
+        val r = releases
+        when {
+          r == null -> Text("Loading…", color = Color(0xFFB0B0B0), fontSize = 16.sp)
+          r.isEmpty() ->
+              Text("Couldn't load the changelog (offline, or no releases yet).",
+                  color = Color(0xFFB0B0B0), fontSize = 15.sp)
+          else ->
+              Column(
+                  modifier = Modifier.fillMaxWidth().heightIn(max = 360.dp)
+                      .verticalScroll(rememberScrollState()),
+                  verticalArrangement = Arrangement.spacedBy(12.dp),
+              ) {
+                r.forEach { rel ->
+                  Surface(color = Color(0x18FFFFFF), shape = RoundedCornerShape(12.dp),
+                      modifier = Modifier.fillMaxWidth()) {
+                    Column(modifier = Modifier.padding(14.dp)) {
+                      Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(rel.version, color = Color.White, fontSize = 17.sp,
+                            fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                        Text(rel.date, color = Color(0xFF9A9A9A), fontSize = 13.sp)
+                      }
+                      Text(rel.notes, color = Color(0xFFCFCFCF), fontSize = 14.sp,
+                          lineHeight = 20.sp, modifier = Modifier.padding(top = 6.dp))
+                    }
+                  }
+                }
+              }
+        }
+        Surface(color = Color(0x22FFFFFF), shape = RoundedCornerShape(14.dp),
+            modifier = Modifier.fillMaxWidth().tvFocusable(RoundedCornerShape(14.dp), focusScale = 1f) { onDismiss() }) {
+          Text("Close", color = Color.White, fontSize = 16.sp, textAlign = TextAlign.Center,
+              modifier = Modifier.padding(vertical = 10.dp).fillMaxWidth())
+        }
+      }
+    }
+  }
+}
+
+@Composable
+private fun LampTile() {
+  val context = androidx.compose.ui.platform.LocalContext.current
+  BuiltInTile(label = "Lamp", background = Color(0xFFFF8F00), glyph = ICON_LAMP, onClick = {
+    runCatching { context.startActivity(Intent(context, LampActivity::class.java)) }
+  })
+}
+
+@Composable
+private fun BedtimeTile() {
+  val context = androidx.compose.ui.platform.LocalContext.current
+  BuiltInTile(label = "Story", background = Color(0xFF512DA8), glyph = ICON_BOOK, onClick = {
+    runCatching { context.startActivity(Intent(context, BedtimeStoryActivity::class.java)) }
+  })
+}
+
+@Composable
+private fun SunriseTile() {
+  val context = androidx.compose.ui.platform.LocalContext.current
+  BuiltInTile(label = "Sunrise", background = Color(0xFFEF6C00), glyph = ICON_SUNRISE, onClick = {
+    runCatching { context.startActivity(Intent(context, SunriseSettingsActivity::class.java)) }
+  })
+}
+
+/** Opens a prefilled GitHub issue so the household can signal which apps they want —
+ *  the demand board, with no server to run. */
+@Composable
+private fun RequestAppTile() {
+  val context = androidx.compose.ui.platform.LocalContext.current
+  BuiltInTile(label = "Request App", background = Color(0xFF263238), glyph = ICON_INBOX, onClick = {
+    val url =
+        "https://github.com/starbrightlab/immortal/issues/new?labels=app-request&title=" +
+            Uri.encode("App request: ") +
+            "&body=" +
+            Uri.encode("Which app would you like on Portal?\n\nApp name:\nWhy:\n")
+    runCatching {
+      context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+    }
+  })
+}
+
+/** Ping another Portal in the house — taps send a chime + spoken room name to every
+ *  Immortal device on the LAN. Shows a brief "Pinged!" confirmation. */
+@Composable
+private fun PingTile() {
+  val context = androidx.compose.ui.platform.LocalContext.current
+  var pinged by remember { mutableStateOf(false) }
+  LaunchedEffect(pinged) {
+    if (pinged) { delay(1500); pinged = false }
+  }
+  BuiltInTile(
+      label = if (pinged) "Pinged!" else "Ping Room",
+      background = if (pinged) Color(0xFF00C853) else Color(0xFF00897B),
+      glyph = ICON_PING,
+      onClick = {
+        val name = ImmortalSettings.deviceRoomName(context)
+        PingService.send(context, name)
+        pinged = true
+      },
+  )
+}
+
+@Composable
 private fun NoteTile(onClick: () -> Unit) {
   val context = androidx.compose.ui.platform.LocalContext.current
   val hasNote = remember { NotesConfig.loadText(context).isNotBlank() || NotesConfig.hasAudioNote(context) }
@@ -3619,6 +4198,36 @@ private const val ICON_BUS =
     "M4 16c0 .88.39 1.67 1 2.22V20c0 .55.45 1 1 1h1c.55 0 1-.45 1-1v-1h8v1c0 .55.45 1 1 1h1c.55 0 1-.45 1-1v-1.78c.61-.55 1-1.34 1-2.22V6c0-3.5-3.58-4-8-4s-8 .5-8 4v10zm3.5 1c-.83 0-1.5-.67-1.5-1.5S6.67 14 7.5 14s1.5.67 1.5 1.5S8.33 17 7.5 17zm9 0c-.83 0-1.5-.67-1.5-1.5s.67-1.5 1.5-1.5 1.5.67 1.5 1.5-.67 1.5-1.5 1.5zm1.5-6H6V6h12v5z"
 private const val ICON_HEADPHONES =
     "M12 1c-4.97 0-9 4.03-9 9v7c0 1.66 1.34 3 3 3h3v-8H5v-2c0-3.87 3.13-7 7-7s7 3.13 7 7v2h-3v8h3c1.66 0 3-1.34 3-3v-7c0-4.97-4.03-9-9-9z"
+// Stopwatch / timer icon.
+private const val ICON_STOPWATCH =
+    "M15 1H9v2h6V1zm-4 13h2V8h-2v6zm8.03-6.61l1.42-1.42c-.43-.51-.9-.99-1.41-1.41l-1.42 1.42C16.07 4.74 14.12 4 12 4c-4.97 0-9 4.03-9 9s4.02 9 9 9 9-4.03 9-9c0-2.12-.74-4.07-1.97-5.61zM12 20c-3.87 0-7-3.13-7-7s3.13-7 7-7 7 3.13 7 7-3.13 7-7 7z"
+// Swap/convert arrows icon.
+private const val ICON_CONVERT =
+    "M7.5 21.5L4 18l3.5-3.5 1.42 1.42L7.83 17H16v2H7.83l1.09 1.08L7.5 21.5zM16.5 2.5L20 6l-3.5 3.5-1.42-1.42L16.17 7H8V5h8.17l-1.09-1.08L16.5 2.5z"
+// Lamp / nightlight (wb_incandescent) icon.
+private const val ICON_LAMP =
+    "M3.55 18.54l1.41 1.41 1.79-1.8-1.41-1.41-1.79 1.8zM11 22.45h2V19.5h-2v2.95zM4 10.5H1v2h3v-2zm11-4.19V1.5H9v4.81C7.21 7.35 6 9.28 6 11.5c0 3.31 2.69 6 6 6s6-2.69 6-6c0-2.22-1.21-4.15-3-5.19zM20 10.5v2h3v-2h-3zm-2.76 7.66l1.79 1.8 1.41-1.41-1.8-1.79-1.4 1.4z"
+// Book (menu_book) icon for the bedtime story tile.
+private const val ICON_BOOK =
+    "M21 5c-1.11-.35-2.33-.5-3.5-.5-1.95 0-4.05.4-5.5 1.5-1.45-1.1-3.55-1.5-5.5-1.5S2.45 4.9 1 6v14.65c0 .25.25.5.5.5.1 0 .15-.05.25-.05C3.1 20.45 5.05 20 6.5 20c1.95 0 4.05.4 5.5 1.5 1.35-.85 3.8-1.5 5.5-1.5 1.65 0 3.35.3 4.75 1.05.1.05.15.05.25.05.25 0 .5-.25.5-.5V6c-.6-.45-1.25-.75-2-1zm0 13.5c-1.1-.35-2.3-.5-3.5-.5-1.7 0-4.15.65-5.5 1.5V8c1.35-.85 3.8-1.5 5.5-1.5 1.2 0 2.4.15 3.5.5v11.5z"
+// Sunrise (wb_twilight) icon.
+private const val ICON_SUNRISE =
+    "M6.76 4.84l-1.8-1.79-1.41 1.41 1.79 1.79 1.42-1.41zM4 10.5H1v2h3v-2zm9-9.95h-2V3.5h2V.55zm7.45 3.91l-1.41-1.41-1.79 1.79 1.41 1.41 1.79-1.79zm-3.21 13.7l1.79 1.8 1.41-1.41-1.8-1.79-1.4 1.4zM20 10.5v2h3v-2h-3zm-8-5c-3.31 0-6 2.69-6 6s2.69 6 6 6 6-2.69 6-6-2.69-6-6-6zm-1 16.95h2V19.5h-2v2.95zm-7.45-3.91l1.41 1.41 1.79-1.8-1.41-1.41-1.79 1.8z"
+// Inbox / request board icon.
+private const val ICON_INBOX =
+    "M19 3H4.99c-1.11 0-1.98.9-1.98 2L3 19c0 1.1.88 2 1.99 2H19c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 12h-4c0 1.66-1.35 3-3 3s-3-1.34-3-3H4.99V5H19v10z"
+// Notifications/bell-ring icon for the Ping tile.
+private const val ICON_PING =
+    "M7.58 4.08L6.15 2.65C3.75 4.48 2.17 7.3 2.03 10.5h2c.15-2.65 1.51-4.97 3.55-6.42zm12.39 6.42h2c-.15-3.2-1.73-6.02-4.12-7.85l-1.42 1.43c2.02 1.45 3.39 3.77 3.54 6.42zM18 11c0-3.07-1.64-5.64-4.5-6.32V4c0-.83-.67-1.5-1.5-1.5s-1.5.67-1.5 1.5v.68C7.63 5.36 6 7.92 6 11v5l-2 2v1h16v-1l-2-2v-5zm-6 11c.14 0 .27-.01.4-.04.65-.14 1.18-.58 1.44-1.18.1-.24.15-.5.15-.78h-4c.01 1.1.9 2 2.01 2z"
+// History / changelog icon.
+private const val ICON_HISTORY =
+    "M13 3c-4.97 0-9 4.03-9 9H1l3.89 3.89.07.14L9 12H6c0-3.87 3.13-7 7-7s7 3.13 7 7-3.13 7-7 7c-1.93 0-3.68-.79-4.94-2.06l-1.42 1.42C8.27 19.99 10.51 21 13 21c4.97 0 9-4.03 9-9s-4.03-9-9-9zm-1 5v5l4.28 2.54.72-1.21-3.5-2.08V8H12z"
+// Waves icon (aurora curtains) for the Aurora tile.
+private const val ICON_AURORA =
+    "M17 16.99c-1.35 0-2.2.42-2.95.8-.65.33-1.18.6-2.05.6-.9 0-1.4-.25-2.05-.6-.75-.38-1.57-.8-2.95-.8s-2.2.42-2.95.8c-.65.33-1.17.6-2.05.6v1.95c1.35 0 2.2-.42 2.95-.8.65-.33 1.17-.6 2.05-.6s1.4.25 2.05.6c.75.38 1.57.8 2.95.8s2.2-.42 2.95-.8c.65-.33 1.18-.6 2.05-.6.9 0 1.4.25 2.05.6.75.38 1.58.8 2.95.8v-1.95c-.9 0-1.4-.25-2.05-.6-.75-.38-1.6-.8-2.95-.8zm0-4.45c-1.35 0-2.2.43-2.95.8-.65.32-1.18.6-2.05.6-.9 0-1.4-.25-2.05-.6-.75-.37-1.57-.8-2.95-.8s-2.2.43-2.95.8c-.65.32-1.17.6-2.05.6v1.95c1.35 0 2.2-.43 2.95-.8.65-.33 1.17-.6 2.05-.6s1.4.25 2.05.6c.75.37 1.57.8 2.95.8s2.2-.43 2.95-.8c.65-.33 1.18-.6 2.05-.6.9 0 1.4.25 2.05.6.75.38 1.58.8 2.95.8v-1.95c-.9 0-1.4-.25-2.05-.6-.75-.37-1.6-.8-2.95-.8zM17 8.09c-1.35 0-2.2.43-2.95.8-.65.32-1.18.61-2.05.61-.9 0-1.4-.25-2.05-.61-.75-.37-1.57-.8-2.95-.8s-2.2.43-2.95.8c-.65.33-1.17.61-2.05.61v1.95c1.35 0 2.2-.43 2.95-.8.65-.32 1.17-.6 2.05-.6s1.4.25 2.05.6c.75.38 1.57.8 2.95.8s2.2-.43 2.95-.8c.65-.32 1.18-.6 2.05-.6.9 0 1.4.25 2.05.6.75.38 1.58.8 2.95.8V8.9c-.9 0-1.4-.25-2.05-.61-.75-.37-1.6-.8-2.95-.8z"
+// Satellite (satellite_alt) icon for the ISS pass tile.
+private const val ICON_SATELLITE =
+    "M11.62 1.99l-3.83 3.83c-.78.78-.78 2.05 0 2.83l1.41 1.41-1.42 1.42-1.41-1.41c-.78-.78-2.05-.78-2.83 0L1.99 13.4c-.79.78-.79 2.05 0 2.83l5.78 5.78c.78.78 2.05.78 2.83 0l3.55-3.55c.78-.78.78-2.05 0-2.83l-1.41-1.41 1.42-1.42 1.41 1.41c.78.78 2.05.78 2.83 0l3.83-3.83c.78-.78.78-2.05 0-2.83l-5.78-5.78c-.79-.78-2.06-.78-2.84 0zm-4.2 16.6l-4.4-4.4 2.13-2.13 4.4 4.4-2.13 2.13zm9.2-9.2l-4.4-4.4 2.13-2.13 4.4 4.4-2.13 2.13z"
 
 /** A non-app tile injected into a folder (e.g. the Screensaver settings entry). */
 private data class FolderExtra(val label: String, val glyph: String, val onClick: () -> Unit)
@@ -4238,6 +4847,76 @@ private fun DayProgressBar(modifier: Modifier = Modifier) {
     Box(
         modifier = Modifier.fillMaxWidth(progress).fillMaxHeight().background(fill),
     )
+  }
+}
+
+/** The real night sky behind the grid after dark: the brightest stars projected to the
+ *  device's horizon for the current time + location, with a few asterism lines. By day
+ *  it's just a deep dark panel; stars fade in through twilight. */
+@Composable
+private fun StarFieldBackground() {
+  val context = androidx.compose.ui.platform.LocalContext.current
+  val coords by produceState<Pair<Double, Double>?>(initialValue = null) {
+    value = withContext(Dispatchers.IO) { Weather.coordinates(context) }
+  }
+  var now by remember { mutableStateOf(System.currentTimeMillis()) }
+  LaunchedEffect(Unit) {
+    while (true) { now = System.currentTimeMillis(); delay(30L * 1000) }
+  }
+
+  Box(modifier = Modifier.fillMaxSize().background(
+      androidx.compose.ui.graphics.Brush.verticalGradient(listOf(Color(0xFF05060F), Color(0xFF0C1430))))) {
+    val loc = coords ?: return@Box
+    val (lat, lon) = loc
+    val lst = StarField.localSiderealTime(now, lon)
+    val sunAlt = StarField.sunAltitude(now, lat, lon)
+    // Stars are invisible in daylight; fade in across twilight (0° → −12°).
+    val nightFactor = ((-sunAlt) / 12.0).coerceIn(0.0, 1.0).toFloat()
+    if (nightFactor <= 0.01f) return@Box
+
+    // Project once; reused for stars + lines.
+    val projected = remember(now, lat, lon) {
+      StarField.STARS.map { StarField.project(it, lat, lst) }
+    }
+
+    Canvas(modifier = Modifier.fillMaxSize()) {
+      val w = size.width
+      val h = size.height
+      fun screenX(az: Double) = (az / 360.0 * w).toFloat()
+      fun screenY(alt: Double) = (h * (1.0 - alt / 90.0)).toFloat()
+
+      // Asterism lines first (under the stars).
+      StarField.LINES.forEach { (a, b) ->
+        val pa = projected[a]
+        val pb = projected[b]
+        if (pa.alt > 0 && pb.alt > 0) {
+          val xa = screenX(pa.az)
+          val xb = screenX(pb.az)
+          // Skip the wrap-around seam.
+          if (kotlin.math.abs(xa - xb) < w / 2f) {
+            drawLine(
+                color = Color(0xFF6E8BD8).copy(alpha = 0.35f * nightFactor),
+                start = androidx.compose.ui.geometry.Offset(xa, screenY(pa.alt)),
+                end = androidx.compose.ui.geometry.Offset(xb, screenY(pb.alt)),
+                strokeWidth = 2f,
+            )
+          }
+        }
+      }
+
+      // Stars: brighter (lower mag) → bigger + more opaque.
+      StarField.STARS.forEachIndexed { i, star ->
+        val p = projected[i]
+        if (p.alt <= 0) return@forEachIndexed
+        val radius = (2.6f - star.mag.toFloat() * 0.55f).coerceIn(0.8f, 4.5f)
+        val alpha = ((1.8f - star.mag.toFloat() * 0.32f).coerceIn(0.35f, 1f)) * nightFactor
+        drawCircle(
+            color = Color.White.copy(alpha = alpha),
+            radius = radius,
+            center = androidx.compose.ui.geometry.Offset(screenX(p.az), screenY(p.alt)),
+        )
+      }
+    }
   }
 }
 

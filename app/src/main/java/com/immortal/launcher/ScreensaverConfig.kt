@@ -100,6 +100,10 @@ object ScreensaverConfig {
       // Ambient dashboard: periodically interrupt the photos with a full-screen
       // glanceable info card (clock, weather, next event). Off by default.
       val ambientDashboard: Boolean = false,
+      // Experimental: wave a hand in front of the camera to advance the photo frame
+      // (Camera2 motion detection, never the gated Smart Camera SDK). Off by default;
+      // no-ops without the CAMERA permission.
+      val gestureWave: Boolean = false,
       // Welcome-back overlay: shown for ~3s when the screensaver first starts
       // (i.e. when presence is detected and the Portal wakes from sleep). Shows
       // a greeting, the time, and the date. Dismissed by tap or auto-fade.
@@ -141,6 +145,7 @@ object ScreensaverConfig {
         soundscape = p.getString("soundscape", SOUND_OFF) ?: SOUND_OFF,
         soundscapeVolume = p.getInt("soundscape_volume", 40).coerceIn(0, 100),
         ambientDashboard = p.getBoolean("ambient_dashboard", false),
+        gestureWave = p.getBoolean("gesture_wave", false),
         welcomeEnabled = p.getBoolean("welcome_enabled", true),
     )
   }
@@ -152,6 +157,9 @@ object ScreensaverConfig {
 
   fun setAmbientDashboard(c: Context, on: Boolean) =
       prefs(c).edit().putBoolean("ambient_dashboard", on).apply()
+
+  fun setGestureWave(c: Context, on: Boolean) =
+      prefs(c).edit().putBoolean("gesture_wave", on).apply()
 
   /** Keep the idle timeout sane (0 = off, else 1…120 min). */
   fun clampIdle(min: Int): Int = if (min <= 0) 0 else min.coerceIn(1, 120)
