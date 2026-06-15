@@ -51,33 +51,35 @@ object PrayerTimes {
     return times["Fajr"]?.let { "🕌 Fajr $it (tomorrow)" } ?: ""
   }
 
-  /** Pure computation, exposed for tests. [tzHours] is the UTC offset in hours. */
+  /** Pure computation, exposed for tests. [tzHours] is the UTC offset in hours.
+   * Follows the standard PrayTimes sun-position model; all working angles are kept in
+   * degrees and normalized (the mean longitude grows unbounded, so it MUST be wrapped to
+   * 0–360 before it feeds the equation of time). */
   fun compute(lat: Double, lon: Double, tzHours: Double, date: Calendar): Map<String, String> {
-    val jd = julianDay(date) - lon / 360.0 // approximate; refined per-iteration below
-    // Sun declination + equation of time for this day.
-    val d = jd - 2451545.0
-    val g = (357.529 + 0.98560028 * d) * DEG
-    val q = (280.459 + 0.98564736 * d) * DEG
-    val l = q + (1.915 * sin(g) + 0.020 * sin(2 * g)) * DEG
-    val e = (23.439 - 0.00000036 * d) * DEG
-    val decl = kotlin.math.asin(sin(e) * sin(l)) // radians
-    val ra = atan2(cos(e) * sin(l), cos(l)) / DEG / 15.0
-    val eqt = (q / DEG / 15.0 - fixHours(ra)) // equation of time in hours
+    val d = julianDay(date) - 2451545.0
+    val g = fixAngle(357.529 + 0.98560028 * d) // mean anomaly, deg
+    val q = fixAngle(280.459 + 0.98564736 * d) // mean longitude, deg (normalized!)
+    val l = fixAngle(q + 1.915 * sin(g * DEG) + 0.020 * sin(2 * g * DEG)) // ecliptic lon, deg
+    val e = 23.439 - 0.00000036 * d // obliquity, deg
+    val decl = kotlin.math.asin(sin(e * DEG) * sin(l * DEG)) // radians
+    val ra = fixHours(atan2(cos(e * DEG) * sin(l * DEG), cos(l * DEG)) / DEG / 15.0) // hours
+    val eqt = q / 15.0 - ra // equation of time, hours
 
     // Solar noon (Dhuhr) in local time.
     val dhuhr = 12.0 + tzHours - lon / 15.0 - eqt
+    val latR = lat * DEG
 
+    // Hour angle (hours) for the sun reaching altitude [angleDeg] below(+)/above horizon.
     fun hourAngle(angleDeg: Double): Double {
-      val latR = lat * DEG
       val cosH = (-sin(angleDeg * DEG) - sin(latR) * sin(decl)) / (cos(latR) * cos(decl))
-      return acos(cosH.coerceIn(-1.0, 1.0)) / DEG / 15.0 // hours
+      return acos(cosH.coerceIn(-1.0, 1.0)) / DEG / 15.0
     }
 
-    // Asr: shadow length factor 1 (Shafi'i).
-    val latR = lat * DEG
-    val asrAngle = -atan2(1.0, 1.0 + tan(abs(latR - decl))) / DEG // altitude of sun at Asr
+    // Asr: shadow length factor 1 (Shafi'i) — the (positive) sun altitude where an
+    // object's shadow equals its length plus the noon shadow: alt = arccot(1 + tan|lat−decl|).
+    val asrAlt = atan2(1.0, 1.0 + tan(abs(latR - decl))) // radians, above horizon
     val asrHA = run {
-      val cosH = (sin(asrAngle * DEG) - sin(latR) * sin(decl)) / (cos(latR) * cos(decl))
+      val cosH = (sin(asrAlt) - sin(latR) * sin(decl)) / (cos(latR) * cos(decl))
       acos(cosH.coerceIn(-1.0, 1.0)) / DEG / 15.0
     }
 
@@ -100,6 +102,12 @@ object PrayerTimes {
   private fun fixHours(h: Double): Double {
     var x = h % 24.0
     if (x < 0) x += 24.0
+    return x
+  }
+
+  private fun fixAngle(a: Double): Double {
+    var x = a % 360.0
+    if (x < 0) x += 360.0
     return x
   }
 

@@ -102,7 +102,8 @@ AntiBurnIn            — slow Lissajous pixel-shift for always-on surfaces (app
                         digital-clock dream). Pure + unit-tested.
 PingService           — "ping the other room": serverless LAN UDP broadcast; every
                         Immortal listens and rings ChimePlayer + speaks the room name.
-                        Started in ImmortalApp. PingTile sends.
+                        Started in ImmortalApp. PingTile sends. Room name =
+                        ImmortalSettings.deviceRoomName (Build.MODEL; no rename UI yet).
 CalendarPacks/IrishHolidays/PrayerTimes — installable calendar packs (header lines): Irish
                         bank holidays + saints (computed Easter), Islamic prayer times
                         (computed by location). Toggled in ImmortalSettings; built-in

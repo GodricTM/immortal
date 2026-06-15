@@ -738,6 +738,7 @@ private fun LauncherScreen(
           onTimerChanged = { timerVersion++ },
       )
       HomeNoteCard(version = noteVersion, onEdit = { showNote = true })
+      DidYouKnowCard(version = homeResumeVersion)
       // The scrolling app grid, parameterized by its area modifier so it can be
       // hosted either directly (single page) or inside a HorizontalPager page.
       @Composable
@@ -1568,8 +1569,11 @@ private fun HeaderBar(onScreensaver: () -> Unit, onClock: () -> Unit, onSleep: (
         }
       }
       // Installable calendar packs (Irish holidays, prayer times) — added on top of the
-      // built-in Romanian/Orthodox lines above.
-      val packLines = remember(now) { CalendarPacks.headerLines(context) }
+      // built-in Romanian/Orthodox lines above. Computed off the main thread: the prayer
+      // pack reads the cached location, which can fall through to a network lookup.
+      val packLines by produceState(initialValue = emptyList<String>(), now) {
+        value = withContext(Dispatchers.IO) { CalendarPacks.headerLines(context) }
+      }
       packLines.forEach { line ->
         Text(line, color = Color(0xFFB0B0B0), fontSize = 14.sp, modifier = Modifier.padding(top = 2.dp))
       }
@@ -3511,6 +3515,44 @@ private fun HomeNoteCard(version: Int, onEdit: () -> Unit) {
             Text(if (playing) "⏸" else "▶", color = Color.White, fontSize = 16.sp)
           }
         }
+      }
+    }
+  }
+  Spacer(Modifier.size(8.dp))
+}
+
+/** "Did you know" discoverability card — one tip a day, dismissible. Teaches the
+ *  device's depth instead of hiding it. Hidden once dismissed until tomorrow's tip. */
+@Composable
+private fun DidYouKnowCard(version: Int) {
+  val context = androidx.compose.ui.platform.LocalContext.current
+  var dismissed by remember(version) { mutableStateOf(Tips.isDismissedToday(context)) }
+  if (dismissed) return
+  val tip = remember { Tips.todaysTip() }
+  Surface(
+      color = Color(0xFF1C2A3A),
+      shape = RoundedCornerShape(14.dp),
+      modifier = Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 4.dp),
+  ) {
+    Row(
+        modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+      Text("💡", fontSize = 18.sp)
+      Spacer(Modifier.size(10.dp))
+      Column(modifier = Modifier.weight(1f)) {
+        Text("Did you know?", color = Color(0xFF8AB4F8), fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+        Text(tip, color = Color(0xFFDADADA), fontSize = 15.sp, lineHeight = 20.sp)
+      }
+      Spacer(Modifier.size(10.dp))
+      Surface(
+          color = Color(0x22FFFFFF),
+          shape = androidx.compose.foundation.shape.CircleShape,
+          modifier = Modifier.size(36.dp).tvFocusable(androidx.compose.foundation.shape.CircleShape, focusScale = 1.05f) {
+            Tips.dismissToday(context); dismissed = true
+          },
+      ) {
+        Box(contentAlignment = Alignment.Center) { Text("✕", color = Color.White, fontSize = 15.sp) }
       }
     }
   }

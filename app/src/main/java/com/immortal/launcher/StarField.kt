@@ -114,7 +114,10 @@ object StarField {
     return AltAz(az / DEG, alt / DEG)
   }
 
-  private fun acosSafe(x: Double): Double = kotlin.math.acos(x.coerceIn(-1.0, 1.0))
+  // Guards the zenith 0/0 case: at the exact zenith the azimuth is undefined (NaN),
+  // which would otherwise become a NaN draw coordinate. Default it to north.
+  private fun acosSafe(x: Double): Double =
+      if (x.isNaN()) 0.0 else kotlin.math.acos(x.coerceIn(-1.0, 1.0))
 
   /** Local Sidereal Time (hours, 0–24) for [lonDeg] at epoch [millis]. */
   fun localSiderealTime(millis: Long, lonDeg: Double): Double {

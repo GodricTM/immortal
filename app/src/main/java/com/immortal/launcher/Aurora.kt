@@ -60,11 +60,28 @@ object Aurora {
    * Current aurora outlook for the device, or null if location/network is unavailable.
    * Touches the network only for the two SWPC feeds; all the latitude math is local.
    */
+  // The tile fetches on every home-screen entry; cache the Kp pair briefly so we don't
+  // hammer NOAA. Kp is a 3-hourly index — 15 minutes is plenty fresh.
+  private const val KP_CACHE_MS = 15L * 60 * 1000
+  @Volatile private var cachedKp: Pair<Double, Double>? = null
+  @Volatile private var cachedKpAt = 0L
+
   fun status(context: Context): Status? {
     val (lat, lon) = Weather.coordinates(context) ?: return null
-    val kpNow = fetchCurrentKp() ?: return null
-    val kpForecast = fetchForecastPeakKp().coerceAtLeast(kpNow)
+    val (kpNow, kpForecast) = kpPair() ?: return null
     return classify(lat, lon, kpNow, kpForecast)
+  }
+
+  /** (kpNow, kpForecastPeak) from cache or a fresh fetch. Null if it can't be fetched. */
+  private fun kpPair(): Pair<Double, Double>? {
+    val cached = cachedKp
+    if (cached != null && System.currentTimeMillis() - cachedKpAt < KP_CACHE_MS) return cached
+    val kpNow = fetchCurrentKp() ?: return cached // fall back to stale cache if offline
+    val kpForecast = fetchForecastPeakKp().coerceAtLeast(kpNow)
+    val pair = kpNow to kpForecast
+    cachedKp = pair
+    cachedKpAt = System.currentTimeMillis()
+    return pair
   }
 
   // ---- The science (pure, unit-tested) -----------------------------------------

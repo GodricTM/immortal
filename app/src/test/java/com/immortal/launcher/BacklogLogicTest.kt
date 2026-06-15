@@ -82,6 +82,31 @@ class BacklogLogicTest {
     assertTrue(lst in 0.0..24.0)
   }
 
+  // ---- PrayerTimes ----
+
+  private fun toMin(hhmm: String): Int {
+    val (h, m) = hhmm.split(":").map { it.toInt() }
+    return h * 60 + m
+  }
+
+  @Test
+  fun `prayer times are ordered and dhuhr is near solar noon`() {
+    // Mecca, +3, mid-June — all five prayers exist at this latitude.
+    val date = GregorianCalendar(2026, Calendar.JUNE, 15, 12, 0)
+    val t = PrayerTimes.compute(21.4225, 39.8262, 3.0, date)
+    val fajr = toMin(t["Fajr"]!!)
+    val sunrise = toMin(t["Sunrise"]!!)
+    val dhuhr = toMin(t["Dhuhr"]!!)
+    val asr = toMin(t["Asr"]!!)
+    val maghrib = toMin(t["Maghrib"]!!)
+    val isha = toMin(t["Isha"]!!)
+    // Strictly increasing through the day.
+    assertTrue("order: $t", fajr < sunrise && sunrise < dhuhr && dhuhr < asr && asr < maghrib && maghrib < isha)
+    // Dhuhr is solar noon — around the middle of the day, not some wild value from an
+    // un-normalized mean longitude. Mecca (+3) noon lands ~12:20–12:40.
+    assertTrue("dhuhr was ${t["Dhuhr"]}", dhuhr in (12 * 60)..(13 * 60))
+  }
+
   // ---- AntiBurnIn ----
 
   @Test
