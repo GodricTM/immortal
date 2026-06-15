@@ -222,21 +222,28 @@ V.Nikolic, etc.) — they cannot be bundled in a redistributed open-source APK.
 # Install via ADB (device connected via USB-C, ADB enabled in Portal dev settings)
 adb install -r app/build/outputs/apk/debug/app-debug.apk
 
-# metavr CLI (recommended — install once with: npm install -g @meta-quest/metavr)
+# metavr CLI — the official Meta VR CLI (repo: github.com/meta-quest/agentic-tools).
+# Package is the BARE name `metavr` (NOT `@meta-quest/metavr`, which does not exist).
+#   npx -y metavr --version        # run latest without installing
+#   npm install -g metavr          # or install globally
 metavr app install -r app/build/outputs/apk/debug/app-debug.apk
 metavr app launch com.immortal.launcher
 metavr log --tag ImmortalDream --tag ImmortalStore --level D
 metavr capture screenshot -o screen.png
 
-# Or use hzdb MCP (if installed in Claude Code — gives in-session deploy + logcat)
+# hzdb (`@meta-quest/hzdb`, same repo) is the other CLI/MCP in the ecosystem.
 hzdb app install app/build/outputs/apk/debug/app-debug.apk
-hzdb app launch com.immortal.launcher
 hzdb log --tag ImmortalDream --tag ImmortalStore --level D
 ```
 
-metavr and hzdb are from the same Meta ecosystem (`@meta-quest/*`). metavr is the
-standalone CLI; hzdb is the MCP bridge for in-session use from Claude Code.
-Install hzdb MCP with: `npx -y @meta-quest/hzdb mcp install claude-code`
+Official Claude Code setup (loads the metavr MCP — 40+ device tools — AND the
+Portal Agent Skill automatically):
+```
+/plugin marketplace add meta-quest/agentic-tools
+/plugin install meta-vr@meta-quest
+```
+…or `metavr mcp install claude-code`. The MCP/skill activate on Claude Code
+restart. Until then, plain `adb` (above) covers deploy + logcat + install.
 
 **Native libs & APK size:** there are now **no native dependencies** — the debug
 APK is ~31 MB. (Vosk offline STT was removed: on Portal it fought the always-on
@@ -312,13 +319,17 @@ crash. (Quality is bounded by whatever TTS engine the Portal has installed.)
 
 **TTS is off by default.** Users enable it in Welcome settings (`WelcomeConfig.enableTts`).
 
-## What hzdb / metavr give you (in Claude Code sessions)
+## What the metavr / hzdb MCP gives you (in Claude Code sessions)
 
-With hzdb MCP installed (`npx -y @meta-quest/hzdb mcp install claude-code`):
+Install via the official plugin (`/plugin marketplace add meta-quest/agentic-tools`
+then `/plugin install meta-vr@meta-quest`) or `metavr mcp install claude-code`,
+then restart Claude Code. The MCP exposes 40+ tools and auto-loads the **Portal
+Agent Skill**:
 - Deploy, launch, stop apps directly from the coding session
-- Live logcat filtered by tag
-- Screenshots to verify UI changes
-- `hzdb docs search "smart camera"` for Smart Camera SDK API reference
-- The `portal-development` skill auto-loads when minSdkVersion 28-29 is detected
+- Live logcat filtered by tag (`metavr log --tag … --level …`)
+- Screenshots (`metavr capture screenshot`) and performance traces
+- `metavr docs search "smart camera"` for Meta/Portal API reference
+- The Portal skill teaches the hardware constraints + design rules on load
 
-metavr MCP can be installed with: `metavr mcp install claude-code`
+Until that MCP is installed/restarted, plain `adb` (Build & deploy section)
+covers deploy + logcat + install in-session.
