@@ -52,6 +52,11 @@ PhotoFrameController  — shared photo-frame UI + logic (dream + preview). Also 
 ChimeConfig/ChimeScheduler/ChimeReceiver/ChimePlayer — hourly chime, spoken time,
                         golden-hour tone, quiet hours; AlarmManager-driven, re-armed
                         in ImmortalApp + BootReceiver. chime.mp3 in res/raw.
+TimerConfig/TimerScheduler/TimerReceiver — kitchen multi-timers (named, several at
+                        once) as home-screen chips. Exact AlarmManager alarms; ring +
+                        spoken label via ChimePlayer.playTimerRing/announce. Persisted
+                        as JSON, re-armed in ImmortalApp + BootReceiver. UI: TimerChips
+                        + AddTimerOverlay on the home screen.
 SoundscapePlayer      — procedural rain/ocean/fireplace/white/pink/brown noise via
                         AudioTrack (offline, no assets). Used by PhotoFrameController.
 SkyColors             — time-of-day → sky gradient (sun-driven home background).

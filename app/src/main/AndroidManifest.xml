@@ -328,6 +328,11 @@
             android:name=".ChimeReceiver"
             android:exported="false" />
 
+        <!-- Internal alarms for the kitchen multi-timers (ring when each elapses). -->
+        <receiver
+            android:name=".TimerReceiver"
+            android:exported="false" />
+
         <!-- Notification listener used only to read the active media session for the
              now-playing screensaver. The user enables it once in Settings → Notifications.
              It reads nothing else. -->

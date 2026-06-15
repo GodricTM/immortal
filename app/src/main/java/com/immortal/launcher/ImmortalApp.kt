@@ -36,5 +36,7 @@ class ImmortalApp : Application() {
     SleepScheduler.applyOvernightNow(this)
     // Arm the ambient chime / spoken-time / golden-hour alarms per the user's config.
     ChimeScheduler.reschedule(this)
+    // Re-arm any kitchen timers that were still running (and drop expired ones).
+    TimerConfig.rearmAll(this)
   }
 }

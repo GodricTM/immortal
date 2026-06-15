@@ -49,6 +49,29 @@ object ChimePlayer {
     }.onFailure { Log.w(TAG, "chime playback failed", it) }
   }
 
+  /** Ring for an elapsed kitchen timer: the chime sound a few times. Independent
+   *  of the hourly-chime volume (you set a timer on purpose, so it always rings). */
+  fun playTimerRing(context: Context, repeats: Int = 3) {
+    val h = Handler(Looper.getMainLooper())
+    for (i in 0 until repeats) {
+      h.postDelayed({
+        runCatching {
+          val mp = MediaPlayer()
+          mp.setAudioAttributes(ambientAttrs)
+          val afd = context.resources.openRawResourceFd(R.raw.chime) ?: return@postDelayed
+          afd.use { mp.setDataSource(it.fileDescriptor, it.startOffset, it.length) }
+          mp.setOnCompletionListener { it.release() }
+          mp.setOnErrorListener { p, _, _ -> p.release(); true }
+          mp.prepare()
+          mp.start()
+        }.onFailure { Log.w(TAG, "timer ring failed", it) }
+      }, i * 1400L)
+    }
+  }
+
+  /** Speak an arbitrary phrase (e.g. "Pasta timer done") at full volume. */
+  fun announce(context: Context, text: String) = speak(context, text, volumeOverride = 1f)
+
   /** Speak the current time, e.g. "It's three o'clock" / "It's half past four".
    * Uses the platform TTS (fast, always present); Piper is overkill for a chime. */
   fun speakTime(context: Context, now: Calendar = Calendar.getInstance()) {
@@ -112,10 +135,10 @@ object ChimePlayer {
     }.onFailure { Log.w(TAG, "golden-hour tone failed", it) }
   }
 
-  private fun speak(context: Context, text: String) {
+  private fun speak(context: Context, text: String, volumeOverride: Float? = null) {
     runCatching {
       val cfg = ChimeConfig.load(context)
-      val vol = (cfg.spokenVolume / 100f).coerceIn(0f, 1f)
+      val vol = (volumeOverride ?: (cfg.spokenVolume / 100f)).coerceIn(0f, 1f)
       if (vol <= 0f) return
       var tts: TextToSpeech? = null
       tts = TextToSpeech(context.applicationContext) { status ->

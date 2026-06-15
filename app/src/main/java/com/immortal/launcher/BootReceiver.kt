@@ -21,6 +21,8 @@ class BootReceiver : BroadcastReceiver() {
       SleepScheduler.applyOvernightNow(context)
       // Likewise re-arm the ambient chime alarms.
       ChimeScheduler.reschedule(context)
+      // And re-arm any kitchen timers that were mid-run when we rebooted.
+      TimerConfig.rearmAll(context)
     }
   }
 }

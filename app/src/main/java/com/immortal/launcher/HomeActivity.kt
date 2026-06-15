@@ -500,6 +500,8 @@ private fun LauncherScreen(
   var showSpeedTest by remember { mutableStateOf(false) }
   var showDaily by remember { mutableStateOf(false) }
   var showNote by remember { mutableStateOf(false) }
+  var showTimerAdd by remember { mutableStateOf(false) }
+  var timerVersion by remember { mutableStateOf(0) }
   var showTransit by remember { mutableStateOf(false) }
   var showNowPlaying by remember { mutableStateOf(false) }
   // Bumped whenever a note changes so the home sticky card re-reads it.
@@ -717,6 +719,8 @@ private fun LauncherScreen(
       )
       Spacer(Modifier.size(20.dp))
       CountdownChips(version = homeResumeVersion)
+      TimerChips(version = timerVersion + homeResumeVersion, onAdd = { showTimerAdd = true },
+          onChanged = { timerVersion++ })
       HomeNoteCard(version = noteVersion, onEdit = { showNote = true })
       if (showTabs && folderNames.isNotEmpty()) {
         CategoryTabs(
@@ -1126,6 +1130,14 @@ private fun LauncherScreen(
     // Leave-a-note overlay (typed sticky + voice memo).
     if (showNote) {
       NoteOverlay(onDismiss = { showNote = false; noteVersion++ })
+    }
+
+    // Add-a-kitchen-timer overlay.
+    if (showTimerAdd) {
+      AddTimerOverlay(
+          onDismiss = { showTimerAdd = false },
+          onAdd = { label, ms -> TimerConfig.add(context, label, ms); showTimerAdd = false; timerVersion++ },
+      )
     }
 
     // Dublin transit board overlay.
@@ -2211,6 +2223,129 @@ private fun CountdownChips(version: Int = 0) {
     }
   }
   Spacer(Modifier.size(14.dp))
+}
+
+/** Live kitchen timers as chips (soonest first) plus a "+ Timer" chip. Each chip
+ *  ticks down; tapping it cancels that timer. Leans on [TimerConfig]/[ChimePlayer]. */
+@Composable
+private fun TimerChips(version: Int, onAdd: () -> Unit, onChanged: () -> Unit) {
+  val context = androidx.compose.ui.platform.LocalContext.current
+  var nowTick by remember { mutableStateOf(System.currentTimeMillis()) }
+  LaunchedEffect(Unit) { while (true) { nowTick = System.currentTimeMillis(); delay(1000) } }
+  // Re-read once per second so timers the background receiver removed disappear too.
+  val timers = remember(version, nowTick / 1000) {
+    TimerConfig.load(context).sortedBy { it.endAtMillis }
+  }
+  Row(
+      modifier =
+          Modifier.fillMaxWidth()
+              .horizontalScroll(rememberScrollState())
+              .padding(horizontal = 18.dp, vertical = 2.dp),
+      horizontalArrangement = Arrangement.spacedBy(10.dp),
+      verticalAlignment = Alignment.CenterVertically,
+  ) {
+    timers.forEach { t ->
+      val rem = (t.endAtMillis - nowTick).coerceAtLeast(0)
+      Surface(
+          color = MaterialTheme.colorScheme.primary.copy(alpha = 0.90f),
+          shape = RoundedCornerShape(14.dp),
+          modifier = Modifier.tvFocusable(RoundedCornerShape(14.dp), focusScale = 1f) {
+            TimerConfig.remove(context, t.id); onChanged()
+          },
+      ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+          Text("⏲ ", fontSize = 16.sp)
+          Text(t.label, color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+          Text("  ${formatTimerRemaining(rem)}", color = Color(0xFFEAF1FF), fontSize = 15.sp)
+          Text("   ✕", color = Color(0xCCFFFFFF), fontSize = 14.sp)
+        }
+      }
+    }
+    Surface(
+        color = Color(0x22FFFFFF),
+        shape = RoundedCornerShape(14.dp),
+        modifier = Modifier.tvFocusable(RoundedCornerShape(14.dp), focusScale = 1f) { onAdd() },
+    ) {
+      Text("＋ Timer", color = Color(0xFFDADADA), fontSize = 15.sp, fontWeight = FontWeight.SemiBold,
+          modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp))
+    }
+  }
+  Spacer(Modifier.size(14.dp))
+}
+
+/** mm:ss, or h:mm:ss past an hour. */
+private fun formatTimerRemaining(ms: Long): String {
+  val total = (ms / 1000).toInt()
+  val h = total / 3600; val m = (total % 3600) / 60; val s = total % 60
+  return if (h > 0) "%d:%02d:%02d".format(h, m, s) else "%d:%02d".format(m, s)
+}
+
+/** Modal to add a named kitchen timer: preset names (each with a sensible default
+ *  duration) + a minute picker. */
+@Composable
+private fun AddTimerOverlay(onDismiss: () -> Unit, onAdd: (String, Long) -> Unit) {
+  var label by remember { mutableStateOf("") }
+  var minutes by remember { mutableStateOf(5) }
+  // Common kitchen presets → (name, default minutes).
+  val presets = listOf("Pasta" to 10, "Eggs" to 7, "Tea" to 4, "Oven" to 20, "Rice" to 15)
+  val quick = listOf(1, 2, 3, 5, 10, 15, 20, 30, 45, 60)
+  BackHandler { onDismiss() }
+  Box(
+      contentAlignment = Alignment.Center,
+      modifier = Modifier.fillMaxSize().background(Color(0xCC000000))
+          .tvFocusable(RoundedCornerShape(0.dp), focusScale = 1f) { onDismiss() },
+  ) {
+    Surface(color = MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(24.dp),
+        modifier = Modifier.widthIn(max = 640.dp).padding(24.dp)) {
+      Column(modifier = Modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        Text("New timer", color = Color.White, fontSize = 24.sp, fontWeight = FontWeight.Bold)
+        androidx.compose.material3.OutlinedTextField(
+            value = label, onValueChange = { label = it },
+            label = { Text("Name (optional)") }, singleLine = true,
+            modifier = Modifier.fillMaxWidth(),
+        )
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+          presets.forEach { (name, mins) ->
+            WidgetToggleChip(name, label == name) { label = name; minutes = mins }
+          }
+        }
+        Text("Duration", color = Color(0xFF9A9A9A), fontSize = 14.sp)
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+          quick.forEach { m -> WidgetToggleChip("${m}m", minutes == m) { minutes = m } }
+        }
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+          Surface(color = Color(0x22FFFFFF), shape = RoundedCornerShape(12.dp),
+              modifier = Modifier.tvFocusable(RoundedCornerShape(12.dp), focusScale = 1f) {
+                minutes = (minutes - 1).coerceAtLeast(1) }) {
+            Text("−", color = Color.White, fontSize = 22.sp, modifier = Modifier.padding(horizontal = 18.dp, vertical = 6.dp))
+          }
+          Text("$minutes min", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
+          Surface(color = Color(0x22FFFFFF), shape = RoundedCornerShape(12.dp),
+              modifier = Modifier.tvFocusable(RoundedCornerShape(12.dp), focusScale = 1f) {
+                minutes = (minutes + 1).coerceAtMost(600) }) {
+            Text("+", color = Color.White, fontSize = 22.sp, modifier = Modifier.padding(horizontal = 18.dp, vertical = 6.dp))
+          }
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+          Surface(color = MaterialTheme.colorScheme.primary, shape = RoundedCornerShape(14.dp),
+              modifier = Modifier.weight(1f).tvFocusable(RoundedCornerShape(14.dp), focusScale = 1f) {
+                onAdd(label.ifBlank { "Timer" }, minutes * 60_000L)
+              }) {
+            Text("Start", color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.SemiBold,
+                textAlign = TextAlign.Center, modifier = Modifier.padding(vertical = 12.dp).fillMaxWidth())
+          }
+          Surface(color = Color(0x22FFFFFF), shape = RoundedCornerShape(14.dp),
+              modifier = Modifier.weight(1f).tvFocusable(RoundedCornerShape(14.dp), focusScale = 1f) { onDismiss() }) {
+            Text("Cancel", color = Color.White, fontSize = 17.sp,
+                textAlign = TextAlign.Center, modifier = Modifier.padding(vertical = 12.dp).fillMaxWidth())
+          }
+        }
+      }
+    }
+  }
 }
 
 @Composable
