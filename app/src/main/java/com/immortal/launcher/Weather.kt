@@ -74,6 +74,89 @@ object Weather {
     return null
   }
 
+  /** Today's sunrise/sunset as epoch millis (location-local, which on a fixed Portal
+   * equals the device zone). [formatted] gives "HH:mm" / "h:mm a" per the clock setting. */
+  data class SunTimes(val sunriseMillis: Long, val sunsetMillis: Long) {
+    fun formatted(use24Hour: Boolean): Pair<String, String> {
+      val fmt = SimpleDateFormat(if (use24Hour) "HH:mm" else "h:mm a", Locale.getDefault())
+      return fmt.format(java.util.Date(sunriseMillis)) to fmt.format(java.util.Date(sunsetMillis))
+    }
+  }
+
+  /** Today's sunrise + sunset from Open-Meteo (keyless). `timezone=auto` returns the
+   * location's local times, parsed in the device's default zone. Null on failure. */
+  fun fetchSunTimes(context: Context): SunTimes? =
+      runCatching {
+            val (lat, lon) = location(context) ?: return null
+            val daily =
+                JSONObject(
+                        httpGet(
+                            "https://api.open-meteo.com/v1/forecast?latitude=$lat&longitude=$lon" +
+                                "&daily=sunrise,sunset&timezone=auto&forecast_days=1"))
+                    .getJSONObject("daily")
+            val iso = SimpleDateFormat("yyyy-MM-dd'T'HH:mm", Locale.US)
+            val sr = iso.parse(daily.getJSONArray("sunrise").getString(0))!!.time
+            val ss = iso.parse(daily.getJSONArray("sunset").getString(0))!!.time
+            SunTimes(sr, ss)
+          }
+          .getOrNull()
+
+  /** Current air quality, UV, and pollen. [aqi] is the European AQI (0..100+, lower is
+   * better); [pollen] is "" when unavailable (pollen is Europe-only on Open-Meteo). */
+  data class AirQuality(
+      val aqi: Int,
+      val aqiLabel: String,
+      val uvIndex: Double,
+      val pollen: String,
+  )
+
+  /** European AQI band label. */
+  private fun aqiBand(aqi: Double): String =
+      when {
+        aqi < 20 -> "Good"
+        aqi < 40 -> "Fair"
+        aqi < 60 -> "Moderate"
+        aqi < 80 -> "Poor"
+        aqi < 100 -> "Very poor"
+        else -> "Extremely poor"
+      }
+
+  /** Coarse pollen band from the worst of the reported species (grains/m³). */
+  private fun pollenBand(maxGrains: Double): String =
+      when {
+        maxGrains <= 0.0 -> ""
+        maxGrains < 20 -> "Low"
+        maxGrains < 50 -> "Moderate"
+        maxGrains < 150 -> "High"
+        else -> "Very high"
+      }
+
+  /** Current air quality / UV / pollen from Open-Meteo's keyless air-quality API.
+   * Null on failure. Pollen fields are Europe-only and come back absent elsewhere. */
+  fun fetchAirQuality(context: Context): AirQuality? =
+      runCatching {
+            val (lat, lon) = location(context) ?: return null
+            val cur =
+                JSONObject(
+                        httpGet(
+                            "https://air-quality-api.open-meteo.com/v1/air-quality?latitude=$lat" +
+                                "&longitude=$lon&current=european_aqi,uv_index,grass_pollen," +
+                                "birch_pollen,alder_pollen,ragweed_pollen,olive_pollen,mugwort_pollen" +
+                                "&timezone=auto"))
+                    .getJSONObject("current")
+            val aqi = cur.optDouble("european_aqi", Double.NaN)
+            if (aqi.isNaN()) return null
+            val uv = cur.optDouble("uv_index", Double.NaN).let { if (it.isNaN()) 0.0 else it }
+            val pollenMax =
+                listOf(
+                        "grass_pollen", "birch_pollen", "alder_pollen", "ragweed_pollen",
+                        "olive_pollen", "mugwort_pollen")
+                    .map { cur.optDouble(it, 0.0) }
+                    .maxOrNull() ?: 0.0
+            AirQuality(aqi.roundToInt(), aqiBand(aqi), uv, pollenBand(pollenMax))
+          }
+          .getOrNull()
+
   /** One day of the multi-day forecast. [label] is "Today" then "Mon", "Tue", … */
   data class DayForecast(val label: String, val code: Int, val hi: Int, val lo: Int)
 

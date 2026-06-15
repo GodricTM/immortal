@@ -32,10 +32,17 @@ android {
     applicationId = "com.immortal.launcher"
     minSdk = 24
     targetSdk = 36
-    versionCode = 39
-    versionName = "1.38"
+    versionCode = 40
+    versionName = "1.39"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+    // Portal hardware is ARM only (gen-1/gen-2 Snapdragon, Portal TV Amlogic).
+    // Kept as a guard so any future native dependency can't drag x86/x86_64 .so
+    // files no Portal can run into the APK.
+    ndk {
+      abiFilters += listOf("arm64-v8a", "armeabi-v7a")
+    }
   }
 
   signingConfigs {
@@ -77,10 +84,6 @@ dependencies {
   implementation(libs.androidx.exifinterface)
   implementation(libs.androidx.lifecycle.runtime.ktx)
   debugImplementation(libs.androidx.compose.ui.tooling)
-
-  // Piper TTS - Sherpa-ONNX AAR (local) + Commons Compress for tar.bz2 extraction
-  implementation(fileTree(mapOf("dir" to "libs", "include" to listOf("*.aar"))))
-  implementation(libs.commons.compress)
 
   // Unit tests (pure JVM — no device/emulator). org.json provides a real
   // implementation so JSON-parsing logic can be tested off-device (the android.jar

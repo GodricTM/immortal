@@ -19,6 +19,8 @@ class BootReceiver : BroadcastReceiver() {
       SettingsGuard.reaffirmScreensaver(context)
       // Alarms don't survive a reboot: re-arm the overnight window and apply it now.
       SleepScheduler.applyOvernightNow(context)
+      // Likewise re-arm the ambient chime alarms.
+      ChimeScheduler.reschedule(context)
     }
   }
 }

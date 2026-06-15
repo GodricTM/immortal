@@ -77,6 +77,19 @@ class PhotoFrameController(
   private lateinit var batteryDot: View
   private lateinit var weatherDot: View
   private var weatherText: String = ""
+  // Now-playing display (visible only when media is active).
+  private lateinit var nowPlayingRow: LinearLayout
+  private lateinit var nowPlayingArt: ImageView
+  private lateinit var nowPlayingText: TextView
+  private var nowPlayingPollCounter = 0
+
+  // Ambient dashboard: full-screen glanceable info card shown periodically.
+  private var dashboardPanel: View? = null
+  private lateinit var dashClock: TextView
+  private lateinit var dashDate: TextView
+  private lateinit var dashWeather: TextView
+  private lateinit var dashEvent: TextView
+  private var dashboardVisible = false
 
   private var settings = ScreensaverConfig.Settings()
 
@@ -85,9 +98,11 @@ class PhotoFrameController(
   private var welcomeVisible = false
   private val dismissWelcomeRunnable = Runnable { dismissWelcomeAnimated() }
   private var tts: TextToSpeech? = null
-  private var piperTts: PiperTTS? = null
   @Volatile private var ttsReady = false
   @Volatile private var pendingSpeech: String? = null
+
+  // Ambient soundscape (synthesized) played while the frame is up.
+  private val soundscape = SoundscapePlayer()
 
   // Local-folder playback state.
   private var localMode = false
@@ -140,35 +155,44 @@ class PhotoFrameController(
     settings = ScreensaverConfig.load(context)
     applyFit()
 
-    // Initialize Android TTS immediately — ready in ~200ms, well within the overlay window.
-    tts = TextToSpeech(context) { status ->
-      if (status == TextToSpeech.SUCCESS && !ttsReady) {
-        tts?.language = Locale.US
-        tts?.setPitch(1.0f)
-        tts?.setSpeechRate(0.9f)
-        ttsReady = true
-        pendingSpeech?.let { text ->
-          tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, null)
-          pendingSpeech = null
+    // Only spin up TTS when the welcome overlay will actually speak. The greeting uses
+    // the Android TTS engine (reliable, instant, no large download). Piper neural TTS
+    // was dropped from this path: its model download is unreliable on the Portal's
+    // connection and a truncated model makes onnxruntime abort natively (SIGABRT),
+    // taking the whole dream down. See [[project_piper_crash]].
+    val welcomeCfg = WelcomeConfig.load(context)
+    val ttsEnabled = showWelcome && settings.welcomeEnabled && welcomeCfg.enableTts
+    if (ttsEnabled) {
+      tts = TextToSpeech(context) { status ->
+        if (status == TextToSpeech.SUCCESS && !ttsReady) {
+          tts?.language = Locale.US
+          tts?.setPitch(1.0f)
+          tts?.setSpeechRate(0.9f)
+          // Apply the user's chosen voice; if none chosen, auto-pick the highest-quality
+          // voice the device has so the greeting sounds as good as possible by default.
+          runCatching {
+            val voices = tts?.voices
+            val chosen =
+                if (welcomeCfg.ttsVoice.isNotBlank()) voices?.firstOrNull { it.name == welcomeCfg.ttsVoice }
+                else voices
+                    ?.filter { it.locale.language == Locale.US.language && !it.isNetworkConnectionRequired }
+                    ?.maxByOrNull { it.quality }
+            chosen?.let { tts?.voice = it }
+          }
+          ttsReady = true
+          pendingSpeech?.let { text ->
+            tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, null)
+            pendingSpeech = null
+          }
         }
       }
     }
 
-    // Also initialize Piper TTS in background for higher-quality neural voice.
-    // If Piper wins the race (cached models on fast hardware), it speaks instead.
-    piperTts = PiperTTS(context)
-    piperTts?.initialize { success ->
-      if (success && !ttsReady) {
-        ttsReady = true
-        pendingSpeech?.let { text ->
-          piperTts?.speak(text)
-          pendingSpeech = null
-        }
-      } else if (!success) {
-        piperTts?.shutdown()
-        piperTts = null
-      }
-    }
+    // Start the ambient soundscape (no-op when set to Off).
+    runCatching { soundscape.start(settings.soundscape, settings.soundscapeVolume) }
+
+    // Schedule the ambient dashboard cycle (first card after ~45s).
+    if (settings.ambientDashboard) ui.postDelayed(dashboardCycle, 45_000L)
 
     if (showWelcome && settings.welcomeEnabled) showWelcomeOverlay()
     tick.run()
@@ -201,11 +225,10 @@ class PhotoFrameController(
   }
 
   fun stop() {
+    ui.removeCallbacks(dashboardCycle)
     ui.removeCallbacksAndMessages(null)
+    runCatching { soundscape.stop() }
     if (this::videoView.isInitialized) runCatching { videoView.stopPlayback() }
-    piperTts?.stop()
-    piperTts?.shutdown()
-    piperTts = null
     tts?.stop()
     tts?.shutdown()
     tts = null
@@ -260,6 +283,27 @@ class PhotoFrameController(
     row.addView(weatherDot)
     row.addView(weather)
     col.addView(row)
+
+    // Now-playing row: album art thumb + "title — artist", shown only when media plays.
+    nowPlayingRow = LinearLayout(context)
+    nowPlayingRow.orientation = LinearLayout.HORIZONTAL
+    nowPlayingRow.gravity = Gravity.CENTER_VERTICAL
+    nowPlayingRow.visibility = View.GONE
+    nowPlayingArt = ImageView(context)
+    val artLp = LinearLayout.LayoutParams(dp(48), dp(48))
+    artLp.setMargins(0, dp(10), dp(12), 0)
+    nowPlayingArt.layoutParams = artLp
+    nowPlayingArt.scaleType = ImageView.ScaleType.CENTER_CROP
+    nowPlayingText = text(20f, Color.WHITE, false)
+    nowPlayingRow.addView(nowPlayingArt)
+    nowPlayingRow.addView(nowPlayingText)
+    col.addView(nowPlayingRow)
+
+    // Ambient dashboard panel — full-screen glanceable card, hidden until cycled in.
+    dashboardPanel = buildDashboardPanel().also {
+      it.visibility = View.GONE
+      root.addView(it, FrameLayout.LayoutParams(MATCH, MATCH))
+    }
 
     // Welcome-back overlay — added last so it renders above photos and scrim.
     welcomeOverlay = buildWelcomeOverlay()
@@ -364,11 +408,7 @@ class PhotoFrameController(
       }
       // Speak immediately if TTS is ready, otherwise queue it
       if (ttsReady) {
-        if (piperTts != null) {
-          piperTts?.speak(fullGreeting)
-        } else {
-          tts?.speak(fullGreeting, TextToSpeech.QUEUE_FLUSH, null, null)
-        }
+        tts?.speak(fullGreeting, TextToSpeech.QUEUE_FLUSH, null, null)
       } else {
         pendingSpeech = fullGreeting
       }
@@ -382,7 +422,6 @@ class PhotoFrameController(
   private fun dismissWelcome() {
     if (!welcomeVisible) return
     ui.removeCallbacks(dismissWelcomeRunnable)
-    piperTts?.stop()
     tts?.stop()
     pendingSpeech = null
     dismissWelcomeAnimated()
@@ -392,7 +431,6 @@ class PhotoFrameController(
     welcomeVisible = false
     // Stop ongoing speech but leave pendingSpeech intact so it fires if TTS wasn't
     // ready before the overlay auto-dismissed. User tap (dismissWelcome) cancels it.
-    piperTts?.stop()
     tts?.stop()
     welcomeOverlay.animate()
         .alpha(0f)
@@ -444,9 +482,103 @@ class PhotoFrameController(
           weather.text = weatherText
           weather.visibility = if (hasWeather) View.VISIBLE else View.GONE
           weatherDot.visibility = if (hasWeather) View.VISIBLE else View.GONE
+          // Poll the active media session every ~3s for the now-playing display.
+          if (nowPlayingPollCounter % 3 == 0) updateNowPlaying()
+          nowPlayingPollCounter++
           ui.postDelayed(this, 1_000L)
         }
       }
+
+  /** Refresh the now-playing strip from the active media session. */
+  private fun updateNowPlaying() {
+    if (!this::nowPlayingRow.isInitialized) return
+    val track = runCatching { NowPlaying.current(context) }.getOrNull()
+    if (track != null && track.title.isNotBlank()) {
+      nowPlayingText.text =
+          if (track.artist.isNotBlank()) "♪ ${track.title} — ${track.artist}" else "♪ ${track.title}"
+      if (track.art != null) {
+        nowPlayingArt.setImageBitmap(track.art)
+        nowPlayingArt.visibility = View.VISIBLE
+      } else {
+        nowPlayingArt.visibility = View.GONE
+      }
+      nowPlayingRow.visibility = View.VISIBLE
+    } else {
+      nowPlayingRow.visibility = View.GONE
+    }
+  }
+
+  // --- ambient dashboard ------------------------------------------------------
+
+  private fun buildDashboardPanel(): View {
+    val panel = FrameLayout(context)
+    panel.setBackgroundColor(0xF20D0D12.toInt()) // near-opaque dark
+    val col = LinearLayout(context)
+    col.orientation = LinearLayout.VERTICAL
+    col.gravity = Gravity.CENTER
+    panel.addView(col, FrameLayout.LayoutParams(WRAP, WRAP, Gravity.CENTER))
+    dashClock = text(120f, Color.WHITE, true).also { it.gravity = Gravity.CENTER; col.addView(it) }
+    dashDate = text(28f, Color.WHITE, false).also { it.gravity = Gravity.CENTER; col.addView(it) }
+    dashWeather = text(26f, Color.WHITE, false).also {
+      it.gravity = Gravity.CENTER
+      (it.layoutParams as? LinearLayout.LayoutParams)?.topMargin = dp(18)
+      col.addView(it)
+    }
+    dashEvent = text(22f, Color.WHITE, false).also {
+      it.gravity = Gravity.CENTER
+      (it.layoutParams as? LinearLayout.LayoutParams)?.topMargin = dp(10)
+      col.addView(it)
+    }
+    return panel
+  }
+
+  /** Shows the dashboard card for a few seconds, then returns to the photos. */
+  private val dashboardCycle =
+      object : Runnable {
+        override fun run() {
+          if (!settings.ambientDashboard) return
+          showDashboard()
+          ui.postDelayed({ hideDashboard() }, 9_000L)
+          ui.postDelayed(this, 90_000L) // reappear roughly every 90s
+        }
+      }
+
+  private fun showDashboard() {
+    val panel = dashboardPanel ?: return
+    val now = Date()
+    val clockPattern = if (ImmortalSettings.use24HourClock(context)) "H:mm" else "h:mm"
+    dashClock.text = SimpleDateFormat(clockPattern, Locale.getDefault()).format(now)
+    dashDate.text = SimpleDateFormat("EEEE, MMMM d", Locale.getDefault()).format(now)
+    dashWeather.text = weatherText
+    dashWeather.visibility = if (weatherText.isNotBlank()) View.VISIBLE else View.GONE
+    dashEvent.visibility = View.GONE
+    io.execute {
+      val ev = runCatching {
+        if (CalendarHelper.hasPermission(context)) CalendarHelper.upcoming(context).firstOrNull() else null
+      }.getOrNull()
+      ui.post {
+        if (ev != null) {
+          val cal = java.util.Calendar.getInstance().apply { timeInMillis = ev.begin }
+          val whenStr =
+              if (ev.allDay) SimpleDateFormat("MMM d", Locale.getDefault()).format(cal.time)
+              else SimpleDateFormat(if (ImmortalSettings.use24HourClock(context)) "HH:mm" else "h:mm a",
+                  Locale.getDefault()).format(cal.time)
+          dashEvent.text = "Next: $whenStr · ${ev.title}"
+          if (dashboardVisible) dashEvent.visibility = View.VISIBLE
+        }
+      }
+    }
+    panel.alpha = 0f
+    panel.visibility = View.VISIBLE
+    panel.animate().alpha(1f).setDuration(600).start()
+    dashboardVisible = true
+  }
+
+  private fun hideDashboard() {
+    val panel = dashboardPanel ?: return
+    panel.animate().alpha(0f).setDuration(600).withEndAction { panel.visibility = View.GONE }.start()
+    dashboardVisible = false
+  }
 
   private val rotate =
       object : Runnable {
@@ -522,7 +654,16 @@ class PhotoFrameController(
    * being skipped.
    */
   private fun decodeCorrected(path: String): Bitmap? {
-    val bmp = BitmapFactory.decodeFile(path) ?: return null
+    // Downsample large camera files (12–48 MP) so the decode + the rotated copy below
+    // both fit in the Portal's heap. Target the screen's ~2× so quality is unaffected.
+    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+    BitmapFactory.decodeFile(path, bounds)
+    val longest = maxOf(bounds.outWidth, bounds.outHeight)
+    if (longest <= 0) return null
+    var sample = 1
+    while (longest / sample > 2560) sample *= 2
+    val opts = BitmapFactory.Options().apply { inSampleSize = sample }
+    val bmp = BitmapFactory.decodeFile(path, opts) ?: return null
     val orientation =
         runCatching {
               ExifInterface(path)
@@ -635,14 +776,136 @@ class PhotoFrameController(
         .start()
   }
 
-  private fun directImageUrl(): String {
-    if (unsplashKey.isBlank())
-        return "https://picsum.photos/1280/800?random=${System.currentTimeMillis()}"
+  /** Resolve the next image URL based on the configured online feed. Each branch
+   *  falls back to Picsum if its API hiccups, so the frame is never blank. Runs on
+   *  the io thread (httpGet blocks). */
+  private fun directImageUrl(): String =
+      runCatching {
+        when (settings.feed) {
+          ScreensaverConfig.FEED_MET -> metImageUrl()
+          ScreensaverConfig.FEED_ARTIC -> articImageUrl()
+          ScreensaverConfig.FEED_WIKIMEDIA -> wikimediaImageUrl()
+          ScreensaverConfig.FEED_APOD -> apodImageUrl()
+          else -> defaultPhotoUrl()
+        }
+      }.getOrDefault(picsumUrl())
+
+  // Request photos at the device's actual screen size/orientation so they fill the
+  // panel crisply instead of being upscaled from a fixed 1280×800 (Portal Mini is
+  // 800×1280 portrait, Portal+ gen-2 is 2160×1440, etc.).
+  private fun picsumUrl(): String {
+    val m = context.resources.displayMetrics
+    return "https://picsum.photos/${m.widthPixels}/${m.heightPixels}?random=${System.currentTimeMillis()}"
+  }
+
+  /** Picsum, or Unsplash if a key was supplied (the original built-in feed). */
+  private fun defaultPhotoUrl(): String {
+    if (unsplashKey.isBlank()) return picsumUrl()
+    val m = context.resources.displayMetrics
+    // Match the Unsplash crop to the screen aspect so portrait panels don't get a
+    // letterboxed/upscaled landscape shot.
+    val orientation = if (m.heightPixels > m.widthPixels) "portrait" else "landscape"
     val json =
         httpGet(
-            "https://api.unsplash.com/photos/random?orientation=landscape" +
+            "https://api.unsplash.com/photos/random?orientation=$orientation" +
                 "&query=$unsplashQuery&client_id=$unsplashKey")
     return JSONObject(json).getJSONObject("urls").getString("regular")
+  }
+
+  // The Met search returns a big list of object IDs once; we then pick random ones and
+  // fetch each object's primaryImage. The ID list is cached for the session.
+  private var metIds: List<Int>? = null
+  private fun metImageUrl(): String {
+    val ids =
+        metIds
+            ?: run {
+              val q =
+                  listOf(
+                          "landscape", "impressionism", "painting", "portrait", "seascape",
+                          "river", "mountains", "flowers", "still life", "garden")
+                      .random()
+              val arr =
+                  JSONObject(
+                          httpGet(
+                              "https://collectionapi.metmuseum.org/public/collection/v1/" +
+                                  "search?hasImages=true&q=$q"))
+                      .optJSONArray("objectIDs")
+              val list =
+                  if (arr != null) (0 until arr.length()).map { arr.getInt(it) } else emptyList()
+              metIds = list
+              list
+            }
+    if (ids.isEmpty()) return picsumUrl()
+    repeat(5) {
+      val id = ids.random()
+      val img =
+          runCatching {
+                JSONObject(
+                        httpGet(
+                            "https://collectionapi.metmuseum.org/public/collection/v1/objects/$id"))
+                    .optString("primaryImage")
+              }
+              .getOrDefault("")
+      if (img.isNotBlank()) return img
+    }
+    return picsumUrl()
+  }
+
+  private fun articImageUrl(): String {
+    val page = (1..100).random()
+    val data =
+        JSONObject(
+                httpGet(
+                    "https://api.artic.edu/api/v1/artworks?fields=id,image_id&limit=100&page=$page"))
+            .optJSONArray("data") ?: return picsumUrl()
+    val imageIds =
+        (0 until data.length()).mapNotNull {
+          data.getJSONObject(it).optString("image_id").takeIf { s -> s.isNotBlank() && s != "null" }
+        }
+    if (imageIds.isEmpty()) return picsumUrl()
+    // IIIF image API: 1200px wide, auto height.
+    return "https://www.artic.edu/iiif/2/${imageIds.random()}/full/1200,/0/default.jpg"
+  }
+
+  private fun wikimediaImageUrl(): String {
+    // Picture of the Day is one per day, so sample a random recent date for variety.
+    val cal = java.util.Calendar.getInstance()
+    cal.add(java.util.Calendar.DAY_OF_YEAR, -(0..120).random())
+    val date =
+        String.format(
+            "%04d/%02d/%02d",
+            cal.get(java.util.Calendar.YEAR),
+            cal.get(java.util.Calendar.MONTH) + 1,
+            cal.get(java.util.Calendar.DAY_OF_MONTH))
+    val image =
+        JSONObject(httpGet("https://api.wikimedia.org/feed/v1/wikipedia/en/featured/$date"))
+            .optJSONObject("image") ?: return picsumUrl()
+    val thumb = image.optJSONObject("thumbnail")?.optString("source").orEmpty()
+    val full = image.optJSONObject("image")?.optString("source").orEmpty()
+    return thumb.ifBlank { full }.ifBlank { picsumUrl() }
+  }
+
+  private fun apodImageUrl(): String {
+    for (attempt in 0 until 3) {
+      val obj =
+          runCatching {
+                org.json.JSONArray(
+                        httpGet(
+                            "https://api.nasa.gov/planetary/apod?api_key=DEMO_KEY&count=1&thumbs=true"))
+                    .optJSONObject(0)
+              }
+              .getOrNull() ?: continue
+      if (obj.optString("media_type") == "image") {
+        // Prefer the display-sized "url" over "hdurl": the HD master is often a
+        // 5000–10000px, many-MB image that's slow to fetch and overkill for the panel.
+        val u = obj.optString("url").ifBlank { obj.optString("hdurl") }
+        if (u.isNotBlank()) return u
+      } else {
+        val t = obj.optString("thumbnail_url")
+        if (t.isNotBlank()) return t
+      }
+    }
+    return picsumUrl()
   }
 
   // --- data -------------------------------------------------------------------
@@ -680,7 +943,24 @@ class PhotoFrameController(
     c.readTimeout = 12000
     c.instanceFollowRedirects = true
     c.setRequestProperty("User-Agent", "PortalPhotoFrame/1.0")
-    return c.inputStream.use { BitmapFactory.decodeStream(it) }
+    // Buffer the whole image so we can measure it, then decode downsampled. Art-feed
+    // sources (the Met especially) return 4000–6000px masters; decoding those at full
+    // size is ~50–100 MB of ARGB and OOMs the Portal's small heap — the frame would
+    // go blank or take the dream down with it. Capping at the screen's ~2× kills that.
+    val bytes = c.inputStream.use { it.readBytes() }
+    return decodeSampled(bytes, 2560)
+  }
+
+  /** Decode [bytes] downsampled so the longer edge is ≤ [maxEdge] px. Guards OOM. */
+  private fun decodeSampled(bytes: ByteArray, maxEdge: Int): Bitmap? {
+    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+    BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+    val longest = maxOf(bounds.outWidth, bounds.outHeight)
+    if (longest <= 0) return null
+    var sample = 1
+    while (longest / sample > maxEdge) sample *= 2
+    val opts = BitmapFactory.Options().apply { inSampleSize = sample }
+    return runCatching { BitmapFactory.decodeByteArray(bytes, 0, bytes.size, opts) }.getOrNull()
   }
 
   private val MATCH = FrameLayout.LayoutParams.MATCH_PARENT

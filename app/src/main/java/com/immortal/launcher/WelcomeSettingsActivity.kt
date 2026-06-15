@@ -59,6 +59,43 @@ private fun WelcomeSettingsScreen() {
   val firstFocus = remember { FocusRequester() }
   LaunchedEffect(Unit) { runCatching { firstFocus.requestFocus() } }
 
+  // Android TTS voice audition. A single engine is kept alive for the screen's life to
+  // both enumerate installed voices and play test phrases. (Piper neural voices were
+  // dropped here — their model download is unreliable on the Portal. See project notes.)
+  // voices: name -> friendly label; first entry is the engine default.
+  var androidVoices by remember { mutableStateOf<List<Pair<String, String>>>(listOf("" to "Default voice")) }
+  val ttsEngine = remember { mutableStateOf<android.speech.tts.TextToSpeech?>(null) }
+  DisposableEffect(Unit) {
+    var engine: android.speech.tts.TextToSpeech? = null
+    engine = android.speech.tts.TextToSpeech(context.applicationContext) { status ->
+      if (status == android.speech.tts.TextToSpeech.SUCCESS) {
+        val lang = java.util.Locale.getDefault().language
+        val found = runCatching {
+          engine?.voices
+              ?.filter { it.locale.language == lang && !it.isNetworkConnectionRequired }
+              // Highest-quality voices first so the best the device has is surfaced.
+              ?.sortedWith(compareByDescending<android.speech.tts.Voice> { it.quality }.thenBy { it.name })
+              ?.map { it.name to androidVoiceLabel(it) }
+              ?.distinctBy { it.second }
+              ?.take(12)
+              ?: emptyList()
+        }.getOrDefault(emptyList())
+        if (found.isNotEmpty()) androidVoices = listOf("" to "Default voice") + found
+      }
+    }
+    ttsEngine.value = engine
+    onDispose { runCatching { engine?.stop() }; runCatching { engine?.shutdown() } }
+  }
+  fun testVoice(voiceName: String) {
+    val t = ttsEngine.value ?: return
+    t.language = java.util.Locale.getDefault()
+    if (voiceName.isNotBlank()) {
+      runCatching { t.voices?.firstOrNull { it.name == voiceName }?.let { t.voice = it } }
+    }
+    t.speak("Hi, this is your welcome voice. Welcome home.",
+        android.speech.tts.TextToSpeech.QUEUE_FLUSH, null, "welcome_test")
+  }
+
   Box(modifier = Modifier.fillMaxSize()) {
     Column(
         modifier =
@@ -104,6 +141,31 @@ private fun WelcomeSettingsScreen() {
             settings = settings.copy(enableTts = it)
           }
         }
+
+        Spacer(Modifier.size(26.dp))
+
+        SectionLabel("VOICE")
+        Card {
+          androidVoices.forEachIndexed { i, (name, label) ->
+            if (i > 0) Divider()
+            AndroidVoiceRow(
+                label = label,
+                selected = settings.ttsVoice == name,
+                onSelect = {
+                  WelcomeConfig.setTtsVoice(context, name)
+                  settings = settings.copy(ttsVoice = name)
+                },
+                onTest = { testVoice(name) },
+            )
+          }
+        }
+        Text(
+            "Voice for the spoken greeting, from the voices installed on this device. " +
+                "Tap Test to hear it. (Enable \"Speak greeting\" above for it to play on wake.)",
+            color = Color(0xFF7C7C7C),
+            fontSize = 13.sp,
+            modifier = Modifier.padding(top = 10.dp, start = 4.dp, end = 4.dp),
+        )
 
         Spacer(Modifier.size(26.dp))
 
@@ -266,6 +328,58 @@ private fun ToggleRow(title: String, checked: Boolean, onChange: (Boolean) -> Un
     Text(title, color = Color.White, fontSize = 17.sp, modifier = Modifier.weight(1f))
     Switch(checked = checked, onCheckedChange = null)
   }
+}
+
+@Composable
+private fun AndroidVoiceRow(
+    label: String,
+    selected: Boolean,
+    onSelect: () -> Unit,
+    onTest: () -> Unit,
+) {
+  Row(
+      modifier =
+          Modifier.fillMaxWidth().tvFocusableRow { onSelect() }
+              .padding(horizontal = 18.dp, vertical = 12.dp),
+      verticalAlignment = Alignment.CenterVertically,
+  ) {
+    RadioButton(selected = selected, onClick = null)
+    Text(label, color = Color.White, fontSize = 17.sp, modifier = Modifier.weight(1f).padding(start = 12.dp))
+    Surface(
+        color = MaterialTheme.colorScheme.primary,
+        shape = RoundedCornerShape(10.dp),
+        modifier = Modifier.tvFocusable(RoundedCornerShape(10.dp), focusScale = 1f) { onTest() },
+    ) {
+      Text(
+          "Test",
+          color = Color.White,
+          fontSize = 15.sp,
+          textAlign = TextAlign.Center,
+          modifier = Modifier.widthIn(min = 64.dp).padding(horizontal = 16.dp, vertical = 9.dp),
+      )
+    }
+  }
+}
+
+/** Turn an Android engine voice name like "en-us-x-sfg#female_1-local" into a label. */
+private fun androidVoiceLabel(v: android.speech.tts.Voice): String {
+  val n = v.name.lowercase()
+  val gender = when {
+    n.contains("female") -> "Female"
+    n.contains("male") -> "Male"
+    else -> null
+  }
+  val num = Regex("(\\d+)").find(n)?.value
+  val base = listOfNotNull(gender, num?.let { "voice $it" }).joinToString(" ").ifBlank { v.name }
+  val region = v.locale.country.ifBlank { v.locale.language }.uppercase()
+  // Quality tier hint so the user can pick the better-sounding voices.
+  val q = when {
+    v.quality >= android.speech.tts.Voice.QUALITY_VERY_HIGH -> "HQ+"
+    v.quality >= android.speech.tts.Voice.QUALITY_HIGH -> "HQ"
+    else -> null
+  }
+  return listOfNotNull(base.takeIf { it.isNotBlank() }, region.takeIf { it.isNotBlank() }, q)
+      .joinToString(" · ")
 }
 
 @Composable

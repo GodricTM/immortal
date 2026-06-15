@@ -12,6 +12,7 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsFocusedAsState
@@ -303,7 +304,9 @@ private fun SleepMinuteStepper(minutes: Int, onChange: (Int) -> Unit) {
 @Composable
 private fun ArrowButton(glyph: String, rowFocused: Boolean, onClick: () -> Unit) {
   Box(
-      modifier = Modifier.size(48.dp),
+      // Tappable for touch devices (Portal has no D-pad); the row's onKeyEvent still
+      // handles left/right on the TV remote.
+      modifier = Modifier.size(48.dp).clickable { onClick() },
       contentAlignment = Alignment.Center,
   ) {
     Text(

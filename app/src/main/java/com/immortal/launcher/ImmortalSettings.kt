@@ -74,10 +74,30 @@ object ImmortalSettings {
   const val ACCENT_CORAL = "coral"
   const val ACCENT_MINT = "mint"
 
+  // App grid sort modes.
+  const val SORT_MANUAL = "manual" // user's drag order (default)
+  const val SORT_AZ = "az" // alphabetical by label
+  const val SORT_USED = "used" // most-launched first (our own counter)
+  const val SORT_RECENT = "recent" // most recently installed first
+
   // Background image options
   const val BG_DARK = "dark"        // default dark background
   const val BG_IMAGE = "image"      // custom user image
   const val BG_BLUR = "blur"        // image with blur effect
+  const val BG_GRADIENT = "gradient" // a built-in gradient wallpaper
+  const val BG_SKY = "sky"          // sun-driven sky colour (tracks sunrise/sunset)
+
+  // Built-in gradient wallpaper presets (top colour, bottom colour as 0xAARRGGBB).
+  val GRADIENTS: List<Triple<String, Long, Long>> = listOf(
+      Triple("midnight", 0xFF0F2027, 0xFF203A43),
+      Triple("ocean", 0xFF1A2980, 0xFF26D0CE),
+      Triple("sunset", 0xFF42275A, 0xFFE96443),
+      Triple("forest", 0xFF134E5E, 0xFF71B280),
+      Triple("plum", 0xFF41295A, 0xFF2F0743),
+      Triple("ember", 0xFF200122, 0xFF6F0000),
+      Triple("slate", 0xFF232526, 0xFF414345),
+  )
+  fun gradientLabel(key: String): String = key.replaceFirstChar { it.uppercase() }
 
   data class Settings(
       val weatherUnit: String = UNIT_AUTO,
@@ -89,8 +109,30 @@ object ImmortalSettings {
       val accentColor: String = ACCENT_BLUE,
       val backgroundType: String = BG_DARK,
       val backgroundImagePath: String? = null,
+      // Which gradient preset is active when backgroundType == BG_GRADIENT.
+      val backgroundGradient: String = "midnight",
+      // Thin top bar showing the day's progress, shown only with the Sky background.
+      val showDayProgress: Boolean = false,
+      // "Year is N% gone" card (week/month/year bars, year dots, month grid) on the dashboard page.
+      val showTimeProgress: Boolean = false,
       val activateOnSleep: Boolean = ACTIVATE_ON_SLEEP_DEFAULT,
       val activateOnDock: Boolean = ACTIVATE_ON_DOCK_DEFAULT,
+      // Show today's sunrise/sunset under the header weather.
+      val showSunTimes: Boolean = true,
+      // Show today's Romanian name-day ("onomastica") in the header.
+      val showNameDay: Boolean = false,
+      // Show today's Orthodox feast (great feasts + Pascha-relative) in the header.
+      val showFeastDay: Boolean = false,
+      // Daily tile content: "off" | "quote" | "word" | "trivia".
+      val dailyTileMode: String = "off",
+      // App grid sort: "manual" (drag order) | "az" | "used" | "recent".
+      val sortMode: String = SORT_MANUAL,
+      // Show category tabs (All + each folder) above the grid for quick filtering.
+      val showTabs: Boolean = false,
+      // Add a second, swipeable glanceable "dashboard" home page.
+      val dashboardPage: Boolean = false,
+      // Show the next calendar event in the header (header expansion).
+      val showNextEvent: Boolean = false,
   )
 
   private fun prefs(c: Context) = c.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
@@ -107,10 +149,45 @@ object ImmortalSettings {
         accentColor = p.getString("accent_color", ACCENT_BLUE) ?: ACCENT_BLUE,
         backgroundType = p.getString("background_type", BG_DARK) ?: BG_DARK,
         backgroundImagePath = p.getString("background_image_path", null),
+        backgroundGradient = p.getString("background_gradient", "midnight") ?: "midnight",
+        showDayProgress = p.getBoolean("show_day_progress", false),
         activateOnSleep = p.getBoolean("activate_on_sleep", ACTIVATE_ON_SLEEP_DEFAULT),
         activateOnDock = p.getBoolean("activate_on_dock", ACTIVATE_ON_DOCK_DEFAULT),
+        showSunTimes = p.getBoolean("show_sun_times", true),
+        showNameDay = p.getBoolean("show_name_day", false),
+        showFeastDay = p.getBoolean("show_feast_day", false),
+        dailyTileMode = p.getString("daily_tile_mode", "off") ?: "off",
+        sortMode = p.getString("sort_mode", SORT_MANUAL) ?: SORT_MANUAL,
+        showTabs = p.getBoolean("show_tabs", false),
+        dashboardPage = p.getBoolean("dashboard_page", false),
+        showNextEvent = p.getBoolean("show_next_event", false),
+        showTimeProgress = p.getBoolean("show_time_progress", false),
     )
   }
+
+  fun setShowTimeProgress(c: Context, on: Boolean) =
+      prefs(c).edit().putBoolean("show_time_progress", on).apply()
+
+  fun setShowNextEvent(c: Context, on: Boolean) =
+      prefs(c).edit().putBoolean("show_next_event", on).apply()
+
+  fun setSortMode(c: Context, mode: String) =
+      prefs(c).edit().putString("sort_mode", mode).apply()
+
+  fun setShowTabs(c: Context, on: Boolean) =
+      prefs(c).edit().putBoolean("show_tabs", on).apply()
+
+  fun setDashboardPage(c: Context, on: Boolean) =
+      prefs(c).edit().putBoolean("dashboard_page", on).apply()
+
+  fun setShowNameDay(c: Context, on: Boolean) =
+      prefs(c).edit().putBoolean("show_name_day", on).apply()
+
+  fun setShowFeastDay(c: Context, on: Boolean) =
+      prefs(c).edit().putBoolean("show_feast_day", on).apply()
+
+  fun setDailyTileMode(c: Context, mode: String) =
+      prefs(c).edit().putString("daily_tile_mode", mode).apply()
 
   fun setWeatherUnit(c: Context, unit: String) =
       prefs(c).edit().putString("weather_unit", unit).apply()
@@ -125,6 +202,9 @@ object ImmortalSettings {
 
   fun setStatsMode(c: Context, mode: String) =
       prefs(c).edit().putString("stats_mode", mode).apply()
+
+  fun setShowSunTimes(c: Context, on: Boolean) =
+      prefs(c).edit().putBoolean("show_sun_times", on).apply()
 
   fun setActivateOnSleep(c: Context, on: Boolean) =
       prefs(c).edit().putBoolean("activate_on_sleep", on).apply()
@@ -143,6 +223,12 @@ object ImmortalSettings {
 
   fun setBackgroundImagePath(c: Context, path: String?) =
       prefs(c).edit().putString("background_image_path", path).apply()
+
+  fun setBackgroundGradient(c: Context, key: String) =
+      prefs(c).edit().putString("background_gradient", key).apply()
+
+  fun setShowDayProgress(c: Context, on: Boolean) =
+      prefs(c).edit().putBoolean("show_day_progress", on).apply()
 
   /**
    * Whether the clock should render in 24-hour form. AUTO follows the device's

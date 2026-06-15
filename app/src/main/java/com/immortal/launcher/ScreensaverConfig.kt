@@ -28,12 +28,50 @@ object ScreensaverConfig {
   const val FIT_FIT = "fit" // letterbox to show the whole image
   const val DEFAULT_INTERVAL = 30
 
+  // Ambient soundscape played while the screensaver is showing. All are synthesized
+  // on-device (no audio assets, no streaming), so they work offline on the Portal.
+  const val SOUND_OFF = "off"
+  const val SOUND_RAIN = "rain"
+  const val SOUND_OCEAN = "ocean"
+  const val SOUND_FIREPLACE = "fireplace"
+  const val SOUND_WHITE = "white"
+  const val SOUND_PINK = "pink"
+  const val SOUND_BROWN = "brown"
+  val SOUNDSCAPES =
+      listOf(SOUND_OFF, SOUND_RAIN, SOUND_OCEAN, SOUND_FIREPLACE, SOUND_WHITE, SOUND_PINK, SOUND_BROWN)
+  fun soundscapeLabel(s: String): String = when (s) {
+    SOUND_RAIN -> "Rain"
+    SOUND_OCEAN -> "Ocean waves"
+    SOUND_FIREPLACE -> "Fireplace"
+    SOUND_WHITE -> "White noise"
+    SOUND_PINK -> "Pink noise"
+    SOUND_BROWN -> "Brown noise"
+    else -> "Off"
+  }
+
+  // Online photo feeds (used when source == SOURCE_DEFAULT). All keyless.
+  const val FEED_PICSUM = "picsum" // Lorem Picsum random photos (current default)
+  const val FEED_MET = "met" // The Met Museum Open Access
+  const val FEED_ARTIC = "artic" // Art Institute of Chicago
+  const val FEED_WIKIMEDIA = "wikimedia" // Wikimedia Picture of the Day
+  const val FEED_APOD = "apod" // NASA Astronomy Picture of the Day (DEMO_KEY)
+  val FEEDS = listOf(FEED_PICSUM, FEED_MET, FEED_ARTIC, FEED_WIKIMEDIA, FEED_APOD)
+  fun feedLabel(feed: String): String = when (feed) {
+    FEED_MET -> "The Met — art"
+    FEED_ARTIC -> "Art Institute of Chicago"
+    FEED_WIKIMEDIA -> "Wikimedia Picture of the Day"
+    FEED_APOD -> "NASA Astronomy Picture"
+    else -> "Random photos (Picsum)"
+  }
+
   data class Settings(
       // Master on/off for Immortal's photo-frame screensaver. When off, Immortal
       // stops asserting itself as the system Dream and lets the Portal sleep / lets
       // the user run their own screensaver (e.g. Home Assistant + Immich frame).
       val enabled: Boolean = true,
       val source: String = SOURCE_DEFAULT,
+      // Which online feed to use when source == SOURCE_DEFAULT.
+      val feed: String = FEED_PICSUM,
       val folderPath: String? = null,
       val fit: String = FIT_FILL,
       val intervalSec: Int = DEFAULT_INTERVAL,
@@ -55,6 +93,13 @@ object ScreensaverConfig {
       val overnightEnabled: Boolean = false,
       val overnightStartMin: Int = 22 * 60,
       val overnightEndMin: Int = 7 * 60,
+      // Ambient soundscape (synthesized) played while the screensaver shows. Off by
+      // default; [soundscapeVolume] is 0..100.
+      val soundscape: String = SOUND_OFF,
+      val soundscapeVolume: Int = 40,
+      // Ambient dashboard: periodically interrupt the photos with a full-screen
+      // glanceable info card (clock, weather, next event). Off by default.
+      val ambientDashboard: Boolean = false,
       // Welcome-back overlay: shown for ~3s when the screensaver first starts
       // (i.e. when presence is detected and the Portal wakes from sleep). Shows
       // a greeting, the time, and the date. Dismissed by tap or auto-fade.
@@ -78,6 +123,7 @@ object ScreensaverConfig {
     return Settings(
         enabled = p.getBoolean("enabled", true),
         source = p.getString("source", SOURCE_DEFAULT) ?: SOURCE_DEFAULT,
+        feed = p.getString("feed", FEED_PICSUM) ?: FEED_PICSUM,
         folderPath = p.getString("folder_path", null),
         fit = p.getString("fit", FIT_FILL) ?: FIT_FILL,
         intervalSec = clampInterval(p.getInt("interval_sec", DEFAULT_INTERVAL)),
@@ -92,9 +138,20 @@ object ScreensaverConfig {
         overnightEnabled = p.getBoolean("overnight_enabled", false),
         overnightStartMin = p.getInt("overnight_start_min", 22 * 60),
         overnightEndMin = p.getInt("overnight_end_min", 7 * 60),
+        soundscape = p.getString("soundscape", SOUND_OFF) ?: SOUND_OFF,
+        soundscapeVolume = p.getInt("soundscape_volume", 40).coerceIn(0, 100),
+        ambientDashboard = p.getBoolean("ambient_dashboard", false),
         welcomeEnabled = p.getBoolean("welcome_enabled", true),
     )
   }
+
+  fun setSoundscape(c: Context, s: String) = prefs(c).edit().putString("soundscape", s).apply()
+
+  fun setSoundscapeVolume(c: Context, v: Int) =
+      prefs(c).edit().putInt("soundscape_volume", v.coerceIn(0, 100)).apply()
+
+  fun setAmbientDashboard(c: Context, on: Boolean) =
+      prefs(c).edit().putBoolean("ambient_dashboard", on).apply()
 
   /** Keep the idle timeout sane (0 = off, else 1…120 min). */
   fun clampIdle(min: Int): Int = if (min <= 0) 0 else min.coerceIn(1, 120)
@@ -106,6 +163,10 @@ object ScreensaverConfig {
       prefs(c).edit().putString("folder_path", path).putString("source", SOURCE_FOLDER).apply()
 
   fun useDefault(c: Context) = prefs(c).edit().putString("source", SOURCE_DEFAULT).apply()
+
+  /** Pick the online feed and switch the source back to the default (online) feed. */
+  fun setFeed(c: Context, feed: String) =
+      prefs(c).edit().putString("feed", feed).putString("source", SOURCE_DEFAULT).apply()
 
   fun setFit(c: Context, fit: String) = prefs(c).edit().putString("fit", fit).apply()
 

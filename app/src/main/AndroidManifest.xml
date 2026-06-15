@@ -38,6 +38,12 @@
     <!-- "Install an APK" browser: list APKs the user downloaded. Pre-granted by
          the provisioning kit; also requested at runtime. -->
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
+    <!-- Stats widget: IP address from Wi-Fi connection info. -->
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <!-- Header volume button: adjust media volume. -->
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+    <!-- "Leave a note" voice memo: record a short message from the handset mic. -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
 
     <!-- "hey" trigger guard. Millennium's TriggerReceiver requires this permission, so only
          the launcher may fire the push-to-talk trigger (not arbitrary apps). It's signature-
@@ -154,6 +160,37 @@
             android:name=".SleepSettingsActivity"
             android:exported="false"
             android:label="Sleep"
+            android:theme="@style/Theme.SampleApp" />
+
+        <!-- Ambient sound cues (hourly chime, spoken time, golden-hour tone, quiet
+             hours), opened from the Sounds tile in the launcher's Settings folder. -->
+        <activity
+            android:name=".ChimeSettingsActivity"
+            android:exported="false"
+            android:label="Sounds"
+            android:theme="@style/Theme.SampleApp" />
+
+        <!-- Countdown chips (birthdays, trips, holidays), opened from the Countdowns
+             tile in the launcher's Settings folder. -->
+        <activity
+            android:name=".CountdownSettingsActivity"
+            android:exported="false"
+            android:label="Countdowns"
+            android:theme="@style/Theme.SampleApp" />
+
+        <!-- RTSP camera viewer, opened from the Cameras tile in the Settings folder. -->
+        <activity
+            android:name=".CameraViewerActivity"
+            android:exported="false"
+            android:label="Cameras"
+            android:screenOrientation="landscape"
+            android:theme="@style/Theme.SampleApp" />
+
+        <!-- LAN intercom / baby monitor, opened from the Intercom tile in Settings. -->
+        <activity
+            android:name=".IntercomActivity"
+            android:exported="false"
+            android:label="Intercom"
             android:theme="@style/Theme.SampleApp" />
 
         <!-- Clock settings (digital clock style, color, font, size, layout, background,
@@ -284,6 +321,25 @@
         <receiver
             android:name=".SleepReceiver"
             android:exported="false" />
+
+        <!-- Internal alarms for the ambient audio cues (hourly chime, spoken time,
+             golden-hour tone). -->
+        <receiver
+            android:name=".ChimeReceiver"
+            android:exported="false" />
+
+        <!-- Notification listener used only to read the active media session for the
+             now-playing screensaver. The user enables it once in Settings → Notifications.
+             It reads nothing else. -->
+        <service
+            android:name=".NowPlayingListenerService"
+            android:exported="false"
+            android:label="Immortal Now Playing"
+            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
+            <intent-filter>
+                <action android:name="android.service.notification.NotificationListenerService" />
+            </intent-filter>
+        </service>
 
         <!-- Custom screensaver (Dream), set via secure setting screensaver_components. -->
         <service

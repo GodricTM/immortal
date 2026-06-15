@@ -32,22 +32,48 @@ HomeActivity          — main launcher grid (Compose), weather, calendar widget
 ├── StoreActivity     — curated app catalog (catalog.json) + APK browser
 ├── ScreensaverSettingsActivity / ClockSettingsActivity / SleepSettingsActivity
 ├── WelcomeSettingsActivity    — welcome overlay greetings, colors, sizes, TTS
-├── ImmortalSettingsActivity   — tile size, weather unit, accent colour, etc.
+├── ImmortalSettingsActivity   — tile size, weather unit, accent, sort, tabs, dashboard page, name-day/feast/next-event toggles, gradient/sky background, daily tile
+├── ChimeSettingsActivity      — "Sounds": hourly chime / spoken time / golden-hour tone (per-cue volume) + quiet hours
+├── CountdownSettingsActivity  — add/remove countdown chips
+├── CameraViewerActivity       — RTSP camera viewer (VideoView, native RTSP)
+├── IntercomActivity           — LAN one-way intercom / baby monitor (LanAudio)
 └── HelpActivity      — guided tour (first-launch + manual)
 
 PhotoDreamService     — photo screensaver (DreamService)
 DigitalClockDreamService — digital clock screensaver (DreamService)
 DreamPolicy           — decides whether to hold screen on / relaunch frame
 PhotoFramePreviewActivity — full-screen holding Activity (keeps screen awake)
-PhotoFrameController  — shared photo-frame UI + logic (used by dream + preview)
-PiperTTS              — Piper neural TTS via Sherpa-ONNX (downloads ~16 MB on first use)
+PhotoFrameController  — shared photo-frame UI + logic (dream + preview). Also hosts
+                        the now-playing strip, the synthesized soundscape, and the
+                        cycling ambient-dashboard info card.
+(Welcome-overlay TTS uses Android's built-in TextToSpeech — Piper/Sherpa-ONNX was removed)
+
+— Ambient / home-screen features (all added on the godric fork) —
+ChimeConfig/ChimeScheduler/ChimeReceiver/ChimePlayer — hourly chime, spoken time,
+                        golden-hour tone, quiet hours; AlarmManager-driven, re-armed
+                        in ImmortalApp + BootReceiver. chime.mp3 in res/raw.
+SoundscapePlayer      — procedural rain/ocean/fireplace/white/pink/brown noise via
+                        AudioTrack (offline, no assets). Used by PhotoFrameController.
+SkyColors             — time-of-day → sky gradient (sun-driven home background).
+NameDays / FeastDays  — Romanian name-day table; Orthodox feast calendar (computed
+                        Pascha). Surfaced as header lines (toggles in ImmortalSettings).
+DailyContent          — bundled daily quote / word / trivia (deterministic by epoch day).
+NowPlayingListenerService + NowPlaying — read the active MediaSession (track + art)
+                        for the now-playing screensaver. Needs notification-listener
+                        access enabled once by the user.
+NotesConfig / AudioNote — "leave a note": typed sticky + voice memo (MediaRecorder/Player).
+Transit               — Dublin departures via SmartDublin RTPI (keyless).
+CameraConfig          — saved rtsp:// camera URLs for CameraViewerActivity.
+LanAudio              — server-less LAN PCM-over-TCP audio for IntercomActivity.
+TimeProgress          — week/month/year progress bars, 365-day year dots, fading
+                        month grid (dashboard card); plus the live SunArc in the home header.
 
 InstallDaemon         — client for the provisioning-kit shell daemon (silent install)
 UpdateManager         — self-update: fetches release JSON, downloads APK, installs
 StoreCatalog          — parses catalog.json, fetches latest APK URLs
 
 SleepScheduler        — idle-timeout + overnight window via AlarmManager + lockNow()
-BootReceiver          — reaffirms screensaver settings after boot (self-healing)
+BootReceiver          — reaffirms screensaver settings + re-arms chime alarms after boot
 AdminReceiver         — device admin (force-lock only), activated by provisioning
 
 BackHelper            — shared "perform BACK" logic
@@ -59,10 +85,16 @@ SystemBackGestureService    — overlay back-swipe (SYSTEM_ALERT_WINDOW)
 
 | Object              | SharedPrefs key      | What it stores                        |
 | ------------------- | -------------------- | ------------------------------------- |
-| `ImmortalSettings`  | `immortal_settings`  | tile size, weather unit, accent, clock format, calendar/stats widgets |
-| `ScreensaverConfig` | `screensaver_config` | enabled, source folder, interval, fit mode, welcome enabled |
+| `ImmortalSettings`  | `immortal_settings`  | tile size, weather unit, accent, clock format, calendar/stats widgets, sort mode, tabs, dashboard page + its widget toggles, name-day/feast/next-event/sun-times flags, daily-tile mode, background mode (image/blur/gradient/sky) |
+| `ScreensaverConfig` | `immortal_screensaver` | enabled, source folder, interval, fit mode, welcome enabled, art feed, soundscape + volume, ambient dashboard |
 | `WelcomeConfig`     | `immortal_welcome`   | greeting text per time-of-day, user name, colors, sizes, duration, TTS on/off |
 | `DigitalClockConfig`| `digital_clock_config` | style, font, color, size, layout, glow |
+| `ChimeConfig`       | `immortal_chime`     | hourly chime / spoken time / golden-hour toggles, per-cue volume, spoken-voice id, quiet-hours window |
+| `CountdownConfig`   | `immortal_countdown` | countdown chips (label, emoji, date) |
+| `NotesConfig`       | `immortal_notes`     | typed sticky note text + voice-memo file pointer |
+| `CameraConfig`      | `immortal_cameras`   | saved rtsp:// camera URLs |
+| `Transit`           | `immortal_transit`   | saved transit provider + stop/station id |
+| `Weather`           | `immortal_weather`   | cached location, weather, sun times, air quality |
 
 ## App catalog (`app/src/main/assets/catalog.json`)
 
@@ -206,6 +238,26 @@ metavr and hzdb are from the same Meta ecosystem (`@meta-quest/*`). metavr is th
 standalone CLI; hzdb is the MCP bridge for in-session use from Claude Code.
 Install hzdb MCP with: `npx -y @meta-quest/hzdb mcp install claude-code`
 
+**Native libs & APK size:** there are now **no native dependencies** — the debug
+APK is ~31 MB. (Vosk offline STT was removed: on Portal it fought the always-on
+listeners for the single near-field mic and needed a runtime model download, so it
+couldn't be used; it had bloated the APK to ~190 MB with its per-ABI `.so` files.)
+`app/build.gradle.kts` still keeps `ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a") }`
+as a guard so any future native dep can't drag x86/x86_64 in — all Portal hardware
+is ARM (gen-1/gen-2 Snapdragon, Portal TV Amlogic). Do not add x86 back.
+
+**Runtime permissions / access added for ambient features:** `RECORD_AUDIO`
+(voice notes, intercom); now-playing screensaver needs the user to enable
+`NowPlayingListenerService` once in notification-listener access (no manifest grant
+can force it).
+
+**Microphone reality on Portal:** a sideloaded app only reaches the single
+near-field handset mic (the far-field beamformed array is behind a Meta-signed
+permission), and that mic is shared with the device's always-on listeners. So
+`AudioNote` (leave-a-note voice memo) records usable audio only when the user
+speaks close to the device — the overlay shows a live input meter + "speak closer"
+hint to make that obvious. A voice from across the room reads as near-silence.
+
 Release builds require `keystore.properties` at repo root or
 `~/.immortal-signing/keystore.properties`. See `app/build.gradle.kts` for details.
 The same key must be used for every release — self-update (`UpdateManager`) verifies
@@ -234,24 +286,24 @@ made for that distance — not phone distances.
 icons with no background**. Light content in the top 64dp is invisible against it.
 Always use dark backgrounds or a semi-transparent dark scrim in that zone.
 
-## Piper TTS (welcome overlay)
+## Welcome-overlay TTS (Android TextToSpeech)
 
-`PiperTTS` wraps Sherpa-ONNX with the `en_US-lessac-medium` Piper voice for
-high-quality neural TTS on the welcome overlay.
+The welcome greeting speaks through Android's built-in `TextToSpeech` engine.
+**Piper neural TTS (Sherpa-ONNX) was removed** — its voice model is a ~63 MB download
+that the Portal's connection truncates, and a truncated `.onnx` makes onnxruntime
+abort *natively* (uncatchable `SIGABRT`), which took the whole dream/launcher process
+down (it presented as "screensaver/photo feed crashes"). Removing it also dropped the
+APK from ~88 MB to ~31 MB (the bundled sherpa-onnx AAR was 56 MB).
 
-**Init flow in `PhotoFrameController.start()`:**
-1. Android built-in `TextToSpeech` starts immediately (ready ~200ms, main thread callback).
-2. Piper starts in a background thread simultaneously. On first run it downloads
-   ~16 MB (ONNX model + tokens + espeak-ng data). On subsequent runs it loads from
-   `context.filesDir` in a few seconds.
-3. Whichever engine is ready first wins the `pendingSpeech` queue; the other is
-   discarded (Piper shuts down if Android TTS already spoke).
-4. On Piper init failure, corrupt/partial files are deleted automatically so the
-   next launch retries the download cleanly.
+**Flow in `PhotoFrameController.start()`:** TTS is only initialized when the welcome
+overlay is shown *and* `WelcomeConfig.enableTts` is on. On init it applies the user's
+chosen voice (`WelcomeConfig.ttsVoice`); if none is chosen it auto-selects the
+**highest-quality** non-network voice the device has (`Voice.getQuality()`).
 
-**Why both engines?** Portal has no GMS, so there is no Google TTS. The system's
-fallback TTS quality is poor. Piper gives a natural voice; Android TTS is the fast
-path that ensures speech fires within the welcome overlay window.
+**Voice picker:** Welcome settings lists the device's installed TTS voices (sorted
+highest-quality first, with an `HQ`/`HQ+` hint), each with an instant Test button.
+The Sounds screen's spoken-time picker works the same way. No download, no native
+crash. (Quality is bounded by whatever TTS engine the Portal has installed.)
 
 **TTS is off by default.** Users enable it in Welcome settings (`WelcomeConfig.enableTts`).
 

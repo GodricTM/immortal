@@ -90,11 +90,16 @@ private fun ScreensaverSettingsScreen() {
   var mediaCount by remember { mutableStateOf<Int?>(null) }
   var folderName by remember { mutableStateOf<String?>(null) }
 
+  // Live soundscape preview while this screen is open; always released on exit.
+  val soundscapePreview = remember { SoundscapePlayer() }
+  DisposableEffect(Unit) { onDispose { soundscapePreview.stop() } }
+
   // Re-read config when we come back from the folder picker (a separate activity).
   val lifecycleOwner = LocalLifecycleOwner.current
   DisposableEffect(lifecycleOwner) {
     val obs = LifecycleEventObserver { _, e ->
       if (e == Lifecycle.Event.ON_RESUME) settings = ScreensaverConfig.load(context)
+      if (e == Lifecycle.Event.ON_PAUSE) soundscapePreview.stop()
     }
     lifecycleOwner.lifecycle.addObserver(obs)
     onDispose { lifecycleOwner.lifecycle.removeObserver(obs) }
@@ -200,6 +205,34 @@ private fun ScreensaverSettingsScreen() {
           modifier = Modifier.padding(top = 10.dp, start = 4.dp, end = 4.dp),
       )
 
+      // Online feed picker — only relevant when using the built-in (non-folder) source.
+      if (!settings.usesFolder) {
+        Spacer(Modifier.size(26.dp))
+        SectionLabel("Photo feed")
+        Card {
+          ScreensaverConfig.FEEDS.forEachIndexed { i, feed ->
+            if (i > 0) Divider()
+            SelectableRow(
+                title = ScreensaverConfig.feedLabel(feed),
+                subtitle =
+                    when (feed) {
+                      ScreensaverConfig.FEED_MET -> "Public-domain works from The Met."
+                      ScreensaverConfig.FEED_ARTIC ->
+                          "Public-domain art from the Art Institute of Chicago."
+                      ScreensaverConfig.FEED_WIKIMEDIA -> "Wikimedia's featured Picture of the Day."
+                      ScreensaverConfig.FEED_APOD -> "NASA's daily astronomy photo."
+                      else -> "Random calming photography."
+                    },
+                selected = settings.feed == feed,
+                onClick = {
+                  ScreensaverConfig.setFeed(context, feed)
+                  settings = ScreensaverConfig.load(context)
+                },
+            )
+          }
+        }
+      }
+
       Spacer(Modifier.size(26.dp))
 
       SectionLabel("Display")
@@ -241,6 +274,67 @@ private fun ScreensaverSettingsScreen() {
           ScreensaverConfig.setIncludeVideo(context, it)
           settings = settings.copy(includeVideo = it)
         }
+      }
+
+      Spacer(Modifier.size(26.dp))
+      SectionLabel("Ambient sound")
+      Card {
+        ScreensaverConfig.SOUNDSCAPES.forEachIndexed { i, s ->
+          if (i > 0) Divider()
+          SelectableRow(
+              title = ScreensaverConfig.soundscapeLabel(s),
+              subtitle =
+                  when (s) {
+                    ScreensaverConfig.SOUND_RAIN -> "Soft rainfall."
+                    ScreensaverConfig.SOUND_OCEAN -> "Slow rolling waves."
+                    ScreensaverConfig.SOUND_FIREPLACE -> "Warm rumble and crackle."
+                    ScreensaverConfig.SOUND_WHITE -> "Steady white noise."
+                    ScreensaverConfig.SOUND_PINK -> "Softer pink noise."
+                    ScreensaverConfig.SOUND_BROWN -> "Deep brown noise."
+                    else -> "No sound (default)."
+                  },
+              selected = settings.soundscape == s,
+              onClick = {
+                ScreensaverConfig.setSoundscape(context, s)
+                settings = settings.copy(soundscape = s)
+                soundscapePreview.stop()
+                if (s != ScreensaverConfig.SOUND_OFF) {
+                  soundscapePreview.start(s, settings.soundscapeVolume)
+                }
+              },
+          )
+        }
+        if (settings.soundscape != ScreensaverConfig.SOUND_OFF) {
+          Divider()
+          SoundVolumeStepper(settings.soundscapeVolume) { v ->
+            ScreensaverConfig.setSoundscapeVolume(context, v)
+            settings = settings.copy(soundscapeVolume = v)
+            soundscapePreview.start(settings.soundscape, v) // restart at new volume
+          }
+        }
+        Text(
+            "Plays only while the screensaver is showing. All sounds are generated " +
+                "on-device, so they work without internet.",
+            fontSize = 13.sp,
+            color = Color(0xFF9A9A9A),
+            modifier = Modifier.padding(start = 18.dp, end = 18.dp, top = 4.dp, bottom = 14.dp),
+        )
+      }
+
+      Spacer(Modifier.size(26.dp))
+      SectionLabel("Ambient dashboard")
+      Card {
+        ToggleRow("Show info card periodically", settings.ambientDashboard) {
+          ScreensaverConfig.setAmbientDashboard(context, it)
+          settings = settings.copy(ambientDashboard = it)
+        }
+        Text(
+            "Every so often the screensaver shows a full-screen card with the time, " +
+                "weather, and your next calendar event, then returns to the photos.",
+            fontSize = 13.sp,
+            color = Color(0xFF9A9A9A),
+            modifier = Modifier.padding(start = 18.dp, end = 18.dp, top = 4.dp, bottom = 14.dp),
+        )
       }
 
       val hasBattery = remember { DreamPolicy.hasBattery(context) }
@@ -482,6 +576,42 @@ private fun ArrowButton(glyph: String, rowFocused: Boolean, onClick: () -> Unit)
         fontSize = 20.sp,
         fontWeight = FontWeight.SemiBold,
     )
+  }
+}
+
+/** Remote-friendly volume stepper for the soundscape (10% steps, 0..100). */
+@Composable
+private fun SoundVolumeStepper(volume: Int, onChange: (Int) -> Unit) {
+  val src = remember { MutableInteractionSource() }
+  val focused by src.collectIsFocusedAsState()
+  Row(
+      modifier =
+          Modifier.fillMaxWidth()
+              .onKeyEvent { e ->
+                if (e.type == KeyEventType.KeyDown) {
+                  when (e.key) {
+                    Key.DirectionLeft -> { onChange((volume - 10).coerceIn(0, 100)); true }
+                    Key.DirectionRight -> { onChange((volume + 10).coerceIn(0, 100)); true }
+                    else -> false
+                  }
+                } else false
+              }
+              .focusable(interactionSource = src)
+              .background(if (focused) Color(0x402E6BE6) else Color.Transparent)
+              .padding(start = 18.dp, end = 6.dp, top = 6.dp, bottom = 6.dp),
+      verticalAlignment = Alignment.CenterVertically,
+  ) {
+    Text("Volume", color = Color.White, fontSize = 17.sp, modifier = Modifier.weight(1f))
+    ArrowButton("◀", focused) { onChange((volume - 10).coerceIn(0, 100)) }
+    Text(
+        "${volume}%",
+        color = if (focused) Color.White else Color(0xFFDDDDDD),
+        fontSize = 17.sp,
+        fontWeight = FontWeight.SemiBold,
+        textAlign = TextAlign.Center,
+        modifier = Modifier.widthIn(min = 52.dp),
+    )
+    ArrowButton("▶", focused) { onChange((volume + 10).coerceIn(0, 100)) }
   }
 }
 

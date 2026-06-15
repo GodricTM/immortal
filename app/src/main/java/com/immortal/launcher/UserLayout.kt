@@ -88,6 +88,57 @@ object UserLayout {
         .apply()
   }
 
+  // ----- hidden apps (eye-slash in edit mode) -----------------------------------
+
+  private const val HIDDEN_KEY = "hidden_packages"
+
+  fun loadHiddenPackages(context: Context): Set<String> {
+    val raw = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        .getString(HIDDEN_KEY, null) ?: return emptySet()
+    return deserializeSet(raw)
+  }
+
+  fun hidePackage(context: Context, pkg: String) {
+    val updated = loadHiddenPackages(context) + pkg
+    context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        .edit().putString(HIDDEN_KEY, serializeSet(updated)).apply()
+  }
+
+  fun unhidePackage(context: Context, pkg: String) {
+    val updated = loadHiddenPackages(context) - pkg
+    context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        .edit().putString(HIDDEN_KEY, serializeSet(updated)).apply()
+  }
+
+  fun unhideAllPackages(context: Context) {
+    context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        .edit().remove(HIDDEN_KEY).apply()
+  }
+
+  // ----- launch counts (for the "Most used" sort, permission-free) --------------
+
+  private const val LAUNCH_COUNTS_KEY = "launch_counts"
+
+  /** package id -> number of times launched from Immortal. */
+  fun loadLaunchCounts(context: Context): Map<String, Int> {
+    val raw = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        .getString(LAUNCH_COUNTS_KEY, null) ?: return emptyMap()
+    return runCatching {
+      val obj = JSONObject(raw)
+      buildMap { obj.keys().forEach { k -> put(k, obj.getInt(k)) } }
+    }.getOrDefault(emptyMap())
+  }
+
+  /** Increment the launch counter for [pkg]. */
+  fun recordLaunch(context: Context, pkg: String) {
+    val counts = loadLaunchCounts(context).toMutableMap()
+    counts[pkg] = (counts[pkg] ?: 0) + 1
+    val obj = JSONObject()
+    counts.forEach { (k, v) -> obj.put(k, v) }
+    context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        .edit().putString(LAUNCH_COUNTS_KEY, obj.toString()).apply()
+  }
+
   private fun serializeSet(set: Set<String>): String {
     val obj = JSONObject()
     obj.put("folders", org.json.JSONArray(set.toList()))

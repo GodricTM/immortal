@@ -39,6 +39,9 @@ import androidx.compose.ui.input.key.type
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -127,6 +130,15 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import android.app.ActivityManager
+import android.media.AudioManager
+import android.net.TrafficStats
+import android.net.wifi.WifiManager
+import android.view.KeyEvent
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.painterResource
+import java.io.File
+import kotlinx.coroutines.launch
 
 private data class AppEntry(
     val label: String,
@@ -171,6 +183,7 @@ class HomeActivity : ComponentActivity() {
       SampleAppTheme(darkTheme = true) {
         LauncherScreen(
             onLaunch = { cn ->
+              UserLayout.recordLaunch(this, cn.packageName)
               runCatching {
                 val customAction = Curation.customLaunchAction[cn.packageName]
                 val intent = if (customAction != null)
@@ -376,8 +389,17 @@ private fun LauncherScreen(
   var weatherFahrenheit by remember { mutableStateOf(ImmortalSettings.useFahrenheit(context)) }
   var backgroundType by remember { mutableStateOf(ImmortalSettings.load(context).backgroundType) }
   var backgroundImagePath by remember { mutableStateOf(ImmortalSettings.load(context).backgroundImagePath) }
+  var backgroundGradient by remember { mutableStateOf(ImmortalSettings.load(context).backgroundGradient) }
+  var showDayProgress by remember { mutableStateOf(ImmortalSettings.load(context).showDayProgress) }
   var calendarWidget by remember { mutableStateOf(ImmortalSettings.load(context).calendarWidget) }
   var statsMode by remember { mutableStateOf(ImmortalSettings.load(context).statsMode) }
+  var dailyTileMode by remember { mutableStateOf(ImmortalSettings.load(context).dailyTileMode) }
+  var sortMode by remember { mutableStateOf(ImmortalSettings.load(context).sortMode) }
+  var showTabs by remember { mutableStateOf(ImmortalSettings.load(context).showTabs) }
+  var dashboardPage by remember { mutableStateOf(ImmortalSettings.load(context).dashboardPage) }
+  // Selected category tab (null = "All"); only meaningful when showTabs is on.
+  var selectedTab by remember { mutableStateOf<String?>(null) }
+  var heyPkg by remember { mutableStateOf(heyPackage(context)) }
   val lifecycleOwner = LocalLifecycleOwner.current
   DisposableEffect(lifecycleOwner) {
     val obs = LifecycleEventObserver { _, e ->
@@ -388,8 +410,15 @@ private fun LauncherScreen(
         weatherFahrenheit = ImmortalSettings.useFahrenheit(context)
         backgroundType = s.backgroundType
         backgroundImagePath = s.backgroundImagePath
+        backgroundGradient = s.backgroundGradient
+        showDayProgress = s.showDayProgress
         calendarWidget = s.calendarWidget
         statsMode = s.statsMode
+        dailyTileMode = s.dailyTileMode
+        sortMode = s.sortMode
+        showTabs = s.showTabs
+        dashboardPage = s.dashboardPage
+        heyPkg = heyPackage(context)
       }
     }
     lifecycleOwner.lifecycle.addObserver(obs)
@@ -418,10 +447,84 @@ private fun LauncherScreen(
           a.copy(folder = eff)
         }
       }
-  val ungrouped = remember(appsEff) { appsEff.filter { it.folder == null } }
+  var hiddenPkgs by remember { mutableStateOf(UserLayout.loadHiddenPackages(context)) }
+  // Re-read hidden packages on resume so "Restore all" in settings takes effect immediately.
+  DisposableEffect(lifecycleOwner) {
+    val obs = LifecycleEventObserver { _, e ->
+      if (e == Lifecycle.Event.ON_RESUME) hiddenPkgs = UserLayout.loadHiddenPackages(context)
+    }
+    lifecycleOwner.lifecycle.addObserver(obs)
+    onDispose { lifecycleOwner.lifecycle.removeObserver(obs) }
+  }
+  fun hideApp(pkg: String) {
+    UserLayout.hidePackage(context, pkg)
+    hiddenPkgs = hiddenPkgs + pkg
+  }
+  fun unhideApp(pkg: String) {
+    UserLayout.unhidePackage(context, pkg)
+    hiddenPkgs = hiddenPkgs - pkg
+  }
+
+  // Sort inputs for the non-manual modes (loaded only when the relevant mode is on).
+  val launchCounts = remember(sortMode) {
+    if (sortMode == ImmortalSettings.SORT_USED) UserLayout.loadLaunchCounts(context) else emptyMap()
+  }
+  val installTimes = remember(sortMode, appsEff) {
+    if (sortMode == ImmortalSettings.SORT_RECENT) {
+      val pm = context.packageManager
+      appsEff.associate { app ->
+        app.component.packageName to
+            runCatching { pm.getPackageInfo(app.component.packageName, 0).firstInstallTime }
+                .getOrDefault(0L)
+      }
+    } else emptyMap()
+  }
+  val ungrouped = remember(appsEff, hiddenPkgs, sortMode, launchCounts, installTimes) {
+    val base = appsEff.filter { it.folder == null && it.component.packageName !in hiddenPkgs }
+    when (sortMode) {
+      ImmortalSettings.SORT_AZ -> base.sortedBy { it.label.lowercase(java.util.Locale.getDefault()) }
+      ImmortalSettings.SORT_USED ->
+          base.sortedByDescending { launchCounts[it.component.packageName] ?: 0 }
+      ImmortalSettings.SORT_RECENT ->
+          base.sortedByDescending { installTimes[it.component.packageName] ?: 0L }
+      else -> base
+    }
+  }
+  val hiddenAppsEff = remember(appsEff, hiddenPkgs) { appsEff.filter { it.component.packageName in hiddenPkgs } }
   val folderNames = remember(appsEff, emptyFolders.value) {
     (appsEff.mapNotNull { it.folder } + emptyFolders.value).distinct().sorted()
   }
+
+  var showHiddenPanel by remember { mutableStateOf(false) }
+  var showSpeedTest by remember { mutableStateOf(false) }
+  var showDaily by remember { mutableStateOf(false) }
+  var showNote by remember { mutableStateOf(false) }
+  var showTransit by remember { mutableStateOf(false) }
+  var showNowPlaying by remember { mutableStateOf(false) }
+  // Bumped whenever a note changes so the home sticky card re-reads it.
+  var noteVersion by remember { mutableStateOf(0) }
+  // Bumped on every resume so home widgets that read SharedPrefs/files directly
+  // (countdown chips, sticky note) refresh after returning from a settings screen.
+  var homeResumeVersion by remember { mutableStateOf(0) }
+  DisposableEffect(lifecycleOwner) {
+    val obs = LifecycleEventObserver { _, e ->
+      if (e == Lifecycle.Event.ON_RESUME) { homeResumeVersion++; noteVersion++ }
+    }
+    lifecycleOwner.lifecycle.addObserver(obs)
+    onDispose { lifecycleOwner.lifecycle.removeObserver(obs) }
+  }
+
+  // Portrait layout: the bottom widget stack (weather / calendar / stats) spans
+  // nearly the full width, so the corner action buttons (Alexa, hide, edit) would
+  // sit on top of it. Measure the stack height and lift the buttons above it. In
+  // landscape the capped 1264dp content column leaves the corners clear, so no
+  // offset is applied.
+  val isPortrait =
+      androidx.compose.ui.platform.LocalConfiguration.current.orientation ==
+          android.content.res.Configuration.ORIENTATION_PORTRAIT
+  val widgetDensity = androidx.compose.ui.platform.LocalDensity.current
+  var bottomWidgetsHeight by remember { mutableStateOf(0.dp) }
+  val bottomButtonLift = if (isPortrait) bottomWidgetsHeight else 0.dp
 
   // --- drag-and-drop folder management (Manage mode) --------------------------
   val tileBounds = remember { mutableStateMapOf<String, Rect>() }
@@ -535,14 +638,22 @@ private fun LauncherScreen(
 
   CompositionLocalProvider(LocalTileDp provides tileDpFor(tileSize)) {
   Box(modifier = Modifier.fillMaxSize()) {
-      // Background image layer
-      if (backgroundType != ImmortalSettings.BG_DARK && backgroundImagePath != null) {
-          BackgroundImage(
-              uriString = backgroundImagePath!!,
-              blur = backgroundType == ImmortalSettings.BG_BLUR,
-          )
-      } else {
-          Box(modifier = Modifier.fillMaxSize().background(Color(0xFF1A1A1A)))
+      // Background layer
+      when {
+          (backgroundType == ImmortalSettings.BG_IMAGE ||
+              backgroundType == ImmortalSettings.BG_BLUR) && backgroundImagePath != null ->
+              BackgroundImage(
+                  uriString = backgroundImagePath!!,
+                  blur = backgroundType == ImmortalSettings.BG_BLUR,
+              )
+          backgroundType == ImmortalSettings.BG_GRADIENT -> GradientBackground(backgroundGradient)
+          backgroundType == ImmortalSettings.BG_SKY -> SkyBackground()
+          else -> Box(modifier = Modifier.fillMaxSize().background(Color(0xFF1A1A1A)))
+      }
+      // Day-progress bar: a thin line at the very top tracking how far through the day
+      // we are, tinted with the live sky colour. Only with the Sky background.
+      if (backgroundType == ImmortalSettings.BG_SKY && showDayProgress) {
+        DayProgressBar(modifier = Modifier.align(Alignment.TopCenter))
       }
       Box(modifier = Modifier.fillMaxSize()
       .pointerInput(Unit) {
@@ -591,6 +702,7 @@ private fun LauncherScreen(
     ) {
       HeaderBar(
           onScreensaver = onStartScreensaver,
+          onSleep = { ScreenControl.sleep(context) },
           onClock = {
             // Enable digital clock and reassert screensaver settings
             DigitalClockConfig.setEnabled(context, true)
@@ -603,114 +715,176 @@ private fun LauncherScreen(
           },
       )
       Spacer(Modifier.size(20.dp))
-      Box(
-          modifier =
-              Modifier.fillMaxWidth()
-                  .weight(1f)
-                  .onGloballyPositioned { containerOrigin = it.boundsInWindow().topLeft }
-                  .pointerInput(editMode) {
-                    if (!editMode) return@pointerInput
-                    detectDragGesturesAfterLongPress(
-                        onDragStart = { local ->
-                          val win = local + containerOrigin
-                          dragPkg =
-                              tileBounds.entries
-                                  .firstOrNull {
-                                    it.key.startsWith(APP_KEY) && it.value.contains(win)
-                                  }
-                                  ?.key
-                                  ?.removePrefix(APP_KEY)
-                          dragPos = win
-                        },
-                        onDrag = { change, delta ->
-                          change.consume()
-                          dragPos += delta
-                        },
-                        onDragEnd = {
-                          dragPkg?.let { src ->
-                            val target =
+      CountdownChips(version = homeResumeVersion)
+      HomeNoteCard(version = noteVersion, onEdit = { showNote = true })
+      if (showTabs && folderNames.isNotEmpty()) {
+        CategoryTabs(
+            categories = folderNames,
+            selected = selectedTab,
+            onSelect = { selectedTab = it },
+        )
+        Spacer(Modifier.size(12.dp))
+      }
+      // The scrolling app grid, parameterized by its area modifier so it can be
+      // hosted either directly (single page) or inside a HorizontalPager page.
+      @Composable
+      fun appGridArea(areaModifier: Modifier) {
+        Box(
+            modifier =
+                areaModifier
+                    .onGloballyPositioned { containerOrigin = it.boundsInWindow().topLeft }
+                    .pointerInput(editMode) {
+                      if (!editMode) return@pointerInput
+                      detectDragGesturesAfterLongPress(
+                          onDragStart = { local ->
+                            val win = local + containerOrigin
+                            dragPkg =
                                 tileBounds.entries
                                     .firstOrNull {
-                                      it.key != APP_KEY + src && it.value.contains(dragPos)
+                                      it.key.startsWith(APP_KEY) && it.value.contains(win)
                                     }
                                     ?.key
-                            onDrop(src, target)
-                          }
-                          dragPkg = null
-                        },
-                        onDragCancel = { dragPkg = null },
-                    )
-                  },
-      ) {
-        LazyVerticalGrid(
-            columns = GridCells.Fixed(gridColumnsFor(tileSize)),
-            horizontalArrangement = Arrangement.spacedBy(16.dp),
-            verticalArrangement = Arrangement.spacedBy(20.dp),
-            modifier = Modifier.focusRequester(homeGridFocus).focusGroup(),
+                                    ?.removePrefix(APP_KEY)
+                            dragPos = win
+                          },
+                          onDrag = { change, delta ->
+                            change.consume()
+                            dragPos += delta
+                          },
+                          onDragEnd = {
+                            dragPkg?.let { src ->
+                              val target =
+                                  tileBounds.entries
+                                      .firstOrNull {
+                                        it.key != APP_KEY + src && it.value.contains(dragPos)
+                                      }
+                                      ?.key
+                              onDrop(src, target)
+                            }
+                            dragPkg = null
+                          },
+                          onDragCancel = { dragPkg = null },
+                      )
+                    },
         ) {
-          // Special + folder tiles persist in Manage mode (non-uninstallable);
-          // only regular apps get a delete badge and become draggable.
-          item { PortalHomeTile(onExitHome) }
-          item { PortalHomeShortcutTile(onExitHome) }
-          item { CameraTile(onOpenCamera) }
-          item { StoreTile(onOpenStore) }
-          items(folderNames, key = { it }) { name ->
-            FolderTile(
-                name = name,
-                apps = appsEff.filter { it.folder == name },
-                modifier =
-                    Modifier.onGloballyPositioned {
-                      tileBounds[FOLDER_KEY + name] = it.boundsInWindow()
-                    },
-                onClick = { openFolder = name },
-            )
-          }
-          items(ungrouped, key = { it.component.packageName }) { app ->
-            val pkg = app.component.packageName
-            AppTile(
-                app = app,
-                editMode = editMode,
-                dimmed = dragPkg == pkg,
-                modifier =
-                    Modifier.onGloballyPositioned {
-                      tileBounds[APP_KEY + pkg] = it.boundsInWindow()
-                    },
-                onDelete = { onUninstall(pkg) },
-                onClick = { onLaunch(app.component) },
-            )
-          }
-          // Always-present Updates tile, parked at the end of the grid. Tapping
-          // installs a ready update, or forces a fresh check when up to date.
-          item {
-            UpdatesTile(update = update, status = updateStatus) {
-              val info = update
-              if (info != null) {
-                UpdateManager.installUpdate(context, info) { updateStatus = it }
-              } else {
-                updateStatus = "Checking…"
-                UpdateManager.checkForUpdate(context) {
-                  update = it
-                  updateStatus = if (it == null) "Up to date" else null
+          LazyVerticalGrid(
+              columns = GridCells.Fixed(gridColumnsFor(tileSize)),
+              horizontalArrangement = Arrangement.spacedBy(16.dp),
+              verticalArrangement = Arrangement.spacedBy(20.dp),
+              modifier = Modifier.focusRequester(homeGridFocus).focusGroup(),
+          ) {
+            // When a category tab is selected, the grid shows just that folder's apps.
+            val activeTab = if (showTabs) selectedTab else null
+            if (activeTab != null) {
+              val tabApps = appsEff.filter { it.folder == activeTab && it.component.packageName !in hiddenPkgs }
+              items(tabApps, key = { it.component.packageName }) { app ->
+                val pkg = app.component.packageName
+                AppTile(
+                    app = app,
+                    editMode = editMode,
+                    dimmed = dragPkg == pkg,
+                    modifier = Modifier.onGloballyPositioned { tileBounds[APP_KEY + pkg] = it.boundsInWindow() },
+                    onDelete = { onUninstall(pkg) },
+                    onHide = { hideApp(pkg) },
+                    onAppInfo = { openAppInfo(context, pkg) },
+                    onClick = { onLaunch(app.component) },
+                )
+              }
+              return@LazyVerticalGrid
+            }
+            // Special + folder tiles persist in Manage mode (non-uninstallable);
+            // only regular apps get a delete badge and become draggable.
+            item { PortalHomeTile(onExitHome) }
+            item { PortalHomeShortcutTile(onExitHome) }
+            item { CameraTile(onOpenCamera) }
+            item { StoreTile(onOpenStore) }
+            item { SpeedTestTile(onClick = { showSpeedTest = true }) }
+            item { NowPlayingTile(onClick = { showNowPlaying = true }) }
+            item { NoteTile(onClick = { showNote = true }) }
+            item { TransitTile(onClick = { showTransit = true }) }
+            item { MyNoiseTile() }
+            if (DailyContent.modeOf(dailyTileMode) != DailyContent.Mode.OFF) {
+              item { DailyTile(mode = dailyTileMode, onClick = { showDaily = true }) }
+            }
+            items(folderNames, key = { it }) { name ->
+              FolderTile(
+                  name = name,
+                  apps = appsEff.filter { it.folder == name },
+                  modifier =
+                      Modifier.onGloballyPositioned {
+                        tileBounds[FOLDER_KEY + name] = it.boundsInWindow()
+                      },
+                  onClick = { openFolder = name },
+              )
+            }
+            items(ungrouped, key = { it.component.packageName }) { app ->
+              val pkg = app.component.packageName
+              AppTile(
+                  app = app,
+                  editMode = editMode,
+                  dimmed = dragPkg == pkg,
+                  modifier =
+                      Modifier.onGloballyPositioned {
+                        tileBounds[APP_KEY + pkg] = it.boundsInWindow()
+                      },
+                  onDelete = { onUninstall(pkg) },
+                  onHide = { hideApp(pkg) },
+                  onAppInfo = { openAppInfo(context, pkg) },
+                  onClick = { onLaunch(app.component) },
+              )
+            }
+            // Always-present Updates tile, parked at the end of the grid. Tapping
+            // installs a ready update, or forces a fresh check when up to date.
+            item {
+              UpdatesTile(update = update, status = updateStatus) {
+                val info = update
+                if (info != null) {
+                  UpdateManager.installUpdate(context, info) { updateStatus = it }
+                } else {
+                  updateStatus = "Checking…"
+                  UpdateManager.checkForUpdate(context) {
+                    update = it
+                    updateStatus = if (it == null) "Up to date" else null
+                  }
                 }
               }
             }
           }
         }
       }
-      // Optional weather forecast, pinned full-width at the bottom of the screen
-      // below the (scrolling) app grid. Off by default.
-      if (weatherWidget != ImmortalSettings.WIDGET_OFF) {
-        Spacer(Modifier.size(16.dp))
-        WeatherWidget(mode = weatherWidget, fahrenheit = weatherFahrenheit)
+
+      if (dashboardPage && !editMode) {
+        // Two swipeable pages: apps, then a glanceable info dashboard.
+        val pagerState = androidx.compose.foundation.pager.rememberPagerState(pageCount = { 2 })
+        Column(modifier = Modifier.fillMaxWidth().weight(1f)) {
+          androidx.compose.foundation.pager.HorizontalPager(
+              state = pagerState,
+              modifier = Modifier.fillMaxWidth().weight(1f),
+          ) { page ->
+            if (page == 0) appGridArea(Modifier.fillMaxSize())
+            else DashboardPage()
+          }
+          PagerDots(pagerState.currentPage, 2)
+        }
+      } else {
+        appGridArea(Modifier.fillMaxWidth().weight(1f))
       }
-      // Optional calendar agenda widget, below the weather widget. Off by default.
-      if (calendarWidget == ImmortalSettings.CALENDAR_ON) {
-        Spacer(Modifier.size(16.dp))
-        CalendarWidget()
-      }
-      if (statsMode == ImmortalSettings.STATS_ON) {
-        Spacer(Modifier.size(16.dp))
-        SystemStatsWidget()
+      // Bottom widget stack (weather / calendar / system stats), pinned full-width
+      // below the scrolling grid. Measured so the floating corner buttons can be
+      // lifted clear of it in portrait. All off by default; an empty stack measures
+      // ~0dp so the buttons stay in the corners.
+      Column(
+          modifier =
+              Modifier.fillMaxWidth().onGloballyPositioned {
+                bottomWidgetsHeight = with(widgetDensity) { it.size.height.toDp() }
+              }
+      ) {
+        // Only the weather rides at the bottom of the main page. Calendar and system
+        // stats live on the dashboard (2nd) page so the home grid keeps its space.
+        if (weatherWidget != ImmortalSettings.WIDGET_OFF) {
+          Spacer(Modifier.size(16.dp))
+          WeatherWidget(mode = weatherWidget, fahrenheit = weatherFahrenheit)
+        }
       }
     }
 
@@ -735,16 +909,66 @@ private fun LauncherScreen(
       }
     }
 
+    // Hidden apps restore button: appears beside ✎ when there are hidden apps.
+    if (hiddenPkgs.isNotEmpty()) {
+      Surface(
+          color = Color(0xCC2B2B2B),
+          shape = androidx.compose.foundation.shape.CircleShape,
+          modifier =
+              Modifier.align(Alignment.BottomEnd)
+                  .padding(end = 112.dp, bottom = 32.dp + bottomButtonLift)
+                  .size(60.dp)
+                  .tvFocusable(androidx.compose.foundation.shape.CircleShape) {
+                    showHiddenPanel = true
+                  },
+      ) {
+        Box(contentAlignment = Alignment.Center) {
+          // Eye icon to signal "show hidden apps"
+          Canvas(modifier = Modifier.size(28.dp)) {
+            val w = size.minDimension; val s = w * 0.09f
+            val stroke = Stroke(width = s, cap = StrokeCap.Round)
+            drawOval(Color.White, topLeft = Offset(w*0.04f, w*0.28f), size = Size(w*0.92f, w*0.44f), style = stroke)
+            drawCircle(Color.White, radius = w*0.14f, center = Offset(w*0.5f, w*0.5f), style = stroke)
+            // Badge: number of hidden apps
+          }
+        }
+      }
+    }
+    // Alexa shortcut: bottom-left corner, always visible.
+    heyPkg?.let { pkg ->
+      Box(
+          contentAlignment = Alignment.Center,
+          modifier =
+              Modifier.align(Alignment.BottomStart)
+                  .padding(start = 36.dp, bottom = 28.dp + bottomButtonLift)
+                  .size(96.dp)
+                  .tvFocusable(
+                      shape = androidx.compose.foundation.shape.CircleShape,
+                      onLongClick = { openHeyPicker(context, pkg) },
+                  ) { fireHey(context, pkg) },
+      ) {
+        Image(
+            painter = painterResource(R.drawable.alexa_icon),
+            contentDescription = "Alexa",
+            contentScale = ContentScale.Fit,
+            modifier = Modifier.size(96.dp).clip(androidx.compose.foundation.shape.CircleShape),
+        )
+      }
+    }
     // Manage / Done toggle lives in the bottom-right corner.
     EditButton(
         editMode = editMode,
-        modifier = Modifier.align(Alignment.BottomEnd).padding(end = 36.dp, bottom = 32.dp),
+        modifier =
+            Modifier.align(Alignment.BottomEnd)
+                .padding(end = 36.dp, bottom = 32.dp + bottomButtonLift),
         onClick = { editMode = !editMode },
     )
 
     if (editMode) {
       NewFolderButton(
-          modifier = Modifier.align(Alignment.BottomEnd).padding(end = 112.dp, bottom = 32.dp),
+          modifier =
+              Modifier.align(Alignment.BottomEnd)
+                  .padding(end = 112.dp, bottom = 32.dp + bottomButtonLift),
           onClick = { creatingFolder = true },
       )
     }
@@ -800,6 +1024,34 @@ private fun LauncherScreen(
                           runCatching {
                             context.startActivity(
                                 Intent(context, SleepSettingsActivity::class.java))
+                          }
+                        },
+                        FolderExtra("Sounds", ICON_BELL) {
+                          openFolder = null
+                          runCatching {
+                            context.startActivity(
+                                Intent(context, ChimeSettingsActivity::class.java))
+                          }
+                        },
+                        FolderExtra("Countdowns", ICON_HOURGLASS) {
+                          openFolder = null
+                          runCatching {
+                            context.startActivity(
+                                Intent(context, CountdownSettingsActivity::class.java))
+                          }
+                        },
+                        FolderExtra("Cameras", ICON_CAMERA) {
+                          openFolder = null
+                          runCatching {
+                            context.startActivity(
+                                Intent(context, CameraViewerActivity::class.java))
+                          }
+                        },
+                        FolderExtra("Intercom", ICON_CALL) {
+                          openFolder = null
+                          runCatching {
+                            context.startActivity(
+                                Intent(context, IntercomActivity::class.java))
                           }
                         },
                         FolderExtra("Help", ICON_HELP) {
@@ -859,6 +1111,107 @@ private fun LauncherScreen(
           onCancel = { creatingFolder = false },
       )
     }
+
+    // Speed-test pop-out overlay (rendered at top level so it isn't clipped by the grid).
+    if (showSpeedTest) {
+      SpeedTestOverlay(onDismiss = { showSpeedTest = false })
+    }
+
+    // Daily quote / word / trivia pop-out overlay.
+    if (showDaily) {
+      DailyOverlay(mode = dailyTileMode, onDismiss = { showDaily = false })
+    }
+
+    // Leave-a-note overlay (typed sticky + voice memo).
+    if (showNote) {
+      NoteOverlay(onDismiss = { showNote = false; noteVersion++ })
+    }
+
+    // Dublin transit board overlay.
+    if (showTransit) {
+      TransitOverlay(onDismiss = { showTransit = false })
+    }
+
+    if (showNowPlaying) {
+      NowPlayingOverlay(onDismiss = { showNowPlaying = false })
+    }
+
+    // Hidden apps panel: shows all hidden apps so users can restore them individually.
+    if (showHiddenPanel) {
+      BackHandler { showHiddenPanel = false }
+      Box(
+          contentAlignment = Alignment.Center,
+          modifier =
+              Modifier.fillMaxSize()
+                  .background(Color(0xCC000000))
+                  .clickable(
+                      interactionSource = remember { MutableInteractionSource() },
+                      indication = null,
+                  ) { showHiddenPanel = false },
+      ) {
+        Surface(
+            color = Color(0xFF1C1C1E),
+            shape = RoundedCornerShape(28.dp),
+            modifier = Modifier.widthIn(max = 600.dp).clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+            ) {},
+        ) {
+          Column(modifier = Modifier.padding(28.dp)) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+              Text("Hidden apps", color = Color.White, fontSize = 22.sp, modifier = Modifier.weight(1f))
+              if (hiddenAppsEff.isNotEmpty()) {
+                Surface(
+                    color = Color(0xFF1565C0),
+                    shape = RoundedCornerShape(10.dp),
+                    modifier = Modifier.tvFocusable(RoundedCornerShape(10.dp)) {
+                      UserLayout.unhideAllPackages(context)
+                      hiddenPkgs = emptySet()
+                      showHiddenPanel = false
+                    },
+                ) {
+                  Text("Restore all", color = Color.White, fontSize = 15.sp,
+                      modifier = Modifier.padding(horizontal = 18.dp, vertical = 8.dp))
+                }
+              }
+            }
+            Spacer(Modifier.size(20.dp))
+            if (hiddenAppsEff.isEmpty()) {
+              Text("No hidden apps.", color = Color(0xFF9A9A9A), fontSize = 16.sp)
+            } else {
+              LazyVerticalGrid(
+                  columns = GridCells.Fixed(4),
+                  horizontalArrangement = Arrangement.spacedBy(16.dp),
+                  verticalArrangement = Arrangement.spacedBy(16.dp),
+                  modifier = Modifier.heightIn(max = 400.dp),
+              ) {
+                items(hiddenAppsEff, key = { it.component.packageName }) { app ->
+                  Column(horizontalAlignment = Alignment.CenterHorizontally,
+                      modifier = Modifier.tvFocusable(RoundedCornerShape(16.dp)) {
+                        unhideApp(app.component.packageName)
+                      }) {
+                    Box {
+                      Image(bitmap = app.icon, contentDescription = app.label,
+                          modifier = Modifier.size(72.dp).clip(RoundedCornerShape(18.dp)).alpha(0.5f))
+                      Surface(color = Color(0xFF1565C0),
+                          shape = androidx.compose.foundation.shape.CircleShape,
+                          modifier = Modifier.size(24.dp).align(Alignment.TopEnd)) {
+                        Box(contentAlignment = Alignment.Center) {
+                          Text("+", color = Color.White, fontSize = 16.sp)
+                        }
+                      }
+                    }
+                    Spacer(Modifier.size(6.dp))
+                    Text(app.label, color = Color.White, fontSize = 13.sp, maxLines = 1,
+                        overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center)
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
   }
   } // outer background Box
   } // CompositionLocalProvider(LocalTileDp)
@@ -897,7 +1250,7 @@ private fun gridColumnsFor(size: String): Int =
     }
 
 @Composable
-private fun HeaderBar(onScreensaver: () -> Unit, onClock: () -> Unit) {
+private fun HeaderBar(onScreensaver: () -> Unit, onClock: () -> Unit, onSleep: () -> Unit) {
   var now by remember { mutableStateOf(Date()) }
   androidx.compose.runtime.LaunchedEffect(Unit) {
     while (true) {
@@ -912,21 +1265,36 @@ private fun HeaderBar(onScreensaver: () -> Unit, onClock: () -> Unit) {
   // The clock format is likewise re-read on resume so flipping Auto/12h/24h in
   // Immortal Settings updates the header the moment the user returns home.
   var use24Hour by remember { mutableStateOf(ImmortalSettings.use24HourClock(context)) }
-  // The "hey" button only appears when Millennium is installed; re-checked on
-  // resume so it shows up the moment the user finishes provisioning without
-  // needing to relaunch the launcher.
-  var heyPkg by remember { mutableStateOf(heyPackage(context)) }
+  var showSunTimes by remember { mutableStateOf(ImmortalSettings.load(context).showSunTimes) }
+  var showNameDay by remember { mutableStateOf(ImmortalSettings.load(context).showNameDay) }
+  var showFeastDay by remember { mutableStateOf(ImmortalSettings.load(context).showFeastDay) }
+  var showNextEvent by remember { mutableStateOf(ImmortalSettings.load(context).showNextEvent) }
   val lifecycleOwner = LocalLifecycleOwner.current
   DisposableEffect(lifecycleOwner) {
     val obs = LifecycleEventObserver { _, e ->
       if (e == Lifecycle.Event.ON_RESUME) {
         weatherUnit = ImmortalSettings.load(context).weatherUnit
         use24Hour = ImmortalSettings.use24HourClock(context)
-        heyPkg = heyPackage(context)
+        showSunTimes = ImmortalSettings.load(context).showSunTimes
+        showNameDay = ImmortalSettings.load(context).showNameDay
+        showFeastDay = ImmortalSettings.load(context).showFeastDay
+        showNextEvent = ImmortalSettings.load(context).showNextEvent
       }
     }
     lifecycleOwner.lifecycle.addObserver(obs)
     onDispose { lifecycleOwner.lifecycle.removeObserver(obs) }
+  }
+  // Today's sunrise/sunset, refreshed every few hours (keyless Open-Meteo).
+  val sunTimes by produceState<Weather.SunTimes?>(initialValue = null) {
+    while (true) {
+      val s = withContext(Dispatchers.IO) { Weather.fetchSunTimes(context) }
+      if (s != null) {
+        value = s
+        delay(6L * 60 * 60 * 1000)
+      } else {
+        delay(5L * 60 * 1000)
+      }
+    }
   }
   val weather by produceState(initialValue = "", weatherUnit) {
     // Retry soon on failure (e.g. a transient geolocation rate-limit), then
@@ -947,8 +1315,7 @@ private fun HeaderBar(onScreensaver: () -> Unit, onClock: () -> Unit) {
   // right, right-aligned, so the header reads as a balanced pair of blocks. The
   // clock and the right-hand stack are centred against each other.
   Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-    // Clock anchors the top-left corner; the action buttons sit just to its right
-    // (now that there's a group of them, leading with the buttons looked off).
+    // Clock text.
     Text(
         SimpleDateFormat(if (use24Hour) "H:mm" else "h:mm", Locale.getDefault()).format(now),
         color = Color.White,
@@ -969,26 +1336,6 @@ private fun HeaderBar(onScreensaver: () -> Unit, onClock: () -> Unit) {
     ) {
       Box(contentAlignment = Alignment.Center) { StackedPhotoIcon() }
     }
-    // "Hey" button — push-to-talk for the active assistant. The launcher stays
-    // dumb: it just broadcasts the trigger; Millennium owns assistant selection,
-    // the premium gate and the falcon mic handoff. Only shown when Millennium is
-    // installed (so a bare launcher has no dead button).
-    heyPkg?.let { pkg ->
-      Spacer(Modifier.size(14.dp))
-      Surface(
-          color = Color(0x33FFFFFF),
-          shape = androidx.compose.foundation.shape.CircleShape,
-          modifier =
-              Modifier.size(56.dp).tvFocusable(
-                  shape = androidx.compose.foundation.shape.CircleShape,
-                  onLongClick = { openHeyPicker(context, pkg) },
-              ) {
-                fireHey(context, pkg)
-              },
-      ) {
-        Box(contentAlignment = Alignment.Center) { MicGlyph() }
-      }
-    }
     Spacer(Modifier.size(12.dp))
     Surface(
         color = Color(0x33FFFFFF),
@@ -999,6 +1346,71 @@ private fun HeaderBar(onScreensaver: () -> Unit, onClock: () -> Unit) {
             },
     ) {
       Box(contentAlignment = Alignment.Center) { ClockIcon() }
+    }
+    Spacer(Modifier.size(12.dp))
+    Surface(
+        color = Color(0x33FFFFFF),
+        shape = androidx.compose.foundation.shape.CircleShape,
+        modifier =
+            Modifier.size(56.dp).tvFocusable(androidx.compose.foundation.shape.CircleShape) {
+              onSleep()
+            },
+    ) {
+      Box(contentAlignment = Alignment.Center) { MoonIcon() }
+    }
+    // Brightness button: cycles dim → medium → full using window-level brightness
+    // (no WRITE_SETTINGS permission needed — affects this Activity's window only).
+    val activity = remember { context as? android.app.Activity }
+    var brightnessIdx by remember { mutableStateOf(2) }
+    Spacer(Modifier.size(12.dp))
+    Surface(
+        color = Color(0x33FFFFFF),
+        shape = androidx.compose.foundation.shape.CircleShape,
+        modifier =
+            Modifier.size(56.dp).tvFocusable(androidx.compose.foundation.shape.CircleShape) {
+              brightnessIdx = (brightnessIdx + 1) % 3
+              val bval = when (brightnessIdx) { 0 -> 0.12f; 1 -> 0.50f; else -> 1.0f }
+              activity?.window?.let { w -> val p = w.attributes; p.screenBrightness = bval; w.attributes = p }
+            },
+    ) {
+      Box(contentAlignment = Alignment.Center) { SunIcon() }
+    }
+    // Volume button: tap to show/hide +/– controls inline.
+    val audioMgr = remember { context.getSystemService(Context.AUDIO_SERVICE) as AudioManager }
+    var volLevel by remember { mutableStateOf(audioMgr.getStreamVolume(AudioManager.STREAM_MUSIC)) }
+    val maxVol = remember { audioMgr.getStreamMaxVolume(AudioManager.STREAM_MUSIC) }
+    var showVol by remember { mutableStateOf(false) }
+    Spacer(Modifier.size(12.dp))
+    Surface(
+        color = if (showVol) Color(0x88FFFFFF) else Color(0x33FFFFFF),
+        shape = androidx.compose.foundation.shape.CircleShape,
+        modifier =
+            Modifier.size(56.dp).tvFocusable(androidx.compose.foundation.shape.CircleShape) {
+              showVol = !showVol
+            },
+    ) {
+      Box(contentAlignment = Alignment.Center) { VolumeIcon() }
+    }
+    if (showVol) {
+      Spacer(Modifier.size(8.dp))
+      Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        Surface(color = Color(0x33FFFFFF), shape = androidx.compose.foundation.shape.CircleShape,
+            modifier = Modifier.size(44.dp).clickable {
+              volLevel = (volLevel - 1).coerceAtLeast(0)
+              audioMgr.setStreamVolume(AudioManager.STREAM_MUSIC, volLevel, 0)
+            }) {
+          Box(contentAlignment = Alignment.Center) { Text("−", color = Color.White, fontSize = 22.sp) }
+        }
+        Text("$volLevel", color = Color.White, fontSize = 18.sp, textAlign = TextAlign.Center,
+            modifier = Modifier.widthIn(min = 28.dp))
+        Surface(color = Color(0x33FFFFFF), shape = androidx.compose.foundation.shape.CircleShape,
+            modifier = Modifier.size(44.dp).clickable {
+              volLevel = (volLevel + 1).coerceAtMost(maxVol)
+              audioMgr.setStreamVolume(AudioManager.STREAM_MUSIC, volLevel, 0)
+            }) {
+          Box(contentAlignment = Alignment.Center) { Text("+", color = Color.White, fontSize = 22.sp) }
+        }
+      }
     }
     Spacer(Modifier.weight(1f))
     Column(horizontalAlignment = Alignment.End) {
@@ -1021,6 +1433,62 @@ private fun HeaderBar(onScreensaver: () -> Unit, onClock: () -> Unit) {
           fontSize = 18.sp,
           modifier = Modifier.padding(top = 4.dp),
       )
+      if (showSunTimes) {
+        sunTimes?.let { st ->
+          val (sr, ss) = st.formatted(use24Hour)
+          SunArc(
+              sunriseMin = minuteOfDay(st.sunriseMillis),
+              sunsetMin = minuteOfDay(st.sunsetMillis),
+              riseLabel = sr,
+              setLabel = ss,
+              modifier = Modifier.padding(top = 6.dp),
+          )
+        }
+      }
+      if (showNameDay) {
+        val nameDay = remember(now) { NameDays.todayLabel() }
+        if (nameDay.isNotEmpty()) {
+          Text(
+              "🎉 $nameDay",
+              color = Color(0xFFB0B0B0),
+              fontSize = 14.sp,
+              modifier = Modifier.padding(top = 2.dp),
+          )
+        }
+      }
+      if (showFeastDay) {
+        val feast = remember(now) { FeastDays.forToday() }
+        if (feast.isNotEmpty()) {
+          Text(
+              "✝ $feast",
+              color = Color(0xFFB0B0B0),
+              fontSize = 14.sp,
+              modifier = Modifier.padding(top = 2.dp),
+          )
+        }
+      }
+      if (showNextEvent) {
+        val nextEvent by produceState<CalendarEvent?>(initialValue = null) {
+          if (CalendarHelper.hasPermission(context)) {
+            value = withContext(Dispatchers.IO) { CalendarHelper.upcoming(context).firstOrNull() }
+          }
+        }
+        nextEvent?.let { ev ->
+          val whenFmt = remember(ev.begin) {
+            val cal = java.util.Calendar.getInstance().apply { timeInMillis = ev.begin }
+            if (ev.allDay) SimpleDateFormat("MMM d", Locale.getDefault()).format(cal.time)
+            else SimpleDateFormat(if (use24Hour) "HH:mm" else "h:mm a", Locale.getDefault()).format(cal.time)
+          }
+          Text(
+              "📅 $whenFmt · ${ev.title}",
+              color = Color(0xFFB0B0B0),
+              fontSize = 14.sp,
+              maxLines = 1,
+              overflow = TextOverflow.Ellipsis,
+              modifier = Modifier.padding(top = 2.dp),
+          )
+        }
+      }
     }
   }
 }
@@ -1070,6 +1538,17 @@ private fun WeatherWidget(mode: String, fahrenheit: Boolean) {
           }
         }
       }
+  // Air quality / UV / pollen rides along under the forecast (keyless Open-Meteo,
+  // refreshed every ~30 min). Lives here, with the weather, rather than in System stats.
+  val air by
+      produceState<Weather.AirQuality?>(initialValue = null) {
+        while (true) {
+          val aq = withContext(Dispatchers.IO) { Weather.fetchAirQuality(context) }
+          if (aq != null) value = aq
+          delay(30L * 60 * 1000)
+        }
+      }
+
   if (state is ForecastState.Loading) return
 
   val startPage = if (mode == ImmortalSettings.WIDGET_DAILY) PAGE_DAILY else PAGE_HOURLY
@@ -1086,10 +1565,10 @@ private fun WeatherWidget(mode: String, fahrenheit: Boolean) {
       shape = RoundedCornerShape(20.dp),
       modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
   ) {
-    Column(modifier = Modifier.padding(horizontal = 20.dp, vertical = 16.dp)) {
+    Column(modifier = Modifier.padding(horizontal = 20.dp, vertical = 10.dp)) {
       // Header: the current page's title, plus a two-dot indicator hinting the swipe.
       Row(
-          modifier = Modifier.fillMaxWidth().padding(start = 4.dp, end = 4.dp, bottom = 12.dp),
+          modifier = Modifier.fillMaxWidth().padding(start = 4.dp, end = 4.dp, bottom = 8.dp),
           verticalAlignment = Alignment.CenterVertically,
       ) {
         Text(
@@ -1129,8 +1608,57 @@ private fun WeatherWidget(mode: String, fahrenheit: Boolean) {
             modifier = Modifier.padding(start = 4.dp, bottom = 4.dp),
         )
       }
+      // Compact air-quality strip beneath the forecast: "AQI 42 · Good   UV 3.2   Pollen Low".
+      air?.let { aq -> AirQualityStrip(aq) }
     }
   }
+}
+
+/** One-line air-quality / UV / pollen summary shown under the forecast pager, as
+ *  colour-tinted emoji chips so it stands out from the muted forecast row. */
+@Composable
+private fun AirQualityStrip(aq: Weather.AirQuality) {
+  Row(
+      modifier = Modifier.fillMaxWidth().padding(start = 4.dp, end = 4.dp, top = 8.dp),
+      horizontalArrangement = Arrangement.spacedBy(10.dp),
+  ) {
+    AqChip("💨", "AQI ${aq.aqi} · ${aq.aqiLabel}", aqiColor(aq.aqi))
+    if (aq.uvIndex > 0.0) AqChip("☀️", "UV ${String.format("%.1f", aq.uvIndex)}", uvColor(aq.uvIndex))
+    if (aq.pollen.isNotEmpty()) AqChip("🌸", "Pollen ${aq.pollen}", Color(0xFFB388FF))
+  }
+}
+
+/** A small tinted chip: emoji + label, with a faint background of [accent]. */
+@Composable
+private fun AqChip(emoji: String, label: String, accent: Color) {
+  Surface(color = accent.copy(alpha = 0.18f), shape = RoundedCornerShape(10.dp)) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+    ) {
+      Text(emoji, fontSize = 14.sp)
+      Text("  $label", color = accent, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
+    }
+  }
+}
+
+/** EU-AQI banding colour (green→good, climbing to red→very poor). */
+private fun aqiColor(aqi: Int): Color = when {
+  aqi <= 20 -> Color(0xFF66BB6A)
+  aqi <= 40 -> Color(0xFF9CCC65)
+  aqi <= 60 -> Color(0xFFFFD54F)
+  aqi <= 80 -> Color(0xFFFFB74D)
+  aqi <= 100 -> Color(0xFFFF8A65)
+  else -> Color(0xFFEF5350)
+}
+
+/** UV-index banding colour. */
+private fun uvColor(uv: Double): Color = when {
+  uv < 3 -> Color(0xFF66BB6A)
+  uv < 6 -> Color(0xFFFFD54F)
+  uv < 8 -> Color(0xFFFFB74D)
+  uv < 11 -> Color(0xFFFF8A65)
+  else -> Color(0xFFB388FF)
 }
 
 /** Small page-position dots, hinting the forecast can be swiped between its pages. */
@@ -1151,11 +1679,11 @@ private fun PageDots(selected: Int, count: Int) {
 private fun HourCell(h: Weather.HourForecast, modifier: Modifier = Modifier) {
   Column(
       horizontalAlignment = Alignment.CenterHorizontally,
-      modifier = modifier.padding(vertical = 4.dp),
+      modifier = modifier.padding(vertical = 2.dp),
   ) {
-    Text(h.label, color = Color(0xFFCFCFCF), fontSize = 13.sp, maxLines = 1)
-    Text(Weather.emoji(h.code), fontSize = 26.sp, modifier = Modifier.padding(vertical = 6.dp))
-    Text("${h.temp}°", color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
+    Text(h.label, color = Color(0xFFCFCFCF), fontSize = 12.sp, maxLines = 1)
+    Text(Weather.emoji(h.code), fontSize = 22.sp, modifier = Modifier.padding(vertical = 3.dp))
+    Text("${h.temp}°", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
   }
 }
 
@@ -1163,13 +1691,13 @@ private fun HourCell(h: Weather.HourForecast, modifier: Modifier = Modifier) {
 private fun DayCell(d: Weather.DayForecast, modifier: Modifier = Modifier) {
   Column(
       horizontalAlignment = Alignment.CenterHorizontally,
-      modifier = modifier.padding(vertical = 4.dp),
+      modifier = modifier.padding(vertical = 2.dp),
   ) {
-    Text(d.label, color = Color(0xFFCFCFCF), fontSize = 13.sp, maxLines = 1)
-    Text(Weather.emoji(d.code), fontSize = 26.sp, modifier = Modifier.padding(vertical = 6.dp))
+    Text(d.label, color = Color(0xFFCFCFCF), fontSize = 12.sp, maxLines = 1)
+    Text(Weather.emoji(d.code), fontSize = 22.sp, modifier = Modifier.padding(vertical = 3.dp))
     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-      Text("${d.hi}°", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
-      Text("${d.lo}°", color = Color(0xFF9A9A9A), fontSize = 16.sp)
+      Text("${d.hi}°", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+      Text("${d.lo}°", color = Color(0xFF9A9A9A), fontSize = 15.sp)
     }
   }
 }
@@ -1327,6 +1855,61 @@ private fun ClockIcon() {
   }
 }
 
+/** White crescent moon glyph for the header sleep button. */
+@Composable
+private fun MoonIcon() {
+  val path = remember { PathParser().parsePathString(ICON_MOON).toPath() }
+  Canvas(modifier = Modifier.size(28.dp)) {
+    scale(size.minDimension / 24f) {
+      drawPath(path, color = Color.White)
+    }
+  }
+}
+
+/** White sun glyph for the header brightness button. */
+@Composable
+private fun SunIcon() {
+  Canvas(modifier = Modifier.size(28.dp)) {
+    val w = size.minDimension
+    val s = w * 0.08f
+    val stroke = Stroke(width = s, cap = StrokeCap.Round)
+    drawCircle(Color.White, radius = w * 0.20f, center = Offset(w * 0.5f, w * 0.5f), style = stroke)
+    for (i in 0..7) {
+      val a = Math.toRadians(i * 45.0)
+      val cos = kotlin.math.cos(a).toFloat()
+      val sin = kotlin.math.sin(a).toFloat()
+      drawLine(Color.White,
+          Offset(w * 0.5f + cos * w * 0.30f, w * 0.5f + sin * w * 0.30f),
+          Offset(w * 0.5f + cos * w * 0.44f, w * 0.5f + sin * w * 0.44f),
+          strokeWidth = s, cap = StrokeCap.Round)
+    }
+  }
+}
+
+/** White speaker glyph for the header volume button. */
+@Composable
+private fun VolumeIcon() {
+  Canvas(modifier = Modifier.size(28.dp)) {
+    val w = size.minDimension
+    val s = w * 0.08f
+    val stroke = Stroke(width = s, cap = StrokeCap.Round, join = StrokeJoin.Round)
+    val body = Path().apply {
+      moveTo(w * 0.46f, w * 0.22f)
+      lineTo(w * 0.24f, w * 0.37f)
+      lineTo(w * 0.08f, w * 0.37f)
+      lineTo(w * 0.08f, w * 0.63f)
+      lineTo(w * 0.24f, w * 0.63f)
+      lineTo(w * 0.46f, w * 0.78f)
+      close()
+    }
+    drawPath(body, Color.White, style = stroke)
+    drawArc(Color.White, -35f, 70f, false,
+        topLeft = Offset(w * 0.50f, w * 0.31f), size = Size(w * 0.20f, w * 0.38f), style = stroke)
+    drawArc(Color.White, -50f, 100f, false,
+        topLeft = Offset(w * 0.55f, w * 0.18f), size = Size(w * 0.34f, w * 0.64f), style = stroke)
+  }
+}
+
 /** Bottom-right Manage / Done toggle. */
 @Composable
 private fun EditButton(editMode: Boolean, modifier: Modifier = Modifier, onClick: () -> Unit) {
@@ -1402,7 +1985,206 @@ private data class SystemStats(
     val storageUsedGb: Float,
     val storageTotalGb: Float,
     val uptimeHours: Float,
+    val rxKBs: Float = 0f,
+    val txKBs: Float = 0f,
+    val ip: String = "",
+    val cpuPercent: Int = 0,
+    val tempC: Float = 0f,
 )
+
+/** Page indicator dots for the home pager. */
+@Composable
+private fun PagerDots(current: Int, count: Int) {
+  Row(
+      modifier = Modifier.fillMaxWidth().padding(top = 10.dp),
+      horizontalArrangement = Arrangement.Center,
+  ) {
+    repeat(count) { i ->
+      Box(
+          modifier =
+              Modifier.padding(horizontal = 5.dp)
+                  .size(if (i == current) 9.dp else 7.dp)
+                  .clip(androidx.compose.foundation.shape.CircleShape)
+                  .background(if (i == current) Color.White else Color(0x55FFFFFF)),
+      )
+    }
+  }
+}
+
+/** The second home page: a glanceable, full-screen info dashboard (big clock, date,
+ * sun times, countdowns, weather, calendar, system stats — whatever the user has on).
+ * Reuses the existing home widgets so it tracks their settings automatically. */
+@Composable
+private fun DashboardPage() {
+  val context = androidx.compose.ui.platform.LocalContext.current
+  val use24 = remember { ImmortalSettings.use24HourClock(context) }
+  var now by remember { mutableStateOf(java.util.Date()) }
+  LaunchedEffect(Unit) {
+    while (true) {
+      now = java.util.Date()
+      delay(10_000)
+    }
+  }
+  val timeFmt = remember(use24) { SimpleDateFormat(if (use24) "HH:mm" else "h:mm", Locale.getDefault()) }
+  // Live widget toggles: the chooser at the bottom flips these and persists them, so
+  // the page updates instantly without a trip to Settings. Weather is intentionally
+  // absent here — it lives at the bottom of the main page.
+  var calendarOn by remember { mutableStateOf(ImmortalSettings.load(context).calendarWidget == ImmortalSettings.CALENDAR_ON) }
+  var statsOn by remember { mutableStateOf(ImmortalSettings.load(context).statsMode == ImmortalSettings.STATS_ON) }
+  var timeProgressOn by remember { mutableStateOf(ImmortalSettings.load(context).showTimeProgress) }
+  Column(
+      modifier =
+          Modifier.fillMaxSize()
+              .verticalScroll(rememberScrollState())
+              .padding(horizontal = 8.dp),
+      horizontalAlignment = Alignment.CenterHorizontally,
+  ) {
+    Spacer(Modifier.size(8.dp))
+    Text(timeFmt.format(now), color = Color.White, fontSize = 96.sp, fontWeight = FontWeight.Bold)
+    Text(
+        SimpleDateFormat("EEEE, MMMM d", Locale.getDefault()).format(now),
+        color = Color(0xFFDADADA),
+        fontSize = 22.sp,
+    )
+    Spacer(Modifier.size(20.dp))
+    CountdownChips()
+    if (timeProgressOn) {
+      Spacer(Modifier.size(12.dp))
+      TimeProgressCard()
+    }
+    if (calendarOn) {
+      Spacer(Modifier.size(12.dp))
+      CalendarWidget()
+    }
+    if (statsOn) {
+      Spacer(Modifier.size(12.dp))
+      SystemStatsWidget()
+    }
+    Spacer(Modifier.size(20.dp))
+    // Widget chooser: add/remove the dashboard widgets right here.
+    DashboardWidgetChooser(
+        calendarOn = calendarOn,
+        statsOn = statsOn,
+        timeProgressOn = timeProgressOn,
+        onCalendar = {
+          calendarOn = it
+          ImmortalSettings.setCalendarWidget(context, if (it) ImmortalSettings.CALENDAR_ON else ImmortalSettings.CALENDAR_OFF)
+        },
+        onStats = {
+          statsOn = it
+          ImmortalSettings.setStatsMode(context, if (it) ImmortalSettings.STATS_ON else ImmortalSettings.STATS_OFF)
+        },
+        onTimeProgress = {
+          timeProgressOn = it
+          ImmortalSettings.setShowTimeProgress(context, it)
+        },
+    )
+    Spacer(Modifier.size(20.dp))
+  }
+}
+
+/** Inline chooser at the bottom of the dashboard page for toggling its widgets. */
+@Composable
+private fun DashboardWidgetChooser(
+    calendarOn: Boolean,
+    statsOn: Boolean,
+    timeProgressOn: Boolean,
+    onCalendar: (Boolean) -> Unit,
+    onStats: (Boolean) -> Unit,
+    onTimeProgress: (Boolean) -> Unit,
+) {
+  Column(horizontalAlignment = Alignment.CenterHorizontally) {
+    Text("Dashboard widgets", color = Color(0xFF8A8A8A), fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+    Spacer(Modifier.size(10.dp))
+    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+      WidgetToggleChip("📅  Calendar", calendarOn) { onCalendar(!calendarOn) }
+      WidgetToggleChip("📊  System stats", statsOn) { onStats(!statsOn) }
+      WidgetToggleChip("⏳  Time progress", timeProgressOn) { onTimeProgress(!timeProgressOn) }
+    }
+  }
+}
+
+@Composable
+private fun WidgetToggleChip(label: String, active: Boolean, onClick: () -> Unit) {
+  Surface(
+      color = if (active) MaterialTheme.colorScheme.primary else Color(0x22FFFFFF),
+      shape = RoundedCornerShape(20.dp),
+      modifier = Modifier.tvFocusable(RoundedCornerShape(20.dp), focusScale = 1f) { onClick() },
+  ) {
+    Text(
+        (if (active) "✓  " else "+  ") + label,
+        color = if (active) Color.White else Color(0xFFDADADA),
+        fontSize = 15.sp,
+        fontWeight = if (active) FontWeight.SemiBold else FontWeight.Normal,
+        modifier = Modifier.padding(horizontal = 18.dp, vertical = 10.dp),
+    )
+  }
+}
+
+/** Category filter tabs: "All" plus each folder. Selecting one filters the grid to
+ * that folder's apps; "All" restores the normal home view. */
+@Composable
+private fun CategoryTabs(categories: List<String>, selected: String?, onSelect: (String?) -> Unit) {
+  Row(
+      modifier =
+          Modifier.fillMaxWidth()
+              .horizontalScroll(rememberScrollState()),
+      horizontalArrangement = Arrangement.spacedBy(10.dp),
+  ) {
+    TabChip("All", selected == null) { onSelect(null) }
+    categories.forEach { name -> TabChip(name, selected == name) { onSelect(name) } }
+  }
+}
+
+@Composable
+private fun TabChip(label: String, active: Boolean, onClick: () -> Unit) {
+  Surface(
+      color = if (active) MaterialTheme.colorScheme.primary else Color(0x22FFFFFF),
+      shape = RoundedCornerShape(20.dp),
+      modifier = Modifier.tvFocusable(RoundedCornerShape(20.dp), focusScale = 1f) { onClick() },
+  ) {
+    Text(
+        label,
+        color = if (active) Color.White else Color(0xFFDADADA),
+        fontSize = 15.sp,
+        fontWeight = if (active) FontWeight.SemiBold else FontWeight.Normal,
+        modifier = Modifier.padding(horizontal = 18.dp, vertical = 9.dp),
+    )
+  }
+}
+
+/** A horizontally-scrolling row of countdown chips, soonest first. Hidden when the
+ * user hasn't created any. Re-read on each composition of the home screen. */
+@Composable
+private fun CountdownChips(version: Int = 0) {
+  val context = androidx.compose.ui.platform.LocalContext.current
+  val events = remember(version) { CountdownConfig.loadSorted(context) }
+  if (events.isEmpty()) return
+  Row(
+      modifier =
+          Modifier.fillMaxWidth()
+              .horizontalScroll(rememberScrollState())
+              .padding(horizontal = 18.dp, vertical = 2.dp),
+      horizontalArrangement = Arrangement.spacedBy(10.dp),
+  ) {
+    events.forEach { e ->
+      Surface(
+          color = MaterialTheme.colorScheme.surface.copy(alpha = 0.86f),
+          shape = RoundedCornerShape(14.dp),
+      ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+          Text("${e.emoji} ", fontSize = 16.sp)
+          Text(e.label, color = MaterialTheme.colorScheme.onSurface, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+          Text("  ·  ${e.phrase()}", color = MaterialTheme.colorScheme.primary, fontSize = 15.sp)
+        }
+      }
+    }
+  }
+  Spacer(Modifier.size(14.dp))
+}
 
 @Composable
 private fun SystemStatsWidget() {
@@ -1410,6 +2192,10 @@ private fun SystemStatsWidget() {
   val reading = remember { mutableStateOf(SystemStats(0, 0, 0f, 0f, 0f)) }
 
   LaunchedEffect(Unit) {
+    var prevRx = TrafficStats.getTotalRxBytes()
+    var prevTx = TrafficStats.getTotalTxBytes()
+    var prevTime = System.currentTimeMillis()
+    var prevCpuIdle = 0L; var prevCpuTotal = 0L
     while (true) {
       val am = context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
       val mem = ActivityManager.MemoryInfo()
@@ -1425,7 +2211,49 @@ private fun SystemStatsWidget() {
       val totalGb = (totalBytes / 1_073_741_824.0).toFloat()
       val usedGb = ((totalBytes - freeBytes) / 1_073_741_824.0).toFloat().coerceAtLeast(0f)
 
-      reading.value = SystemStats(usedMb, totalMb, usedGb, totalGb, uptimeHours)
+      val nowRx = TrafficStats.getTotalRxBytes()
+      val nowTx = TrafficStats.getTotalTxBytes()
+      val nowTime = System.currentTimeMillis()
+      val elapsedSec = ((nowTime - prevTime) / 1000f).coerceAtLeast(1f)
+      val rxKBs = ((nowRx - prevRx).coerceAtLeast(0L) / 1024f) / elapsedSec
+      val txKBs = ((nowTx - prevTx).coerceAtLeast(0L) / 1024f) / elapsedSec
+      prevRx = nowRx; prevTx = nowTx; prevTime = nowTime
+
+      // CPU %: delta of /proc/stat idle vs total between polls.
+      val cpuPercent = withContext(Dispatchers.IO) {
+        runCatching {
+          val parts = File("/proc/stat").bufferedReader().use { it.readLine() }
+              .trim().split("\\s+".toRegex()).drop(1)
+          val idle = parts.getOrElse(3) { "0" }.toLongOrNull() ?: 0L
+          val total = parts.take(8).sumOf { it.toLongOrNull() ?: 0L }
+          val cpu = if (prevCpuTotal > 0) {
+            val dIdle = (idle - prevCpuIdle).coerceAtLeast(0L)
+            val dTotal = (total - prevCpuTotal).coerceAtLeast(1L)
+            ((1.0 - dIdle.toDouble() / dTotal.toDouble()) * 100).toInt().coerceIn(0, 100)
+          } else 0
+          prevCpuIdle = idle; prevCpuTotal = total
+          cpu
+        }.getOrDefault(0)
+      }
+
+      // Device temp from thermal zone (millidegrees on most kernels).
+      val tempC = withContext(Dispatchers.IO) {
+        runCatching {
+          val raw = File("/sys/class/thermal/thermal_zone0/temp").readText().trim().toFloat()
+          if (raw > 1000f) raw / 1000f else raw
+        }.getOrDefault(0f)
+      }
+
+      // Wi-Fi IP address.
+      @Suppress("DEPRECATION")
+      val ip = runCatching {
+        val wm = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
+        val ipInt = wm.connectionInfo.ipAddress
+        if (ipInt == 0) "" else String.format("%d.%d.%d.%d",
+            ipInt and 0xff, (ipInt shr 8) and 0xff, (ipInt shr 16) and 0xff, (ipInt shr 24) and 0xff)
+      }.getOrDefault("")
+
+      reading.value = SystemStats(usedMb, totalMb, usedGb, totalGb, uptimeHours, rxKBs, txKBs, ip, cpuPercent, tempC)
       delay(10_000)
     }
   }
@@ -1464,6 +2292,31 @@ private fun SystemStatsWidget() {
             color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.82f),
         )
       }
+      Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+        Text("Network", color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.82f))
+        Text(
+            "↓ ${formatNetRate(r.rxKBs)}  ↑ ${formatNetRate(r.txKBs)}",
+            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.82f),
+        )
+      }
+      if (r.ip.isNotEmpty()) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+          Text("IP", color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.82f))
+          Text(r.ip, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.82f))
+        }
+      }
+      if (r.cpuPercent > 0) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+          Text("CPU", color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.82f))
+          Text("${r.cpuPercent}%", color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.82f))
+        }
+      }
+      if (r.tempC > 0f) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+          Text("Temp", color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.82f))
+          Text(String.format("%.1f °C", r.tempC), color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.82f))
+        }
+      }
     }
   }
 }
@@ -1488,6 +2341,13 @@ private data class BatteryReading(val present: Boolean, val percent: Int, val ch
 
 /** Reads the device battery, updating live. Returns present=false on devices
  * without a battery (Portal+, Portal TV, Portal Mini), so callers can hide it. */
+@Composable
+private fun formatNetRate(kbs: Float): String = when {
+  kbs >= 1024f -> String.format("%.1f MB/s", kbs / 1024f)
+  kbs >= 1f    -> String.format("%.0f KB/s", kbs)
+  else         -> "0 KB/s"
+}
+
 @Composable
 private fun batteryState(): BatteryReading {
   val context = androidx.compose.ui.platform.LocalContext.current
@@ -1610,6 +2470,862 @@ private fun CameraTile(onClick: () -> Unit) {
   )
 }
 
+@Composable
+private fun SpeedTestTile(onClick: () -> Unit) {
+  BuiltInTile(
+      label = "Speed Test",
+      background = Color(0xFF1565C0),
+      glyph = ICON_SPEEDTEST,
+      onClick = onClick,
+  )
+}
+
+@Composable
+private fun TransitTile(onClick: () -> Unit) {
+  BuiltInTile(
+      label = "Transit",
+      background = Color(0xFF00695C),
+      glyph = ICON_BUS,
+      onClick = onClick,
+  )
+}
+
+/** Opens myNoise.net (Stéphane Pigeon's online ambient-sound generators) in the
+ *  browser. We can't bundle/stream its (copyrighted) audio, but a link tile lets the
+ *  user reach its full library directly. */
+@Composable
+private fun MyNoiseTile() {
+  val context = androidx.compose.ui.platform.LocalContext.current
+  BuiltInTile(
+      label = "myNoise",
+      background = Color(0xFF37474F),
+      glyph = ICON_HEADPHONES,
+      onClick = {
+        runCatching {
+          context.startActivity(
+              Intent(Intent.ACTION_VIEW, Uri.parse("https://mynoise.net/noiseMachines.php"))
+                  .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        }
+      },
+  )
+}
+
+/** Worldwide real-time departures board (Transitous / MOTIS). The user searches for a
+ *  stop by name anywhere in the world, picks it, and sees the next departures,
+ *  auto-refreshing while open. */
+@Composable
+private fun TransitOverlay(onDismiss: () -> Unit) {
+  val context = androidx.compose.ui.platform.LocalContext.current
+  var stopId by remember { mutableStateOf(Transit.savedStopId(context)) }
+  var stopName by remember { mutableStateOf(Transit.savedStopName(context)) }
+  var editing by remember { mutableStateOf(Transit.savedStopId(context).isBlank()) }
+  var query by remember { mutableStateOf("") }
+  var results by remember { mutableStateOf<List<Transit.Stop>>(emptyList()) }
+  var searching by remember { mutableStateOf(false) }
+  var departures by remember { mutableStateOf<List<Transit.Departure>>(emptyList()) }
+  var loading by remember { mutableStateOf(false) }
+
+  // Debounced stop search while typing.
+  LaunchedEffect(query, editing) {
+    if (editing && query.trim().length >= 2) {
+      delay(350)
+      searching = true
+      results = withContext(Dispatchers.IO) { Transit.searchStops(query) }
+      searching = false
+    } else if (query.trim().length < 2) {
+      results = emptyList()
+    }
+  }
+
+  LaunchedEffect(stopId, editing) {
+    if (!editing && stopId.isNotBlank()) {
+      while (true) {
+        loading = true
+        departures = withContext(Dispatchers.IO) { Transit.fetch(stopId) }
+        loading = false
+        delay(30_000)
+      }
+    }
+  }
+
+  BackHandler { onDismiss() }
+  Box(
+      contentAlignment = Alignment.Center,
+      modifier = Modifier.fillMaxSize().background(Color(0xCC000000))
+          .tvFocusable(RoundedCornerShape(0.dp), focusScale = 1f) { onDismiss() },
+  ) {
+    Surface(color = MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(24.dp),
+        modifier = Modifier.widthIn(max = 560.dp).padding(24.dp)) {
+      Column(modifier = Modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+          Text("🚌 Next departures", color = Color.White, fontSize = 22.sp,
+              fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+          if (!editing) {
+            Surface(color = Color(0x22FFFFFF), shape = RoundedCornerShape(10.dp),
+                modifier = Modifier.tvFocusable(RoundedCornerShape(10.dp), focusScale = 1f) {
+                  editing = true; query = ""; results = emptyList()
+                }) {
+              Text("Change stop", color = Color.White, fontSize = 13.sp,
+                  modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp))
+            }
+          }
+        }
+        if (editing) {
+          androidx.compose.material3.OutlinedTextField(
+              value = query,
+              onValueChange = { query = it },
+              label = { Text("Search stop or station") },
+              singleLine = true,
+              modifier = Modifier.fillMaxWidth(),
+          )
+          Text(
+              "Type a stop or station name anywhere in the world — e.g. \"Connolly\", " +
+                  "\"Alexanderplatz\", \"Times Sq 42 St\".",
+              color = Color(0xFF9A9A9A), fontSize = 13.sp,
+          )
+          when {
+            searching -> Text("Searching…", color = Color(0xFFB0B0B0), fontSize = 15.sp)
+            results.isEmpty() && query.trim().length >= 2 ->
+                Text("No stops found. Try a different name.", color = Color(0xFFB0B0B0), fontSize = 15.sp)
+            else ->
+                Column(
+                    modifier = Modifier.fillMaxWidth().heightIn(max = 280.dp)
+                        .verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                  results.forEach { stop ->
+                    Surface(color = Color(0x18FFFFFF), shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.fillMaxWidth()
+                            .tvFocusableRow {
+                              Transit.saveStop(context, stop)
+                              stopId = stop.id; stopName = stop.name; editing = false
+                            }) {
+                      Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
+                        Text(stop.name, color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.SemiBold,
+                            maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        if (stop.region.isNotBlank())
+                            Text(stop.region, color = Color(0xFF9A9A9A), fontSize = 13.sp, maxLines = 1)
+                      }
+                    }
+                  }
+                }
+          }
+        } else {
+          Text(stopName.ifBlank { "Selected stop" }, color = Color(0xFF9A9A9A), fontSize = 14.sp)
+          if (departures.isEmpty()) {
+            Text(if (loading) "Loading…" else "No departures right now.",
+                color = Color(0xFFB0B0B0), fontSize = 16.sp)
+          } else {
+            departures.forEach { d ->
+              Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Surface(color = MaterialTheme.colorScheme.primary, shape = RoundedCornerShape(8.dp)) {
+                  Text(d.route, color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold,
+                      maxLines = 1, modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp))
+                }
+                Text("  ${d.destination}", color = Color.White, fontSize = 16.sp,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                Text(d.due, color = MaterialTheme.colorScheme.primary, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+              }
+            }
+          }
+        }
+        Surface(color = Color(0x22FFFFFF), shape = RoundedCornerShape(14.dp),
+            modifier = Modifier.fillMaxWidth().tvFocusable(RoundedCornerShape(14.dp), focusScale = 1f) { onDismiss() }) {
+          Text("Close", color = Color.White, fontSize = 16.sp, textAlign = TextAlign.Center,
+              modifier = Modifier.padding(vertical = 10.dp).fillMaxWidth())
+        }
+      }
+    }
+  }
+}
+
+@Composable
+private fun NoteTile(onClick: () -> Unit) {
+  val context = androidx.compose.ui.platform.LocalContext.current
+  val hasNote = remember { NotesConfig.loadText(context).isNotBlank() || NotesConfig.hasAudioNote(context) }
+  BuiltInTile(
+      label = if (hasNote) "Note •" else "Leave Note",
+      background = Color(0xFFD4A017),
+      glyph = ICON_NOTE,
+      onClick = onClick,
+  )
+}
+
+/** A pinned sticky-note card on the home screen, shown when a text and/or voice note
+ * exists. Tapping the text opens the editor; the audio note plays inline. */
+@Composable
+private fun HomeNoteCard(version: Int, onEdit: () -> Unit) {
+  val context = androidx.compose.ui.platform.LocalContext.current
+  val text = remember(version) { NotesConfig.loadText(context) }
+  val hasAudio = remember(version) { NotesConfig.hasAudioNote(context) }
+  if (text.isBlank() && !hasAudio) return
+  val audio = remember { AudioNote(context) }
+  DisposableEffect(Unit) { onDispose { audio.release() } }
+  var playing by remember { mutableStateOf(false) }
+  Surface(
+      color = Color(0xFFFFF3C4),
+      shape = RoundedCornerShape(14.dp),
+      modifier = Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 4.dp)
+          .tvFocusable(RoundedCornerShape(14.dp), focusScale = 1f) { onEdit() },
+  ) {
+    Row(
+        modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+      Text("📌", fontSize = 18.sp)
+      Spacer(Modifier.size(10.dp))
+      Text(
+          text.ifBlank { "Voice note" },
+          color = Color(0xFF3A2E00),
+          fontSize = 16.sp,
+          maxLines = 2,
+          overflow = TextOverflow.Ellipsis,
+          modifier = Modifier.weight(1f),
+      )
+      if (hasAudio) {
+        Surface(
+            color = Color(0xFFD4A017),
+            shape = androidx.compose.foundation.shape.CircleShape,
+            modifier = Modifier.size(40.dp).tvFocusable(androidx.compose.foundation.shape.CircleShape, focusScale = 1.05f) {
+              if (playing) { audio.stopPlaying(); playing = false }
+              else { playing = true; audio.play { playing = false } }
+            },
+        ) {
+          Box(contentAlignment = Alignment.Center) {
+            Text(if (playing) "⏸" else "▶", color = Color.White, fontSize = 16.sp)
+          }
+        }
+      }
+    }
+  }
+  Spacer(Modifier.size(8.dp))
+}
+
+/** Editor overlay for the fridge note: a typed message plus a single voice memo. */
+@Composable
+private fun NoteOverlay(onDismiss: () -> Unit) {
+  val context = androidx.compose.ui.platform.LocalContext.current
+  var text by remember { mutableStateOf(NotesConfig.loadText(context)) }
+  var hasAudio by remember { mutableStateOf(NotesConfig.hasAudioNote(context)) }
+  val audio = remember { AudioNote(context) }
+  var recording by remember { mutableStateOf(false) }
+  var playing by remember { mutableStateOf(false) }
+  var level by remember { mutableStateOf(0f) }
+  var heardSignal by remember { mutableStateOf(false) }
+  DisposableEffect(Unit) { onDispose { audio.release() } }
+
+  // While recording, poll the mic peak so the user can see they're being heard.
+  // The Portal only exposes the near-field handset mic, so a voice from across
+  // the room reads as near-silence — this makes that visible instead of mysterious.
+  LaunchedEffect(recording) {
+    if (recording) {
+      heardSignal = false
+      while (recording) {
+        val peak = (audio.peakLevel() / 12000f).coerceIn(0f, 1f)
+        level = peak
+        if (peak > 0.08f) heardSignal = true
+        delay(120)
+      }
+      level = 0f
+    }
+  }
+
+  // Runtime mic permission; start recording once granted.
+  val permLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
+      androidx.activity.result.contract.ActivityResultContracts.RequestPermission()) { granted ->
+    if (granted) { recording = audio.startRecording() }
+  }
+  fun toggleRecord() {
+    if (recording) {
+      audio.stopRecording(); recording = false; hasAudio = NotesConfig.hasAudioNote(context)
+    } else {
+      val granted = android.content.pm.PackageManager.PERMISSION_GRANTED ==
+          context.checkSelfPermission(android.Manifest.permission.RECORD_AUDIO)
+      if (granted) recording = audio.startRecording()
+      else permLauncher.launch(android.Manifest.permission.RECORD_AUDIO)
+    }
+  }
+
+  BackHandler { onDismiss() }
+  Box(
+      contentAlignment = Alignment.Center,
+      modifier = Modifier.fillMaxSize().background(Color(0xCC000000))
+          .tvFocusable(RoundedCornerShape(0.dp), focusScale = 1f) { onDismiss() },
+  ) {
+    Surface(color = MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(24.dp),
+        modifier = Modifier.widthIn(max = 560.dp).padding(24.dp)) {
+      Column(modifier = Modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        Text("Leave a note", color = Color.White, fontSize = 24.sp, fontWeight = FontWeight.Bold)
+        androidx.compose.material3.OutlinedTextField(
+            value = text,
+            onValueChange = { text = it },
+            label = { Text("Type a note") },
+            modifier = Modifier.fillMaxWidth(),
+            minLines = 2,
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+          Surface(
+              color = if (recording) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
+              shape = RoundedCornerShape(14.dp),
+              modifier = Modifier.tvFocusable(RoundedCornerShape(14.dp), focusScale = 1f) { toggleRecord() },
+          ) {
+            Text(if (recording) "■ Stop recording" else "● Record voice", color = Color.White,
+                fontSize = 16.sp, modifier = Modifier.padding(horizontal = 18.dp, vertical = 12.dp))
+          }
+          if (recording) {
+            // Live input meter — fills as the mic hears you. Stays empty = speak closer.
+            Box(
+                modifier = Modifier.weight(1f).height(12.dp)
+                    .background(Color(0x22FFFFFF), RoundedCornerShape(6.dp)),
+            ) {
+              Box(
+                  modifier = Modifier.fillMaxHeight().fillMaxWidth(level)
+                      .background(
+                          if (level > 0.08f) Color(0xFF34C759) else Color(0xFFFF9F0A),
+                          RoundedCornerShape(6.dp)),
+              )
+            }
+          }
+          if (hasAudio && !recording) {
+            Surface(color = Color(0x22FFFFFF), shape = RoundedCornerShape(14.dp),
+                modifier = Modifier.tvFocusable(RoundedCornerShape(14.dp), focusScale = 1f) {
+                  if (playing) { audio.stopPlaying(); playing = false }
+                  else { playing = true; audio.play { playing = false } }
+                }) {
+              Text(if (playing) "⏸ Stop" else "▶ Play", color = Color.White, fontSize = 16.sp,
+                  modifier = Modifier.padding(horizontal = 18.dp, vertical = 12.dp))
+            }
+            Surface(color = Color(0x22FFFFFF), shape = RoundedCornerShape(14.dp),
+                modifier = Modifier.tvFocusable(RoundedCornerShape(14.dp), focusScale = 1f) {
+                  NotesConfig.clearAudio(context); hasAudio = false
+                }) {
+              Text("🗑", fontSize = 16.sp, modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp))
+            }
+          }
+        }
+        if (recording && !heardSignal) {
+          Text(
+              "Speak close to the device — Portal only gives apps the near-field mic, " +
+                  "so a voice from across the room barely registers.",
+              color = Color(0xFFFF9F0A), fontSize = 13.sp,
+          )
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+          Surface(color = MaterialTheme.colorScheme.primary, shape = RoundedCornerShape(14.dp),
+              modifier = Modifier.weight(1f).tvFocusable(RoundedCornerShape(14.dp), focusScale = 1f) {
+                NotesConfig.saveText(context, text)
+                if (recording) { audio.stopRecording(); recording = false }
+                onDismiss()
+              }) {
+            Text("Save", color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.SemiBold,
+                textAlign = TextAlign.Center, modifier = Modifier.padding(vertical = 12.dp).fillMaxWidth())
+          }
+          Surface(color = Color(0x22FFFFFF), shape = RoundedCornerShape(14.dp),
+              modifier = Modifier.weight(1f).tvFocusable(RoundedCornerShape(14.dp), focusScale = 1f) {
+                NotesConfig.clearText(context); NotesConfig.clearAudio(context)
+                text = ""; hasAudio = false; onDismiss()
+              }) {
+            Text("Clear all", color = Color.White, fontSize = 17.sp,
+                textAlign = TextAlign.Center, modifier = Modifier.padding(vertical = 12.dp).fillMaxWidth())
+          }
+        }
+      }
+    }
+  }
+}
+
+@Composable
+private fun DailyTile(mode: String, onClick: () -> Unit) {
+  val label = when (DailyContent.modeOf(mode)) {
+    DailyContent.Mode.WORD -> "Word"
+    DailyContent.Mode.TRIVIA -> "Trivia"
+    else -> "Quote"
+  }
+  BuiltInTile(
+      label = "Daily $label",
+      background = Color(0xFF7B5BD6),
+      glyph = ICON_LIGHTBULB,
+      onClick = onClick,
+  )
+}
+
+/** Pop-out overlay for the daily quote / word / trivia. Trivia hides the answer
+ *  behind a Reveal button; tapping the scrim or Back dismisses it. */
+@Composable
+private fun DailyOverlay(mode: String, onDismiss: () -> Unit) {
+  var revealed by remember { mutableStateOf(false) }
+  BackHandler { onDismiss() }
+  Box(
+      contentAlignment = Alignment.Center,
+      modifier =
+          Modifier.fillMaxSize()
+              .background(Color(0xCC000000))
+              .tvFocusable(RoundedCornerShape(0.dp), focusScale = 1f) { onDismiss() },
+  ) {
+    Surface(
+        color = MaterialTheme.colorScheme.surface,
+        shape = RoundedCornerShape(24.dp),
+        modifier = Modifier.widthIn(max = 560.dp).padding(24.dp),
+    ) {
+      Column(
+          modifier = Modifier.padding(28.dp),
+          horizontalAlignment = Alignment.CenterHorizontally,
+          verticalArrangement = Arrangement.spacedBy(16.dp),
+      ) {
+        when (DailyContent.modeOf(mode)) {
+          DailyContent.Mode.WORD -> {
+            val w = remember { DailyContent.wordOfDay() }
+            Text("Word of the day", color = MaterialTheme.colorScheme.primary, fontSize = 15.sp)
+            Text(w.word, color = Color.White, fontSize = 30.sp, fontWeight = FontWeight.Bold)
+            Text("/${w.pronunciation}/", color = Color(0xFFB0B0B0), fontSize = 16.sp)
+            Text(w.definition, color = Color(0xFFDADADA), fontSize = 18.sp, textAlign = TextAlign.Center)
+          }
+          DailyContent.Mode.TRIVIA -> {
+            val t = remember { DailyContent.triviaOfDay() }
+            Text("Trivia of the day", color = MaterialTheme.colorScheme.primary, fontSize = 15.sp)
+            Text(t.question, color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.SemiBold, textAlign = TextAlign.Center)
+            if (revealed) {
+              Text(t.answer, color = MaterialTheme.colorScheme.primary, fontSize = 22.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
+            } else {
+              Surface(
+                  color = MaterialTheme.colorScheme.primary,
+                  shape = RoundedCornerShape(14.dp),
+                  modifier = Modifier.tvFocusable(RoundedCornerShape(14.dp), focusScale = 1f) { revealed = true },
+              ) {
+                Text("Reveal answer", color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.padding(horizontal = 24.dp, vertical = 12.dp))
+              }
+            }
+          }
+          else -> {
+            val q = remember { DailyContent.quoteOfDay() }
+            Text("Quote of the day", color = MaterialTheme.colorScheme.primary, fontSize = 15.sp)
+            Text("“${q.text}”", color = Color.White, fontSize = 24.sp, fontWeight = FontWeight.Medium, textAlign = TextAlign.Center)
+            Text("— ${q.author}", color = Color(0xFFB0B0B0), fontSize = 16.sp)
+          }
+        }
+        Spacer(Modifier.size(4.dp))
+        Surface(
+            color = Color(0x22FFFFFF),
+            shape = RoundedCornerShape(14.dp),
+            modifier = Modifier.tvFocusable(RoundedCornerShape(14.dp), focusScale = 1f) { onDismiss() },
+        ) {
+          Text("Close", color = Color.White, fontSize = 16.sp,
+              modifier = Modifier.padding(horizontal = 28.dp, vertical = 10.dp))
+        }
+      }
+    }
+  }
+}
+
+private enum class SpeedPhase { PING, DOWNLOAD, UPLOAD, DONE }
+
+private class SpeedResult {
+  var server by mutableStateOf("")
+  var pingMs by mutableStateOf(0.0)
+  var jitterMs by mutableStateOf(0.0)
+  var downMbps by mutableStateOf(0.0)
+  var upMbps by mutableStateOf(0.0)
+  fun reset() { server = ""; pingMs = 0.0; jitterMs = 0.0; downMbps = 0.0; upMbps = 0.0 }
+}
+
+/** Pop-out window: full ping / download / upload test against Cloudflare's open speed
+ *  endpoints, with the serving data-centre shown, live updates, an X to close, and a
+ *  Run-again button. Each leg runs independently so one failing doesn't sink the rest.
+ *  Rendered as a top-level scrim overlay (not a Compose Dialog) so it composites into
+ *  the launcher's own window — Portal's window manager doesn't always show separate
+ *  Dialog windows. Auto-closes 3s after the run completes. */
+@Composable
+private fun SpeedTestOverlay(onDismiss: () -> Unit) {
+  var phase by remember { mutableStateOf(SpeedPhase.PING) }
+  val r = remember { SpeedResult() }
+  var runId by remember { mutableStateOf(0) }
+
+  LaunchedEffect(runId) {
+    r.reset()
+    phase = SpeedPhase.PING
+    runSpeedTest(
+        result = r,
+        onPhase = { phase = it },
+    )
+    phase = SpeedPhase.DONE
+  }
+
+  // Auto-dismiss a short while after the test finishes, unless the user re-runs it.
+  LaunchedEffect(phase, runId) {
+    if (phase == SpeedPhase.DONE) {
+      delay(3_000)
+      onDismiss()
+    }
+  }
+
+  BackHandler { onDismiss() }
+  Box(
+      contentAlignment = Alignment.Center,
+      modifier =
+          Modifier.fillMaxSize()
+              .background(Color(0xCC000000))
+              .clickable(
+                  interactionSource = remember { MutableInteractionSource() },
+                  indication = null,
+              ) { onDismiss() },
+  ) {
+    Surface(
+        shape = RoundedCornerShape(28.dp),
+        color = Color(0xFF1C1C1E),
+        modifier =
+            Modifier.clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+            ) {},
+    ) {
+      Column(modifier = Modifier.width(380.dp).padding(24.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+          Column(modifier = Modifier.weight(1f)) {
+            Text("Speed Test", color = Color.White, fontSize = 22.sp)
+            Text(
+                if (r.server.isNotEmpty()) "via ${r.server}"
+                else if (phase == SpeedPhase.DONE) "Cloudflare" else "Finding server…",
+                color = Color(0xFF9A9A9A),
+                fontSize = 13.sp,
+                modifier = Modifier.padding(top = 2.dp),
+            )
+          }
+          Surface(
+              color = Color(0x22FFFFFF),
+              shape = androidx.compose.foundation.shape.CircleShape,
+              modifier =
+                  Modifier.size(40.dp).tvFocusable(androidx.compose.foundation.shape.CircleShape) {
+                    onDismiss()
+                  },
+          ) {
+            Box(contentAlignment = Alignment.Center) {
+              Canvas(Modifier.size(16.dp)) {
+                val w = size.minDimension
+                val s = w * 0.13f
+                drawLine(Color.White, Offset(w * 0.18f, w * 0.18f), Offset(w * 0.82f, w * 0.82f),
+                    strokeWidth = s, cap = StrokeCap.Round)
+                drawLine(Color.White, Offset(w * 0.82f, w * 0.18f), Offset(w * 0.18f, w * 0.82f),
+                    strokeWidth = s, cap = StrokeCap.Round)
+              }
+            }
+          }
+        }
+        Spacer(Modifier.size(22.dp))
+        Row(Modifier.fillMaxWidth()) {
+          SpeedMetric("Ping", r.pingMs, "ms", 0, active = phase == SpeedPhase.PING,
+              accent = Color(0xFFFFCA28), modifier = Modifier.weight(1f))
+          SpeedMetric("Jitter", r.jitterMs, "ms", 1, active = phase == SpeedPhase.PING,
+              accent = Color(0xFFFFCA28), modifier = Modifier.weight(1f))
+        }
+        Spacer(Modifier.size(20.dp))
+        SpeedMetric("↓  Download", r.downMbps, "Mbps", 1, active = phase == SpeedPhase.DOWNLOAD,
+            accent = Color(0xFF42A5F5), big = true)
+        Spacer(Modifier.size(16.dp))
+        SpeedMetric("↑  Upload", r.upMbps, "Mbps", 1, active = phase == SpeedPhase.UPLOAD,
+            accent = Color(0xFF66BB6A), big = true)
+        Spacer(Modifier.size(26.dp))
+        val busy = phase != SpeedPhase.DONE
+        val label =
+            when (phase) {
+              SpeedPhase.PING -> "Pinging…"
+              SpeedPhase.DOWNLOAD -> "Testing download…"
+              SpeedPhase.UPLOAD -> "Testing upload…"
+              SpeedPhase.DONE -> "Run again"
+            }
+        Surface(
+            color = if (busy) Color(0x22FFFFFF) else MaterialTheme.colorScheme.primary,
+            shape = RoundedCornerShape(14.dp),
+            modifier =
+                Modifier.fillMaxWidth().tvFocusable(RoundedCornerShape(14.dp)) {
+                  if (!busy) runId++
+                },
+        ) {
+          Text(label, color = Color.White, fontSize = 16.sp, textAlign = TextAlign.Center,
+              modifier = Modifier.fillMaxWidth().padding(vertical = 13.dp))
+        }
+      }
+    }
+  }
+}
+
+@Composable
+private fun SpeedMetric(
+    label: String,
+    value: Double,
+    unit: String,
+    decimals: Int,
+    active: Boolean,
+    accent: Color,
+    modifier: Modifier = Modifier,
+    big: Boolean = false,
+) {
+  val shown = if (value > 0.0) String.format("%.${decimals}f", value) else "—"
+  if (big) {
+    Row(modifier.fillMaxWidth(), verticalAlignment = Alignment.Bottom) {
+      Text(label, color = Color(0xFFDADADA), fontSize = 17.sp, modifier = Modifier.weight(1f))
+      Text(shown, color = if (active) accent else Color.White,
+          fontSize = 30.sp, fontWeight = FontWeight.Medium, lineHeight = 30.sp)
+      Spacer(Modifier.size(6.dp))
+      Text(unit, color = Color(0xFF9A9A9A), fontSize = 14.sp, modifier = Modifier.padding(bottom = 4.dp))
+    }
+  } else {
+    Column(modifier) {
+      Text(label.uppercase(), color = Color(0xFF8A8A8A), fontSize = 12.sp, letterSpacing = 0.5.sp)
+      Row(verticalAlignment = Alignment.Bottom, modifier = Modifier.padding(top = 4.dp)) {
+        Text(shown, color = if (active) accent else Color.White,
+            fontSize = 24.sp, fontWeight = FontWeight.Medium, lineHeight = 24.sp)
+        Spacer(Modifier.size(4.dp))
+        Text(unit, color = Color(0xFF9A9A9A), fontSize = 12.sp, modifier = Modifier.padding(bottom = 3.dp))
+      }
+    }
+  }
+}
+
+/** Cloudflare speed test: serving data-centre, latency + jitter, download, upload.
+ *  Each leg is wrapped independently — a failure leaves that metric blank but lets the
+ *  others complete. Emits live via the [result] snapshot-state holder; runs on IO. */
+private suspend fun runSpeedTest(result: SpeedResult, onPhase: (SpeedPhase) -> Unit) {
+  withContext(Dispatchers.IO) {
+    // ---- serving data-centre (cdn-cgi/trace: colo=IATA, loc=country) ----
+    runCatching {
+      val conn =
+          java.net.URL("https://speed.cloudflare.com/cdn-cgi/trace").openConnection()
+              as java.net.HttpURLConnection
+      conn.connectTimeout = 6_000
+      conn.readTimeout = 6_000
+      val text = conn.inputStream.bufferedReader().use { it.readText() }
+      conn.disconnect()
+      val kv = text.lineSequence().mapNotNull {
+        val i = it.indexOf('='); if (i > 0) it.substring(0, i) to it.substring(i + 1) else null
+      }.toMap()
+      result.server =
+          listOfNotNull("Cloudflare", kv["colo"], kv["loc"]).filter { it.isNotBlank() }
+              .joinToString(" · ")
+    }
+
+    // ---- ping: TTFB of a 0-byte download, keep-alive reused; drop the warm-up ----
+    onPhase(SpeedPhase.PING)
+    runCatching {
+      val samples = ArrayList<Double>()
+      repeat(6) { i ->
+        val t0 = System.nanoTime()
+        val conn =
+            java.net.URL("https://speed.cloudflare.com/__down?bytes=0").openConnection()
+                as java.net.HttpURLConnection
+        conn.connectTimeout = 5_000
+        conn.readTimeout = 5_000
+        conn.inputStream.use { it.read() }
+        val ms = (System.nanoTime() - t0) / 1_000_000.0
+        if (i > 0) samples.add(ms) // first request pays TLS setup
+      }
+      if (samples.isNotEmpty()) {
+        val avg = samples.average()
+        result.pingMs = avg
+        result.jitterMs = samples.map { kotlin.math.abs(it - avg) }.average()
+      }
+    }
+
+    // ---- download: Cloudflare caps __down at <100 MB (100 MB → 403), so pull 50 MB
+    //      segments back-to-back until the 10s budget is spent. This also keeps the
+    //      pipe full on fast links where a single segment finishes in well under 1s. ----
+    onPhase(SpeedPhase.DOWNLOAD)
+    runCatching {
+      val t0 = System.currentTimeMillis()
+      var bytes = 0L
+      var lastEmit = 0L
+      val buf = ByteArray(65_536)
+      while (System.currentTimeMillis() - t0 < 10_000) {
+        val conn =
+            java.net.URL("https://speed.cloudflare.com/__down?bytes=52428800").openConnection()
+                as java.net.HttpURLConnection
+        conn.connectTimeout = 8_000
+        conn.readTimeout = 20_000
+        try {
+          conn.inputStream.use { s ->
+            while (true) {
+              val n = s.read(buf)
+              if (n == -1) break
+              bytes += n
+              val now = System.currentTimeMillis()
+              val sec = (now - t0) / 1000.0
+              if (now - lastEmit > 200 && sec > 0) {
+                result.downMbps = bytes * 8.0 / 1_000_000.0 / sec
+                lastEmit = now
+              }
+              if (now - t0 > 10_000) break
+            }
+          }
+        } finally {
+          conn.disconnect()
+        }
+      }
+      val sec = (System.currentTimeMillis() - t0) / 1000.0
+      if (sec > 0) result.downMbps = bytes * 8.0 / 1_000_000.0 / sec
+    }
+
+    // ---- upload: stream random bytes for up to 10s; measured during the write so a
+    //      truncated-response close doesn't lose the reading ----
+    onPhase(SpeedPhase.UPLOAD)
+    runCatching {
+      val conn =
+          java.net.URL("https://speed.cloudflare.com/__up").openConnection()
+              as java.net.HttpURLConnection
+      conn.requestMethod = "POST"
+      conn.doOutput = true
+      conn.connectTimeout = 8_000
+      conn.readTimeout = 20_000
+      conn.setChunkedStreamingMode(0)
+      val chunk = ByteArray(65_536).also { java.util.Random().nextBytes(it) }
+      val t0 = System.currentTimeMillis()
+      var sent = 0L
+      var lastEmit = 0L
+      runCatching {
+        conn.outputStream.use { o ->
+          while (System.currentTimeMillis() - t0 < 10_000) {
+            o.write(chunk)
+            sent += chunk.size
+            val now = System.currentTimeMillis()
+            val sec = (now - t0) / 1000.0
+            if (now - lastEmit > 200 && sec > 0) {
+              result.upMbps = sent * 8.0 / 1_000_000.0 / sec
+              lastEmit = now
+            }
+          }
+          o.flush()
+        }
+        runCatching { conn.responseCode }
+      }
+      conn.disconnect()
+      val sec = (System.currentTimeMillis() - t0) / 1000.0
+      if (sec > 0 && sent > 0) result.upMbps = sent * 8.0 / 1_000_000.0 / sec
+    }
+  }
+}
+
+@Composable
+private fun NowPlayingTile(onClick: () -> Unit) {
+  val context = androidx.compose.ui.platform.LocalContext.current
+  val audioMgr = remember { context.getSystemService(Context.AUDIO_SERVICE) as AudioManager }
+  var playing by remember { mutableStateOf(audioMgr.isMusicActive) }
+  LaunchedEffect(Unit) {
+    while (true) { playing = audioMgr.isMusicActive; delay(1_500) }
+  }
+  BuiltInTile(
+      label = if (playing) "Now Playing" else "Media",
+      background = if (playing) Color(0xFF1B5E20) else Color(0xFF2B2B2B),
+      glyph = if (playing) ICON_PAUSE else ICON_PLAY,
+      onClick = onClick,
+  )
+}
+
+/** Full Now Playing panel: album art + track from the active media session, with
+ *  transport controls. If notification-listener access isn't granted, it can't read
+ *  the track — so it shows a one-tap button to enable it (still offers play/pause). */
+@Composable
+private fun NowPlayingOverlay(onDismiss: () -> Unit) {
+  val context = androidx.compose.ui.platform.LocalContext.current
+  val audioMgr = remember { context.getSystemService(Context.AUDIO_SERVICE) as AudioManager }
+  var listenerOn by remember { mutableStateOf(NowPlaying.listenerEnabled(context)) }
+  var track by remember { mutableStateOf<NowPlaying.Track?>(null) }
+  var playing by remember { mutableStateOf(audioMgr.isMusicActive) }
+
+  // Re-check the listener grant on resume (the user may have just enabled it) and poll
+  // the current track while open.
+  LaunchedEffect(Unit) {
+    while (true) {
+      listenerOn = NowPlaying.listenerEnabled(context)
+      track = if (listenerOn) withContext(Dispatchers.IO) { NowPlaying.current(context) } else null
+      playing = audioMgr.isMusicActive
+      delay(1_500)
+    }
+  }
+
+  fun mediaKey(code: Int) {
+    audioMgr.dispatchMediaKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, code))
+    audioMgr.dispatchMediaKeyEvent(KeyEvent(KeyEvent.ACTION_UP, code))
+  }
+
+  BackHandler { onDismiss() }
+  Box(
+      contentAlignment = Alignment.Center,
+      modifier = Modifier.fillMaxSize().background(Color(0xCC000000))
+          .tvFocusable(RoundedCornerShape(0.dp), focusScale = 1f) { onDismiss() },
+  ) {
+    Surface(color = MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(24.dp),
+        modifier = Modifier.widthIn(max = 560.dp).padding(24.dp)) {
+      Column(modifier = Modifier.padding(28.dp), horizontalAlignment = Alignment.CenterHorizontally,
+          verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        Text("Now Playing", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+
+        val art = track?.art
+        if (art != null) {
+          Image(bitmap = art.asImageBitmap(), contentDescription = null,
+              modifier = Modifier.size(180.dp).clip(RoundedCornerShape(16.dp)))
+        } else {
+          Box(modifier = Modifier.size(180.dp).clip(RoundedCornerShape(16.dp)).background(Color(0x22FFFFFF)),
+              contentAlignment = Alignment.Center) {
+            Text("♪", color = Color(0x66FFFFFF), fontSize = 72.sp)
+          }
+        }
+
+        when {
+          track != null -> {
+            Text(track!!.title, color = Color.White, fontSize = 19.sp, fontWeight = FontWeight.SemiBold,
+                maxLines = 1, overflow = TextOverflow.Ellipsis)
+            if (track!!.artist.isNotBlank())
+                Text(track!!.artist, color = Color(0xFFBFBFBF), fontSize = 15.sp, maxLines = 1)
+          }
+          !listenerOn -> {
+            Text("To show the track name and album art, give Immortal permission to read " +
+                "media notifications.", color = Color(0xFF9A9A9A), fontSize = 14.sp,
+                textAlign = TextAlign.Center)
+            Surface(color = MaterialTheme.colorScheme.primary, shape = RoundedCornerShape(12.dp),
+                modifier = Modifier.tvFocusable(RoundedCornerShape(12.dp), focusScale = 1f) {
+                  runCatching {
+                    context.startActivity(
+                        Intent("android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS")
+                            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                  }
+                }) {
+              Text("Enable now-playing access", color = Color.White, fontSize = 15.sp,
+                  fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(horizontal = 18.dp, vertical = 10.dp))
+            }
+          }
+          else -> Text(if (playing) "Playing" else "Nothing playing", color = Color(0xFF9A9A9A), fontSize = 15.sp)
+        }
+
+        // Transport controls (work via media keys regardless of listener access).
+        Row(horizontalArrangement = Arrangement.spacedBy(20.dp), verticalAlignment = Alignment.CenterVertically) {
+          TransportButton("⏮") { mediaKey(KeyEvent.KEYCODE_MEDIA_PREVIOUS) }
+          TransportButton(if (playing) "⏸" else "▶", big = true) {
+            mediaKey(KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE); playing = !playing
+          }
+          TransportButton("⏭") { mediaKey(KeyEvent.KEYCODE_MEDIA_NEXT) }
+        }
+
+        Surface(color = Color(0x22FFFFFF), shape = RoundedCornerShape(14.dp),
+            modifier = Modifier.fillMaxWidth().tvFocusable(RoundedCornerShape(14.dp), focusScale = 1f) { onDismiss() }) {
+          Text("Close", color = Color.White, fontSize = 16.sp, textAlign = TextAlign.Center,
+              modifier = Modifier.padding(vertical = 10.dp).fillMaxWidth())
+        }
+      }
+    }
+  }
+}
+
+@Composable
+private fun TransportButton(glyph: String, big: Boolean = false, onClick: () -> Unit) {
+  val sz = if (big) 64.dp else 52.dp
+  Surface(color = if (big) MaterialTheme.colorScheme.primary else Color(0x22FFFFFF),
+      shape = androidx.compose.foundation.shape.CircleShape,
+      modifier = Modifier.size(sz).tvFocusable(androidx.compose.foundation.shape.CircleShape) { onClick() }) {
+    Box(contentAlignment = Alignment.Center) {
+      Text(glyph, color = Color.White, fontSize = if (big) 26.sp else 20.sp)
+    }
+  }
+}
+
 // Material-style glyph paths (24x24 viewport), rendered crisply as vectors.
 private const val ICON_CALL =
     "M6.62 10.79c1.44 2.83 3.76 5.14 6.59 6.59l2.2-2.2c.27-.27.67-.36 1.02-.24 1.12.37 2.33.57 3.57.57.55 0 1 .45 1 1V20c0 .55-.45 1-1 1-9.39 0-17-7.61-17-17 0-.55.45-1 1-1h3.5c.55 0 1 .45 1 1 0 1.25.2 2.45.57 3.57.11.35.03.74-.25 1.02l-2.2 2.2z"
@@ -1620,6 +3336,12 @@ private const val ICON_IMAGE =
     "M21 19V5c0-1.1-.9-2-2-2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2zM8.5 13.5l2.5 3.01L14.5 12l4.5 6H5l3.5-4.5z"
 private const val ICON_CAMERA =
     "M9 2L7.17 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2h-3.17L15 2H9zm3 15c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5z"
+private const val ICON_SPEEDTEST =
+    "M20.38 8.57l-1.23 1.85a8 8 0 0 1-.22 7.58H5.07A8 8 0 0 1 15.58 6.85l1.85-1.23A10 10 0 0 0 3.35 19a2 2 0 0 0 1.72 1h13.85a2 2 0 0 0 1.74-1 10 10 0 0 0-.27-10.44zm-9.79 6.84a2 2 0 0 0 2.83 0l5.66-8.49-8.49 5.66a2 2 0 0 0 0 2.83z"
+private const val ICON_MOON =
+    "M12 3c-4.97 0-9 4.03-9 9s4.03 9 9 9 9-4.03 9-9c0-.46-.04-.92-.1-1.36-.98 1.37-2.58 2.26-4.4 2.26-2.98 0-5.4-2.42-5.4-5.4 0-1.81.89-3.42 2.26-4.4-.44-.06-.9-.1-1.36-.1z"
+private const val ICON_PLAY = "M5 3l14 9-14 9V3z"
+private const val ICON_PAUSE = "M6 19h4V5H6v14zm8-14v14h4V5h-4z"
 private const val ICON_WAVING_HAND =
     "M23 17c0 3.31-2.69 6-6 6v-1.5c2.48 0 4.5-2.02 4.5-4.5H23zM1 7c0-3.31 2.69-6 6-6v1.5C4.52 2.5 2.5 4.52 2.5 7H1zm7.01-1.5L7 7v3.5l1.01 1.5L10 13.5l-1 1.5v3.5l1.01 1.5 7 .01L18 18.5v-3.5l-1-1.5 1.99-1.5L18 10v-3.5l-1.01-1.5-7-.01zM13 7h2.5l1.5 1.5-1.5 1.5H13V7z"
 private const val ICON_HELP =
@@ -1635,6 +3357,23 @@ private const val ICON_TIME =
 // Simple home icon for the Portal home shortcut tile.
 private const val ICON_PORTAL =
     "M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z"
+// Bell icon for the Sounds (ambient chime) tile in Settings.
+private const val ICON_BELL =
+    "M12 22c1.1 0 2-.9 2-2h-4c0 1.1.9 2 2 2zm6-6v-5c0-3.07-1.63-5.64-4.5-6.32V4c0-.83-.67-1.5-1.5-1.5s-1.5.67-1.5 1.5v.68C7.64 5.36 6 7.92 6 11v5l-2 2v1h16v-1l-2-2z"
+// Hourglass icon for the Countdowns tile in Settings.
+private const val ICON_HOURGLASS =
+    "M6 2v6h.01L6 8.01 10 12l-4 4 .01.01H6V22h12v-5.99h-.01L18 16l-4-4 4-3.99-.01-.01H18V2H6zm10 14.5V20H8v-3.5l4-4 4 4zM12 11.5l-4-4V4h8v3.5l-4 4z"
+// Lightbulb icon for the Daily quote/word/trivia tile.
+private const val ICON_LIGHTBULB =
+    "M9 21c0 .55.45 1 1 1h4c.55 0 1-.45 1-1v-1H9v1zm3-19C8.14 2 5 5.14 5 9c0 2.38 1.19 4.47 3 5.74V17c0 .55.45 1 1 1h6c.55 0 1-.45 1-1v-2.26c1.81-1.27 3-3.36 3-5.74 0-3.86-3.14-7-7-7z"
+// Sticky-note icon for the Leave-a-note tile.
+private const val ICON_NOTE =
+    "M14 2H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V8l-6-6zm2 16H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z"
+// Bus icon for the Transit tile.
+private const val ICON_BUS =
+    "M4 16c0 .88.39 1.67 1 2.22V20c0 .55.45 1 1 1h1c.55 0 1-.45 1-1v-1h8v1c0 .55.45 1 1 1h1c.55 0 1-.45 1-1v-1.78c.61-.55 1-1.34 1-2.22V6c0-3.5-3.58-4-8-4s-8 .5-8 4v10zm3.5 1c-.83 0-1.5-.67-1.5-1.5S6.67 14 7.5 14s1.5.67 1.5 1.5S8.33 17 7.5 17zm9 0c-.83 0-1.5-.67-1.5-1.5s.67-1.5 1.5-1.5 1.5.67 1.5 1.5-.67 1.5-1.5 1.5zm1.5-6H6V6h12v5z"
+private const val ICON_HEADPHONES =
+    "M12 1c-4.97 0-9 4.03-9 9v7c0 1.66 1.34 3 3 3h3v-8H5v-2c0-3.87 3.13-7 7-7s7 3.13 7 7v2h-3v8h3c1.66 0 3-1.34 3-3v-7c0-4.97-4.03-9-9-9z"
 
 /** A non-app tile injected into a folder (e.g. the Screensaver settings entry). */
 private data class FolderExtra(val label: String, val glyph: String, val onClick: () -> Unit)
@@ -1741,6 +3480,22 @@ private fun FolderOverlay(
   val gridFocus = remember { FocusRequester() }
   LaunchedEffect(Unit) { runCatching { gridFocus.requestFocus() } }
 
+  // The folder widens (more columns) as it fills, so a packed folder spreads left/right
+  // instead of becoming a tall narrow strip. Column count scales with the item count;
+  // the panel width grows to match and is clamped to the screen (tiles shrink only if
+  // it would otherwise overflow). The grid scrolls vertically once very full.
+  val totalItems = extras.size + apps.size
+  val cols = when {
+    totalItems <= 6 -> 3
+    totalItems <= 12 -> 4
+    totalItems <= 20 -> 5
+    else -> 6
+  }
+  val tileScale = LocalTileDp.current / 88.dp
+  val desiredWidth = (420.dp + 126.dp * (cols - 3)) * tileScale
+  val screenWidth = androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp.dp
+  val screenHeight = androidx.compose.ui.platform.LocalConfiguration.current.screenHeightDp.dp
+
   Box(
       contentAlignment = Alignment.Center,
       modifier =
@@ -1780,9 +3535,10 @@ private fun FolderOverlay(
         color = Color(0xFF1C1C1E),
         shape = RoundedCornerShape(28.dp),
         modifier =
-            // The panel grows with the tile size (3 columns of LocalTileDp tiles
-            // must fit) — at 88dp this is the original 420dp.
-            Modifier.width(420.dp * (LocalTileDp.current / 88.dp))
+            // Width grows with the column count and tile size, clamped to 94% of the
+            // screen so it never overflows the panel off-screen.
+            Modifier.width(desiredWidth)
+                .widthIn(max = screenWidth * 0.94f)
                 .onGloballyPositioned { panel = it.boundsInWindow() }
                 .clickable(interactionSource = noRipple, indication = null) {},
     ) {
@@ -1809,10 +3565,11 @@ private fun FolderOverlay(
         }
         Spacer(Modifier.size(20.dp))
         LazyVerticalGrid(
-            columns = GridCells.Fixed(3),
+            columns = GridCells.Fixed(cols),
             horizontalArrangement = Arrangement.spacedBy(16.dp),
             verticalArrangement = Arrangement.spacedBy(20.dp),
-            modifier = Modifier.focusRequester(gridFocus).focusGroup(),
+            // Cap height so a very full folder scrolls instead of overflowing the screen.
+            modifier = Modifier.heightIn(max = screenHeight * 0.62f).focusRequester(gridFocus).focusGroup(),
         ) {
           extras.forEach { extra ->
             item(key = "extra:${extra.label}") {
@@ -2004,18 +3761,46 @@ private fun AppTile(
     modifier: Modifier = Modifier,
     dimmed: Boolean = false,
     onDelete: () -> Unit = {},
+    onHide: () -> Unit = {},
+    onAppInfo: () -> Unit = {},
     onClick: () -> Unit,
 ) {
+  var menuOpen by remember { mutableStateOf(false) }
   Column(
       horizontalAlignment = Alignment.CenterHorizontally,
       // In Manage mode the body tap is inert (drag to fold, ✕ to remove); the
-      // icon launches normally otherwise.
+      // icon launches normally otherwise. Long-press opens a quick-action menu.
       modifier =
-          modifier.padding(4.dp).tvFocusable(RoundedCornerShape(22.dp), enabled = !editMode) {
+          modifier.padding(4.dp).tvFocusable(
+              RoundedCornerShape(22.dp),
+              enabled = !editMode,
+              onLongClick = { menuOpen = true },
+          ) {
             onClick()
           },
   ) {
     Box {
+      androidx.compose.material3.DropdownMenu(
+          expanded = menuOpen,
+          onDismissRequest = { menuOpen = false },
+      ) {
+        androidx.compose.material3.DropdownMenuItem(
+            text = { Text("Open") },
+            onClick = { menuOpen = false; onClick() },
+        )
+        androidx.compose.material3.DropdownMenuItem(
+            text = { Text("App info") },
+            onClick = { menuOpen = false; onAppInfo() },
+        )
+        androidx.compose.material3.DropdownMenuItem(
+            text = { Text("Hide from home") },
+            onClick = { menuOpen = false; onHide() },
+        )
+        androidx.compose.material3.DropdownMenuItem(
+            text = { Text("Uninstall") },
+            onClick = { menuOpen = false; onDelete() },
+        )
+      }
       Image(
           bitmap = app.icon,
           contentDescription = app.label,
@@ -2025,6 +3810,23 @@ private fun AppTile(
                   .alpha(if (dimmed) 0.3f else 1f),
       )
       if (editMode) {
+        // Hide (blue, top-start): removes from grid but keeps installed.
+        Surface(
+            color = Color(0xFF1565C0),
+            shape = androidx.compose.foundation.shape.CircleShape,
+            modifier = Modifier.size(30.dp).align(Alignment.TopStart).clickable { onHide() },
+        ) {
+          Box(contentAlignment = Alignment.Center) {
+            Canvas(modifier = Modifier.size(16.dp)) {
+              val w = size.minDimension; val s = w * 0.12f
+              val stroke = Stroke(width = s, cap = StrokeCap.Round)
+              drawOval(Color.White, topLeft = Offset(w*0.04f, w*0.32f), size = Size(w*0.92f, w*0.36f), style = stroke)
+              drawCircle(Color.White, radius = w*0.12f, center = Offset(w*0.5f, w*0.5f), style = stroke)
+              drawLine(Color.White, Offset(w*0.08f, w*0.08f), Offset(w*0.92f, w*0.92f), strokeWidth = s, cap = StrokeCap.Round)
+            }
+          }
+        }
+        // Uninstall (red, top-end): opens system uninstall dialog.
         Surface(
             color = Color(0xFFE53935),
             shape = androidx.compose.foundation.shape.CircleShape,
@@ -2045,6 +3847,17 @@ private fun AppTile(
         overflow = TextOverflow.Ellipsis,
         textAlign = TextAlign.Center,
     )
+  }
+}
+
+/** Open the system "App info" screen for [pkg] (from the long-press menu). */
+private fun openAppInfo(context: Context, pkg: String) {
+  runCatching {
+    val intent =
+        Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
+            .setData(android.net.Uri.fromParts("package", pkg, null))
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    context.startActivity(intent)
   }
 }
 
@@ -2119,6 +3932,78 @@ private fun BackgroundImage(uriString: String, blur: Boolean) {
             Box(modifier = Modifier.fillMaxSize().background(Color(0x99000000)))
         }
     }
+}
+
+/** A built-in gradient wallpaper from [ImmortalSettings.GRADIENTS]. */
+@Composable
+private fun GradientBackground(key: String) {
+  val preset = ImmortalSettings.GRADIENTS.firstOrNull { it.first == key } ?: ImmortalSettings.GRADIENTS.first()
+  Box(
+      modifier =
+          Modifier.fillMaxSize()
+              .background(
+                  androidx.compose.ui.graphics.Brush.verticalGradient(
+                      listOf(Color(preset.second), Color(preset.third)))))
+}
+
+/** A sun-driven sky background: the gradient tracks the real time of day, derived
+ * from today's sunrise/sunset (keyless Open-Meteo). Dawn pinks, midday blue, dusk
+ * orange, night near-black — telling time ambiently on an always-on screen. */
+@Composable
+private fun SkyBackground() {
+  val context = androidx.compose.ui.platform.LocalContext.current
+  val sun by produceState<Weather.SunTimes?>(initialValue = null) {
+    value = withContext(Dispatchers.IO) { Weather.fetchSunTimes(context) }
+  }
+  // Recompute the gradient every few minutes so it drifts through the day.
+  var nowMin by remember { mutableStateOf(currentMinuteOfDay()) }
+  LaunchedEffect(Unit) {
+    while (true) { nowMin = currentMinuteOfDay(); delay(5L * 60 * 1000) }
+  }
+  val sr = sun?.let { minuteOfDay(it.sunriseMillis) } ?: 6 * 60
+  val ss = sun?.let { minuteOfDay(it.sunsetMillis) } ?: 20 * 60
+  val (top, bottom) = SkyColors.gradientFor(nowMin, sr, ss)
+  Box(
+      modifier =
+          Modifier.fillMaxSize()
+              .background(androidx.compose.ui.graphics.Brush.verticalGradient(listOf(top, bottom))))
+}
+
+/** A thin progress line at the very top of the screen showing how far through the day
+ *  we are (midnight → midnight). The fill is tinted with the current sky colour so it
+ *  matches the Sky background — pink at dawn, blue midday, orange at dusk, dim at night. */
+@Composable
+private fun DayProgressBar(modifier: Modifier = Modifier) {
+  val context = androidx.compose.ui.platform.LocalContext.current
+  val sun by produceState<Weather.SunTimes?>(initialValue = null) {
+    value = withContext(Dispatchers.IO) { Weather.fetchSunTimes(context) }
+  }
+  var nowMin by remember { mutableStateOf(currentMinuteOfDay()) }
+  LaunchedEffect(Unit) {
+    while (true) { nowMin = currentMinuteOfDay(); delay(60L * 1000) }
+  }
+  val sr = sun?.let { minuteOfDay(it.sunriseMillis) } ?: 6 * 60
+  val ss = sun?.let { minuteOfDay(it.sunsetMillis) } ?: 20 * 60
+  // Colour-aware: use the vivid (bottom) colour of the live sky gradient.
+  val fill = SkyColors.gradientFor(nowMin, sr, ss).second
+  val progress = (nowMin / 1440f).coerceIn(0f, 1f)
+  Box(
+      modifier = modifier.fillMaxWidth().height(4.dp).background(fill.copy(alpha = 0.18f)),
+  ) {
+    Box(
+        modifier = Modifier.fillMaxWidth(progress).fillMaxHeight().background(fill),
+    )
+  }
+}
+
+private fun currentMinuteOfDay(): Int {
+  val c = java.util.Calendar.getInstance()
+  return c.get(java.util.Calendar.HOUR_OF_DAY) * 60 + c.get(java.util.Calendar.MINUTE)
+}
+
+private fun minuteOfDay(epochMillis: Long): Int {
+  val c = java.util.Calendar.getInstance().apply { timeInMillis = epochMillis }
+  return c.get(java.util.Calendar.HOUR_OF_DAY) * 60 + c.get(java.util.Calendar.MINUTE)
 }
 
 @Composable

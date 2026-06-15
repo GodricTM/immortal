@@ -53,6 +53,11 @@ object WelcomeConfig {
 
       // Text-to-speech
       val enableTts: Boolean = false,
+
+      // Android TextToSpeech voice name (TextToSpeech.Voice.getName()); "" = engine default.
+      // The greeting speaks through Android TTS — Piper neural TTS was removed because its
+      // model download is unreliable on the Portal's connection. See project notes.
+      val ttsVoice: String = "",
   )
 
   fun clampDuration(ms: Int): Int = ms.coerceIn(1000, 10000)
@@ -82,6 +87,7 @@ object WelcomeConfig {
         showDate = p.getBoolean("show_date", true),
         greetingLetterSpacing = p.getFloat("greeting_letter_spacing", 0.08f),
         enableTts = p.getBoolean("enable_tts", false),
+        ttsVoice = p.getString("tts_voice", "") ?: "",
     )
   }
 
@@ -156,4 +162,9 @@ object WelcomeConfig {
   fun setEnableTts(context: Context, enable: Boolean) {
     prefs(context).edit().putBoolean("enable_tts", enable).apply()
   }
+
+  fun setTtsVoice(context: Context, name: String) {
+    prefs(context).edit().putString("tts_voice", name).apply()
+  }
+
 }

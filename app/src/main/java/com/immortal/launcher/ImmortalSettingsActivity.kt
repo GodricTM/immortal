@@ -245,6 +245,118 @@ private fun ImmortalSettingsScreen(
         }
       }
 
+      Spacer(Modifier.size(14.dp))
+
+      Card {
+        Column(modifier = Modifier.fillMaxWidth().padding(18.dp)) {
+          Text("Sort apps by", color = Color.White, fontSize = 17.sp)
+          Text(
+              "Manual keeps your drag order. Others reorder the grid automatically.",
+              color = Color(0xFF9A9A9A),
+              fontSize = 13.sp,
+              modifier = Modifier.padding(top = 2.dp, bottom = 12.dp),
+          )
+          Segmented(
+              options =
+                  listOf(
+                      "Manual" to ImmortalSettings.SORT_MANUAL,
+                      "A→Z" to ImmortalSettings.SORT_AZ,
+                      "Most used" to ImmortalSettings.SORT_USED,
+                      "Recent" to ImmortalSettings.SORT_RECENT,
+                  ),
+              selected = settings.sortMode,
+              onSelect = {
+                ImmortalSettings.setSortMode(context, it)
+                settings = settings.copy(sortMode = it)
+              },
+          )
+        }
+      }
+
+      Spacer(Modifier.size(14.dp))
+
+      Card {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(18.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+          Column(modifier = Modifier.weight(1f)) {
+            Text("Category tabs", color = Color.White, fontSize = 17.sp)
+            Text(
+                "Show a row of tabs (All + your folders) above the grid to filter apps.",
+                color = Color(0xFF9A9A9A),
+                fontSize = 13.sp,
+                modifier = Modifier.padding(top = 2.dp),
+            )
+          }
+          Segmented(
+              options = listOf("Off" to "off", "On" to "on"),
+              selected = if (settings.showTabs) "on" else "off",
+              onSelect = {
+                val on = it == "on"
+                ImmortalSettings.setShowTabs(context, on)
+                settings = settings.copy(showTabs = on)
+              },
+          )
+        }
+      }
+
+      Spacer(Modifier.size(14.dp))
+
+      Card {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(18.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+          Column(modifier = Modifier.weight(1f)) {
+            Text("Dashboard page", color = Color.White, fontSize = 17.sp)
+            Text(
+                "Add a second swipeable page with a big clock and your glanceable widgets.",
+                color = Color(0xFF9A9A9A),
+                fontSize = 13.sp,
+                modifier = Modifier.padding(top = 2.dp),
+            )
+          }
+          Segmented(
+              options = listOf("Off" to "off", "On" to "on"),
+              selected = if (settings.dashboardPage) "on" else "off",
+              onSelect = {
+                val on = it == "on"
+                ImmortalSettings.setDashboardPage(context, on)
+                settings = settings.copy(dashboardPage = on)
+              },
+          )
+        }
+      }
+
+      Spacer(Modifier.size(14.dp))
+
+      Card {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(18.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+          Column(modifier = Modifier.weight(1f)) {
+            Text("Next event in header", color = Color.White, fontSize = 17.sp)
+            Text(
+                "Show your next calendar event under the clock (needs calendar permission).",
+                color = Color(0xFF9A9A9A),
+                fontSize = 13.sp,
+                modifier = Modifier.padding(top = 2.dp),
+            )
+          }
+          Segmented(
+              options = listOf("Off" to "off", "On" to "on"),
+              selected = if (settings.showNextEvent) "on" else "off",
+              onSelect = {
+                val on = it == "on"
+                ImmortalSettings.setShowNextEvent(context, on)
+                settings = settings.copy(showNextEvent = on)
+              },
+          )
+        }
+      }
+
       Spacer(Modifier.size(26.dp))
 
       SectionLabel("Home widgets")
@@ -272,6 +384,130 @@ private fun ImmortalSettingsScreen(
               onSelect = {
                 ImmortalSettings.setStatsMode(context, it)
                 settings = settings.copy(statsMode = it)
+              },
+          )
+        }
+      }
+
+      Spacer(Modifier.size(14.dp))
+
+      Card {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(18.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+          Column(modifier = Modifier.weight(1f)) {
+            Text("Sunrise & sunset", color = Color.White, fontSize = 17.sp)
+            Text(
+                "Show today's sunrise and sunset under the header weather.",
+                color = Color(0xFF9A9A9A),
+                fontSize = 13.sp,
+                modifier = Modifier.padding(top = 2.dp),
+            )
+          }
+          Segmented(
+              options =
+                  listOf(
+                      "Off" to "off",
+                      "On" to "on",
+                  ),
+              selected = if (settings.showSunTimes) "on" else "off",
+              onSelect = {
+                val on = it == "on"
+                ImmortalSettings.setShowSunTimes(context, on)
+                settings = settings.copy(showSunTimes = on)
+              },
+          )
+        }
+      }
+
+      Spacer(Modifier.size(14.dp))
+
+      Card {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(18.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+          Column(modifier = Modifier.weight(1f)) {
+            Text("Name-day", color = Color.White, fontSize = 17.sp)
+            Text(
+                "Show today's Romanian name-day (onomastica) in the header.",
+                color = Color(0xFF9A9A9A),
+                fontSize = 13.sp,
+                modifier = Modifier.padding(top = 2.dp),
+            )
+          }
+          Segmented(
+              options =
+                  listOf(
+                      "Off" to "off",
+                      "On" to "on",
+                  ),
+              selected = if (settings.showNameDay) "on" else "off",
+              onSelect = {
+                val on = it == "on"
+                ImmortalSettings.setShowNameDay(context, on)
+                settings = settings.copy(showNameDay = on)
+              },
+          )
+        }
+      }
+
+      Spacer(Modifier.size(14.dp))
+
+      Card {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(18.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+          Column(modifier = Modifier.weight(1f)) {
+            Text("Orthodox feast-day", color = Color.White, fontSize = 17.sp)
+            Text(
+                "Show today's Orthodox feast (great feasts and Pascha) in the header.",
+                color = Color(0xFF9A9A9A),
+                fontSize = 13.sp,
+                modifier = Modifier.padding(top = 2.dp),
+            )
+          }
+          Segmented(
+              options =
+                  listOf(
+                      "Off" to "off",
+                      "On" to "on",
+                  ),
+              selected = if (settings.showFeastDay) "on" else "off",
+              onSelect = {
+                val on = it == "on"
+                ImmortalSettings.setShowFeastDay(context, on)
+                settings = settings.copy(showFeastDay = on)
+              },
+          )
+        }
+      }
+
+      Spacer(Modifier.size(14.dp))
+
+      Card {
+        Column(modifier = Modifier.fillMaxWidth().padding(18.dp)) {
+          Text("Daily tile", color = Color.White, fontSize = 17.sp)
+          Text(
+              "Show a home-screen tile with a fresh quote, word, or trivia question each day.",
+              color = Color(0xFF9A9A9A),
+              fontSize = 13.sp,
+              modifier = Modifier.padding(top = 2.dp, bottom = 12.dp),
+          )
+          Segmented(
+              options =
+                  listOf(
+                      "Off" to "off",
+                      "Quote" to "quote",
+                      "Word" to "word",
+                      "Trivia" to "trivia",
+                  ),
+              selected = settings.dailyTileMode,
+              onSelect = {
+                ImmortalSettings.setDailyTileMode(context, it)
+                settings = settings.copy(dailyTileMode = it)
               },
           )
         }
@@ -359,6 +595,8 @@ private fun ImmortalSettingsScreen(
               options =
                   listOf(
                       "Dark" to ImmortalSettings.BG_DARK,
+                      "Gradient" to ImmortalSettings.BG_GRADIENT,
+                      "Sky" to ImmortalSettings.BG_SKY,
                       "Image" to ImmortalSettings.BG_IMAGE,
                       "Blur" to ImmortalSettings.BG_BLUR,
                   ),
@@ -369,7 +607,81 @@ private fun ImmortalSettingsScreen(
               },
           )
         }
-        if (settings.backgroundType != ImmortalSettings.BG_DARK) {
+        if (settings.backgroundType == ImmortalSettings.BG_GRADIENT) {
+          Divider()
+          Column(modifier = Modifier.fillMaxWidth().padding(18.dp)) {
+            Text("Gradient", color = Color.White, fontSize = 17.sp,
+                modifier = Modifier.padding(bottom = 10.dp))
+            ImmortalSettings.GRADIENTS.chunked(4).forEach { rowItems ->
+              Row(modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
+                  horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                rowItems.forEach { g ->
+                  val selected = settings.backgroundGradient == g.first
+                  Surface(
+                      shape = RoundedCornerShape(12.dp),
+                      modifier =
+                          Modifier.size(64.dp)
+                              .then(
+                                  if (selected)
+                                      Modifier.border(2.dp, Color.White, RoundedCornerShape(12.dp))
+                                  else Modifier)
+                              .tvFocusable(RoundedCornerShape(12.dp), focusScale = 1.05f) {
+                                ImmortalSettings.setBackgroundGradient(context, g.first)
+                                settings = settings.copy(backgroundGradient = g.first)
+                              },
+                  ) {
+                    Box(
+                        modifier =
+                            Modifier.background(
+                                androidx.compose.ui.graphics.Brush.verticalGradient(
+                                    listOf(Color(g.second), Color(g.third)))))
+                  }
+                }
+              }
+            }
+          }
+        }
+        if (settings.backgroundType == ImmortalSettings.BG_SKY) {
+          Divider()
+          Text(
+              "The background tracks the real sun: dawn pinks, midday blue, dusk " +
+                  "orange, night dark — based on today's sunrise and sunset.",
+              color = Color(0xFF9A9A9A),
+              fontSize = 13.sp,
+              modifier = Modifier.padding(18.dp),
+          )
+          Divider()
+          Row(
+              modifier = Modifier.fillMaxWidth().padding(18.dp),
+              verticalAlignment = Alignment.CenterVertically,
+          ) {
+            Column(modifier = Modifier.weight(1f)) {
+              Text("Day progress bar", color = Color.White, fontSize = 17.sp)
+              Text(
+                  "A thin bar across the top showing how far through the day it is, " +
+                      "tinted to match the live sky.",
+                  color = Color(0xFF9A9A9A),
+                  fontSize = 13.sp,
+                  modifier = Modifier.padding(top = 2.dp),
+              )
+            }
+            Segmented(
+                options =
+                    listOf(
+                        "Off" to "off",
+                        "On" to "on",
+                    ),
+                selected = if (settings.showDayProgress) "on" else "off",
+                onSelect = {
+                  val on = it == "on"
+                  ImmortalSettings.setShowDayProgress(context, on)
+                  settings = settings.copy(showDayProgress = on)
+                },
+            )
+          }
+        }
+        if (settings.backgroundType == ImmortalSettings.BG_IMAGE ||
+            settings.backgroundType == ImmortalSettings.BG_BLUR) {
           Divider()
           Row(
               modifier = Modifier.fillMaxWidth().padding(18.dp),
@@ -401,6 +713,44 @@ private fun ImmortalSettingsScreen(
                   modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
               )
             }
+          }
+        }
+      }
+
+      Spacer(Modifier.size(26.dp))
+
+      Spacer(Modifier.size(26.dp))
+
+      SectionLabel("Hidden apps")
+      Card {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(18.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+          Column(modifier = Modifier.weight(1f)) {
+            Text("Restore hidden apps", color = Color.White, fontSize = 17.sp)
+            Text(
+                "Apps hidden via the edit (✎) mode are restored to the grid.",
+                color = Color(0xFF9A9A9A),
+                fontSize = 13.sp,
+                modifier = Modifier.padding(top = 2.dp),
+            )
+          }
+          var restored by remember { mutableStateOf(false) }
+          Surface(
+              color = if (restored) Color(0xFF2E7D32) else MaterialTheme.colorScheme.primary,
+              shape = RoundedCornerShape(10.dp),
+              modifier = Modifier.tvFocusable(RoundedCornerShape(10.dp)) {
+                UserLayout.unhideAllPackages(context)
+                restored = true
+              },
+          ) {
+            Text(
+                if (restored) "Restored" else "Restore all",
+                color = Color.White,
+                fontSize = 15.sp,
+                modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
+            )
           }
         }
       }
