@@ -60,17 +60,21 @@ class LampActivity : ComponentActivity() {
 
 @Composable
 private fun LampScreen(onBrightness: (Float) -> Unit) {
+  val context = androidx.compose.ui.platform.LocalContext.current
   var brightness by remember { mutableFloatStateOf(0.9f) }
   var warmth by remember { mutableFloatStateOf(0.6f) } // 0 = white, 1 = candle
   var showControls by remember { mutableStateOf(true) }
+  // Red night-light: a deep red panel preserves dark-adapted night vision.
+  var red by remember { mutableStateOf(false) }
 
   // Warm-white: pull the blue (and a touch of green) down as warmth rises.
-  val r = 255
   val g = (255 - warmth * 60).toInt().coerceIn(0, 255)
   val b = (255 - warmth * 170).toInt().coerceIn(0, 255)
-  val lampColor = Color(r, g, b)
+  val lampColor = if (red) Color(0xFFFF0000) else Color(255, g, b)
 
-  androidx.compose.runtime.LaunchedEffect(brightness) { onBrightness(brightness) }
+  androidx.compose.runtime.LaunchedEffect(brightness) {
+    onBrightness(brightness)
+  }
 
   Box(
       modifier = Modifier.fillMaxSize().background(lampColor)
@@ -85,8 +89,34 @@ private fun LampScreen(onBrightness: (Float) -> Unit) {
               modifier = Modifier.fillMaxWidth())
           Text("Brightness", color = Color.White, fontSize = 15.sp)
           Slider(value = brightness, onValueChange = { brightness = it }, valueRange = 0.05f..1f)
-          Text("Warmth", color = Color.White, fontSize = 15.sp)
-          Slider(value = warmth, onValueChange = { warmth = it }, valueRange = 0f..1f)
+          if (!red) {
+            Text("Warmth", color = Color.White, fontSize = 15.sp)
+            Slider(value = warmth, onValueChange = { warmth = it }, valueRange = 0f..1f)
+          }
+          // Night-light toggle: switch the whole panel to deep red for night use,
+          // which preserves dark-adapted vision. Brightness still applies.
+          Surface(
+              color = if (red) Color(0x55FF3B30) else Color(0x33FFFFFF),
+              shape = RoundedCornerShape(16.dp),
+              modifier = Modifier.fillMaxWidth().padding(top = 8.dp)
+                  .clickable { red = !red },
+          ) {
+            Text(if (red) "🔴  Night light · on" else "🔴  Night light",
+                color = Color.White, fontSize = 17.sp, textAlign = TextAlign.Center,
+                modifier = Modifier.fillMaxWidth().padding(vertical = 14.dp))
+          }
+          // Sleep button: genuinely turns the screen off via device-admin lockNow(),
+          // exactly like the home screen's moon sleep button (ScreenControl.sleep).
+          // The Portal has no keyguard, so a tap wakes it straight back to the lamp.
+          Surface(
+              color = Color(0x33FFFFFF), shape = RoundedCornerShape(16.dp),
+              modifier = Modifier.fillMaxWidth().padding(top = 8.dp)
+                  .clickable { ScreenControl.sleep(context) },
+          ) {
+            Text("🌙  Sleep", color = Color.White, fontSize = 17.sp,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.fillMaxWidth().padding(vertical = 14.dp))
+          }
           Text("Tap anywhere to hide these controls. Back to exit.",
               color = Color(0xCCFFFFFF), fontSize = 13.sp, textAlign = TextAlign.Center,
               modifier = Modifier.fillMaxWidth())
