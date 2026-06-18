@@ -280,6 +280,34 @@
           "author": "veereshai",
           "homepage": "https://github.com/veereshai/HippoMuncher",
           "submittedBy": "veereshai"
+        },
+        {
+          "name": "Portal Checkers",
+          "packageName": "com.portal.checkers",
+          "source": "url",
+          "apkUrl": "https://github.com/GodricTM/PortalCheckers/releases/latest/download/portal-checkers.apk",
+          "versionCode": 1,
+          "minSdk": 28,
+          "description": "Touch-friendly checkers built for Facebook Portal devices.",
+          "longDescription": "A landscape checkers game built for Facebook Portal devices, with large touch targets, local two-player mode, and play against the computer with Easy, Medium, and Hard difficulty.",
+          "iconUrl": "https://raw.githubusercontent.com/GodricTM/PortalCheckers/main/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png",
+          "author": "GodricTM",
+          "homepage": "https://github.com/GodricTM/PortalCheckers",
+          "submittedBy": "GodricTM"
+        },
+        {
+          "name": "Portal Overlays",
+          "packageName": "com.portal.overlays",
+          "source": "url",
+          "apkUrl": "https://github.com/GodricTM/PortalOverlays/releases/latest/download/portal-overlays.apk",
+          "versionCode": 1,
+          "minSdk": 28,
+          "description": "Floating Back, Home, Recents, widgets, and notifications for Portal.",
+          "longDescription": "A floating HUD for sideloaded Meta Portal devices: Back, Home, Recents, Control Center, screenshots, widgets, ntfy push banners, notification mirroring, status strip, and fullscreen Now Playing. No Google Play Services required.",
+          "iconUrl": "https://raw.githubusercontent.com/GodricTM/PortalOverlays/main/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png",
+          "author": "GodricTM",
+          "homepage": "https://github.com/GodricTM/PortalOverlays",
+          "submittedBy": "GodricTM"
         }
       ]
     }
