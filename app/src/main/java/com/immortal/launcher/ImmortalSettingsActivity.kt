@@ -8,9 +8,12 @@
 package com.immortal.launcher
 
 import android.app.Activity
+import android.content.Context
+import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.layout.Arrangement
@@ -27,6 +30,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -39,6 +43,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
@@ -48,7 +54,11 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.graphics.drawable.toBitmap
 import com.immortal.launcher.ui.theme.SampleAppTheme
+import java.util.Locale
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 /**
  * Immortal's own settings (weather unit, home-screen tile size), reached from the
@@ -244,6 +254,9 @@ private fun ImmortalSettingsScreen() {
         }
       }
 
+      Spacer(Modifier.size(26.dp))
+      BootAppsSection()
+
       Text(
           "Changes apply as soon as you go back to the home screen.",
           color = Color(0xFF7C7C7C),
@@ -307,4 +320,84 @@ private fun Segmented(
       }
     }
   }
+}
+
+private data class BootAppOption(val pkg: String, val label: String, val icon: ImageBitmap)
+
+/** Every launchable app except our own launcher, for the boot-launch picker. */
+private fun loadLaunchableApps(context: Context): List<BootAppOption> {
+  val pm = context.packageManager
+  val intent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
+  return pm.queryIntentActivities(intent, 0)
+      .filter { it.activityInfo.packageName != context.packageName }
+      .mapNotNull { ri ->
+        runCatching {
+              BootAppOption(
+                  pkg = ri.activityInfo.packageName,
+                  label = ri.loadLabel(pm).toString(),
+                  icon = ri.loadIcon(pm).toBitmap(96, 96).asImageBitmap())
+            }
+            .getOrNull()
+      }
+      .distinctBy { it.pkg }
+      .sortedBy { it.label.lowercase(Locale.getDefault()) }
+}
+
+/**
+ * Lets the user pick which installed apps Immortal relaunches after a reboot — the
+ * same per-device list provisioning seeds (so e.g. the Music Assistant / Sendspin
+ * player, which has no boot receiver, comes back on its own). Toggling writes the list
+ * straight to the file [BootLaunch] reads on boot.
+ */
+@Composable
+private fun BootAppsSection() {
+  val context = LocalContext.current
+  var selected by remember { mutableStateOf(BootLaunch.packages(context).toSet()) }
+  var apps by remember { mutableStateOf<List<BootAppOption>?>(null) }
+  LaunchedEffect(Unit) { apps = withContext(Dispatchers.IO) { loadLaunchableApps(context) } }
+
+  SectionLabel("Start on boot")
+  Card {
+    val list = apps
+    if (list == null) {
+      Text(
+          "Loading apps…",
+          color = Color(0xFF9A9A9A),
+          fontSize = 14.sp,
+          modifier = Modifier.padding(18.dp),
+      )
+    } else {
+      list.forEachIndexed { i, app ->
+        if (i > 0) Divider()
+        Row(
+            modifier =
+                Modifier.fillMaxWidth()
+                    .tvFocusableRow {
+                      selected =
+                          if (app.pkg in selected) selected - app.pkg else selected + app.pkg
+                      BootLaunch.setPackages(context, selected.toList())
+                    }
+                    .padding(horizontal = 18.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+          Image(bitmap = app.icon, contentDescription = null, modifier = Modifier.size(34.dp))
+          Text(
+              app.label,
+              color = Color.White,
+              fontSize = 16.sp,
+              modifier = Modifier.weight(1f).padding(start = 14.dp),
+          )
+          // Visual only — the row toggles it (so the remote's center button works).
+          Switch(checked = app.pkg in selected, onCheckedChange = null)
+        }
+      }
+    }
+  }
+  Text(
+      "These apps relaunch automatically after a reboot — handy for players like Music " +
+          "Assistant that don't restart themselves.",
+      color = Color(0xFF7C7C7C),
+      fontSize = 13.sp,
+      modifier = Modifier.padding(top = 10.dp, start = 4.dp, end = 4.dp),
+  )
 }

@@ -266,6 +266,21 @@ function Grant-Perms {
   A shell cmd notification allow_listener "$($cfg["PKG"])/com.immortal.launcher.MediaNotificationListenerService" | Out-Null
   Ok "Permissions granted"
 }
+function Configure-BootApps {
+  # Apps Immortal relaunches after a reboot (for ones with no boot receiver of their
+  # own, e.g. the Music Assistant / Sendspin player). Also editable in-app under
+  # Settings > Start on boot.
+  $dir = "/sdcard/Android/data/$($cfg["PKG"])/files"
+  A shell "mkdir -p '$dir'" | Out-Null
+  $apps = $cfg["BOOT_APPS"]
+  if ($apps) {
+    Step "Setting apps to relaunch on boot"
+    A shell "printf '%s\n' $apps > '$dir/boot_apps.txt'" | Out-Null
+    Ok "Boot-launch apps: $apps"
+  } else {
+    A shell "rm -f '$dir/boot_apps.txt'" | Out-Null
+  }
+}
 function Disable-Verifier {
   if ($cfg["DISABLE_VERIFIER"] -ne "true") { return }
   Step "Disabling Meta's install verifier (lets the client install other apps on-device)"
@@ -724,6 +739,7 @@ if ($Restore) {
   Step "Removing Immortal's screen-off device admin"
   A shell dpm remove-active-admin "$($cfg["PKG"])/.AdminReceiver" | Out-Null; Ok "Device admin removed"
   A shell cmd notification disallow_listener "$($cfg["PKG"])/com.immortal.launcher.MediaNotificationListenerService" | Out-Null
+  A shell "rm -f /sdcard/Android/data/$($cfg["PKG"])/files/boot_apps.txt" | Out-Null
   Restore-Alexa-Undo
   Step "Restoring stock launcher"
   A shell cmd package set-home-activity $cfg["STOCK_HOME"] | Out-Null; Ok "Home restored ($($cfg["STOCK_HOME"]))"
@@ -755,6 +771,7 @@ Snapshot-Stock
 Set-Launcher
 Set-Screensaver
 Enable-Fleet
+Configure-BootApps
 Maybe-Restore-Alexa
 A shell input keyevent KEYCODE_HOME | Out-Null
 Write-Host "`n[ok] Done. Your Portal is provisioned." -ForegroundColor Green

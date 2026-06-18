@@ -347,6 +347,21 @@ grant_perms() {
   ok "Permissions granted"
 }
 
+# Apps Immortal relaunches after a reboot (for ones with no boot receiver of their
+# own, e.g. the Music Assistant / Sendspin player). Writes the per-device list
+# Immortal reads on boot; also editable in-app under Settings > Start on boot.
+configure_boot_apps() {
+  local dir="/sdcard/Android/data/$PKG/files"
+  a shell "mkdir -p '$dir'" >/dev/null 2>&1
+  if [ -n "${BOOT_APPS:-}" ]; then
+    step "Setting apps to relaunch on boot"
+    a shell "printf '%s\n' $BOOT_APPS > '$dir/boot_apps.txt'" >/dev/null 2>&1
+    ok "Boot-launch apps: $BOOT_APPS"
+  else
+    a shell "rm -f '$dir/boot_apps.txt'" >/dev/null 2>&1
+  fi
+}
+
 disable_verifier() {
   [ "${DISABLE_VERIFIER:-true}" = true ] || return
   step "Disabling Meta's install verifier (lets the client install other apps on-device)"
@@ -771,6 +786,7 @@ do_provision() {
   set_launcher
   set_screensaver
   enable_fleet
+  configure_boot_apps
   maybe_restore_alexa
   a shell input keyevent KEYCODE_HOME >/dev/null 2>&1
   printf "\n%s✓ Done. Your Portal is provisioned.%s\n" "$G$B" "$N"
@@ -807,6 +823,7 @@ do_restore() {
   a shell dpm remove-active-admin "$PKG/.AdminReceiver" >/dev/null 2>&1 || true; ok "Device admin removed"
   a shell cmd notification disallow_listener \
     "$PKG/com.immortal.launcher.MediaNotificationListenerService" >/dev/null 2>&1 || true
+  a shell "rm -f /sdcard/Android/data/$PKG/files/boot_apps.txt" >/dev/null 2>&1 || true
   restore_alexa_undo
   step "Restoring stock launcher"
   a shell cmd package set-home-activity "$STOCK_HOME" >/dev/null 2>&1; ok "Home restored ($STOCK_HOME)"

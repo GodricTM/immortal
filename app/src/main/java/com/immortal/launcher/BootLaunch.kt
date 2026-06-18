@@ -35,6 +35,16 @@ object BootLaunch {
           }
           .getOrDefault(emptyList())
 
+  /** Persist the list (from the settings UI). Same file provisioning writes, so the
+   *  two stay in sync — one source of truth, shell- and app-writable. */
+  fun setPackages(context: Context, packages: List<String>) {
+    runCatching {
+      val f = File(context.getExternalFilesDir(null), FILE)
+      f.parentFile?.mkdirs()
+      f.writeText(packages.joinToString("\n"))
+    }
+  }
+
   /**
    * Launch each configured, installed app. Starting an activity from the background
    * needs an exemption on Android 10 (SYSTEM_ALERT_WINDOW, which provisioning grants);
