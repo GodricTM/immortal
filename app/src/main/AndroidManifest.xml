@@ -249,6 +249,18 @@
                 android:resource="@xml/install_confirm_accessibility" />
         </service>
 
+        <!-- Lets the launcher read the device's active media sessions (native
+             now-playing) for the screensaver card and header mini-player. Enabled by
+             appending to enabled_notification_listeners (WRITE_SECURE_SETTINGS). -->
+        <service
+            android:name=".MediaNotificationListenerService"
+            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.service.notification.NotificationListenerService" />
+            </intent-filter>
+        </service>
+
         <!-- Custom screensaver (Dream), set via secure setting screensaver_components. -->
         <service
             android:name=".PhotoDreamService"

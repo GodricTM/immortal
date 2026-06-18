@@ -46,6 +46,9 @@ object ImmortalSettings {
       val tileSize: String = SIZE_STANDARD,
       val weatherWidget: String = WIDGET_OFF,
       val clockFormat: String = CLOCK_AUTO,
+      // Mini-player in the home header (cover art + controls), shown only while
+      // something is actually playing. Defaults on — useful to everyone, unobtrusive.
+      val showMiniPlayer: Boolean = true,
   )
 
   private fun prefs(c: Context) = c.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
@@ -57,6 +60,7 @@ object ImmortalSettings {
         tileSize = p.getString("tile_size", SIZE_STANDARD) ?: SIZE_STANDARD,
         weatherWidget = p.getString("weather_widget", WIDGET_OFF) ?: WIDGET_OFF,
         clockFormat = p.getString("clock_format", CLOCK_AUTO) ?: CLOCK_AUTO,
+        showMiniPlayer = p.getBoolean("show_mini_player", true),
     )
   }
 
@@ -70,6 +74,9 @@ object ImmortalSettings {
 
   fun setClockFormat(c: Context, fmt: String) =
       prefs(c).edit().putString("clock_format", fmt).apply()
+
+  fun setShowMiniPlayer(c: Context, on: Boolean) =
+      prefs(c).edit().putBoolean("show_mini_player", on).apply()
 
   /**
    * Whether the clock should render in 24-hour form. AUTO follows the device's

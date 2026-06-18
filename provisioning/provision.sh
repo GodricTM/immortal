@@ -338,6 +338,12 @@ grant_perms() {
   # and overnight sleep features via lockNow(). Harmless if it can't be set.
   a shell dpm set-active-admin "$PKG/.AdminReceiver" >/dev/null 2>&1 \
     && ok "Screen-off (device admin) enabled" || true
+  # Lets Immortal read the device's active media sessions (native now-playing) for
+  # the screensaver card + header mini-player. `cmd notification allow_listener`
+  # writes the secure setting AND rebinds the listener reliably on A9/A10. The app
+  # also self-enables on launch (WRITE_SECURE_SETTINGS), so this is belt-and-braces.
+  a shell cmd notification allow_listener \
+    "$PKG/com.immortal.launcher.MediaNotificationListenerService" >/dev/null 2>&1 || true
   ok "Permissions granted"
 }
 
@@ -799,6 +805,8 @@ do_restore() {
   a shell pm enable "$PRESENCE_PKG" >/dev/null 2>&1; ok "Presence detector restored"
   step "Removing Immortal's screen-off device admin"
   a shell dpm remove-active-admin "$PKG/.AdminReceiver" >/dev/null 2>&1 || true; ok "Device admin removed"
+  a shell cmd notification disallow_listener \
+    "$PKG/com.immortal.launcher.MediaNotificationListenerService" >/dev/null 2>&1 || true
   restore_alexa_undo
   step "Restoring stock launcher"
   a shell cmd package set-home-activity "$STOCK_HOME" >/dev/null 2>&1; ok "Home restored ($STOCK_HOME)"

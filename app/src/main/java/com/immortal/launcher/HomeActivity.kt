@@ -85,6 +85,7 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.scale
 import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.vector.PathParser
 import androidx.compose.ui.input.pointer.pointerInput
@@ -753,6 +754,18 @@ private fun HeaderBar(onScreensaver: () -> Unit) {
   // resume so it shows up the moment the user finishes provisioning without
   // needing to relaunch the launcher.
   var heyPkg by remember { mutableStateOf(heyPackage(context)) }
+  // The header mini-player toggle is re-read on resume so flipping it in Immortal
+  // Settings shows/hides the player the moment the user returns home.
+  var showMiniPlayer by remember { mutableStateOf(ImmortalSettings.load(context).showMiniPlayer) }
+  // Live now-playing from the device's media session. The hub notifies off-main, so
+  // hop back to the main thread before touching Compose state.
+  var nowPlaying by remember { mutableStateOf(NowPlayingHub.current) }
+  val mainHandler = remember { android.os.Handler(android.os.Looper.getMainLooper()) }
+  DisposableEffect(Unit) {
+    val l = NowPlayingHub.Listener { s -> mainHandler.post { nowPlaying = s } }
+    NowPlayingHub.addListener(l) // replays current immediately
+    onDispose { NowPlayingHub.removeListener(l) }
+  }
   val lifecycleOwner = LocalLifecycleOwner.current
   DisposableEffect(lifecycleOwner) {
     val obs = LifecycleEventObserver { _, e ->
@@ -760,6 +773,7 @@ private fun HeaderBar(onScreensaver: () -> Unit) {
         weatherUnit = ImmortalSettings.load(context).weatherUnit
         use24Hour = ImmortalSettings.use24HourClock(context)
         heyPkg = heyPackage(context)
+        showMiniPlayer = ImmortalSettings.load(context).showMiniPlayer
       }
     }
     lifecycleOwner.lifecycle.addObserver(obs)
@@ -826,6 +840,12 @@ private fun HeaderBar(onScreensaver: () -> Unit) {
         Box(contentAlignment = Alignment.Center) { MicGlyph() }
       }
     }
+    // Mini-player — sits in the left action cluster, only while something's playing.
+    val np = nowPlaying
+    if (showMiniPlayer && np != null && np.active) {
+      Spacer(Modifier.size(14.dp))
+      MiniPlayer(np)
+    }
     Spacer(Modifier.weight(1f))
     Column(horizontalAlignment = Alignment.End) {
       Row(
@@ -848,6 +868,127 @@ private fun HeaderBar(onScreensaver: () -> Unit) {
           modifier = Modifier.padding(top = 4.dp),
       )
     }
+  }
+}
+
+/**
+ * Home-header mini-player: cover art + title/artist + play/pause + next, driven by
+ * whatever app holds the device's active media session (via [NowPlayingHub]).
+ */
+@Composable
+private fun MiniPlayer(state: NowPlayingState) {
+  val circle = androidx.compose.foundation.shape.CircleShape
+  Row(
+      verticalAlignment = Alignment.CenterVertically,
+      modifier =
+          Modifier.background(Color(0x22FFFFFF), RoundedCornerShape(26.dp))
+              .padding(start = 8.dp, top = 6.dp, end = 6.dp, bottom = 6.dp),
+  ) {
+    val bmp = state.artBitmap
+    if (bmp != null) {
+      Image(
+          bitmap = bmp.asImageBitmap(),
+          contentDescription = null,
+          modifier = Modifier.size(44.dp).clip(RoundedCornerShape(10.dp)),
+      )
+    } else {
+      Surface(
+          color = Color(0x33FFFFFF),
+          shape = RoundedCornerShape(10.dp),
+          modifier = Modifier.size(44.dp),
+      ) {
+        Box(contentAlignment = Alignment.Center) { NoteGlyph() }
+      }
+    }
+    Spacer(Modifier.size(12.dp))
+    Column(modifier = Modifier.widthIn(max = 220.dp)) {
+      Text(
+          state.title,
+          color = Color.White,
+          fontSize = 18.sp,
+          maxLines = 1,
+          overflow = TextOverflow.Ellipsis,
+      )
+      if (state.artist.isNotBlank()) {
+        Text(
+            state.artist,
+            color = Color(0xFFB6B6B6),
+            fontSize = 14.sp,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.padding(top = 1.dp),
+        )
+      }
+    }
+    Spacer(Modifier.size(10.dp))
+    Surface(
+        color = Color(0x33FFFFFF),
+        shape = circle,
+        modifier = Modifier.size(44.dp).tvFocusable(circle) { NowPlayingHub.playPause() },
+    ) {
+      Box(contentAlignment = Alignment.Center) {
+        PlayPauseGlyph(playing = state.state == PlaybackState.PLAYING)
+      }
+    }
+    Spacer(Modifier.size(8.dp))
+    Surface(
+        color = Color(0x33FFFFFF),
+        shape = circle,
+        modifier = Modifier.size(44.dp).tvFocusable(circle) { NowPlayingHub.next() },
+    ) {
+      Box(contentAlignment = Alignment.Center) { NextGlyph() }
+    }
+  }
+}
+
+@Composable
+private fun PlayPauseGlyph(playing: Boolean) {
+  Canvas(modifier = Modifier.size(18.dp)) {
+    val w = size.minDimension
+    if (playing) {
+      val barW = w * 0.20f
+      drawRect(Color.White, topLeft = Offset(w * 0.28f, w * 0.22f), size = Size(barW, w * 0.56f))
+      drawRect(Color.White, topLeft = Offset(w * 0.52f, w * 0.22f), size = Size(barW, w * 0.56f))
+    } else {
+      drawPath(
+          Path().apply {
+            moveTo(w * 0.30f, w * 0.20f)
+            lineTo(w * 0.30f, w * 0.80f)
+            lineTo(w * 0.80f, w * 0.50f)
+            close()
+          },
+          Color.White,
+      )
+    }
+  }
+}
+
+@Composable
+private fun NextGlyph() {
+  Canvas(modifier = Modifier.size(18.dp)) {
+    val w = size.minDimension
+    drawPath(
+        Path().apply {
+          moveTo(w * 0.24f, w * 0.24f)
+          lineTo(w * 0.24f, w * 0.76f)
+          lineTo(w * 0.60f, w * 0.50f)
+          close()
+        },
+        Color.White,
+    )
+    drawRect(Color.White, topLeft = Offset(w * 0.64f, w * 0.24f), size = Size(w * 0.12f, w * 0.52f))
+  }
+}
+
+/** Little music-note placeholder for tracks with no cover art. */
+@Composable
+private fun NoteGlyph() {
+  Canvas(modifier = Modifier.size(18.dp)) {
+    val w = size.minDimension
+    val s = w * 0.08f
+    drawLine(Color.White, Offset(w * 0.64f, w * 0.22f), Offset(w * 0.64f, w * 0.68f), strokeWidth = s)
+    drawCircle(Color.White, radius = w * 0.13f, center = Offset(w * 0.50f, w * 0.70f))
+    drawLine(Color.White, Offset(w * 0.64f, w * 0.22f), Offset(w * 0.80f, w * 0.30f), strokeWidth = s)
   }
 }
 

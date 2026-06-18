@@ -81,12 +81,13 @@ class PhotoFrameController(
   private lateinit var weatherDot: View
   private var weatherText: String = ""
 
-  // Now-playing card (driven by the ImmortalCast companion; hidden otherwise).
+  // Now-playing card (driven by the device's media session; hidden when nothing plays).
   private lateinit var nowPlayingCard: LinearLayout
   private lateinit var npArt: ImageView
   private lateinit var npTitle: TextView
   private lateinit var npArtist: TextView
   private var lastArtUrl: String = ""
+  private var lastArtBitmap: Bitmap? = null
   private var npListener: NowPlayingHub.Listener? = null
 
   private var settings = ScreensaverConfig.Settings()
@@ -313,13 +314,25 @@ class PhotoFrameController(
     if (s == null || !s.active || !settings.showNowPlaying) {
       nowPlayingCard.visibility = View.GONE
       lastArtUrl = ""
+      lastArtBitmap = null
       return
     }
     nowPlayingCard.visibility = View.VISIBLE
     npTitle.text = s.title
     npArtist.text = s.artist
     npArtist.visibility = if (s.artist.isBlank()) View.GONE else View.VISIBLE
-    if (s.artUrl != lastArtUrl) {
+    val bitmap = s.artBitmap
+    if (bitmap != null) {
+      // Native art is a ready, downscaled bitmap — set it directly (no decode/network).
+      if (bitmap !== lastArtBitmap) {
+        lastArtBitmap = bitmap
+        lastArtUrl = ""
+        npArt.visibility = View.VISIBLE
+        npArt.setImageBitmap(bitmap)
+      }
+    } else if (s.artUrl != lastArtUrl) {
+      // Fallback for URI-only metadata (no embedded bitmap): download/decode off-thread.
+      lastArtBitmap = null
       lastArtUrl = s.artUrl
       npArt.setImageBitmap(null)
       val haveArt = s.art != null || s.artUrl.isNotBlank()
@@ -328,8 +341,6 @@ class PhotoFrameController(
       val bytes = s.art
       if (haveArt)
           io.execute {
-            // ImmortalCast pre-fetches art (the launcher can't reach MA's cleartext
-            // art port), so prefer the broadcast bytes; fall back to a URL download.
             val bmp =
                 runCatching {
                       if (bytes != null) BitmapFactory.decodeByteArray(bytes, 0, bytes.size)

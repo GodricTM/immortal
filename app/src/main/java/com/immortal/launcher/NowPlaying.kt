@@ -8,16 +8,17 @@
 package com.immortal.launcher
 
 import android.content.Intent
+import android.graphics.Bitmap
 
 /**
- * Launcher (consumer) side of the now-playing broadcast contract that the
- * ImmortalCast companion (GPL, separate app) produces. ImmortalCast plays the
- * synced Snapcast audio and relays the active track's metadata here over an
- * intent-only boundary — the mirror image of how Immortal hands the companion its
- * [PresenceHub] state. If ImmortalCast isn't installed nothing is ever sent, so
- * the launcher stays exactly as it was.
+ * Now-playing is sourced from the device's own media session (see
+ * [MediaSessionReader]) — whatever app is playing (the Music Assistant companion,
+ * Spotify, podcasts, …) — and held by [NowPlayingHub]. That works for everyone with
+ * no companion required.
  *
- * These constants MUST match ImmortalCast's `NowPlaying.kt` verbatim.
+ * The broadcast constants below are the legacy ImmortalCast intent contract; they're
+ * no longer consumed by the launcher (the native source replaced them) but are kept
+ * for now since ImmortalCast's repo mirrors them.
  */
 object NowPlaying {
   const val ACTION_NOW_PLAYING = "com.immortal.launcher.NOW_PLAYING"
@@ -57,8 +58,15 @@ data class NowPlayingState(
     val group: String = "",
     val source: String = "",
     val atMs: Long = 0L,
-    /** Pre-fetched cover-art JPEG bytes (ImmortalCast does the LAN fetch for us). */
+    /** Pre-fetched cover-art JPEG bytes (legacy broadcast path; LAN fetch). */
     val art: ByteArray? = null,
+    /**
+     * Cover art straight from the device's media session, already downscaled. The
+     * native source fills this so the screensaver/header render with no decode hop;
+     * [art]/[artUrl] remain the fallbacks for URI-only metadata. In-process only —
+     * never put a [Bitmap] in a broadcast / make this Parcelable.
+     */
+    val artBitmap: Bitmap? = null,
 ) {
   /** True when there's an actual track to show (playing or paused, with a title). */
   val active: Boolean

@@ -113,6 +113,44 @@ object SettingsGuard {
           }
           .getOrDefault(false)
 
+  // The secure-setting key for notification listeners (the public constant is hidden).
+  private const val ENABLED_NOTIFICATION_LISTENERS = "enabled_notification_listeners"
+
+  /**
+   * Best-effort enable of [MediaNotificationListenerService] so the launcher may read
+   * the device's active media sessions (native now-playing). Append-don't-overwrite —
+   * the Portal ships Meta notification listeners in this list, so never clobber it.
+   *
+   * NOTE: on Android 10 `enabled_notification_listeners` is OS-protected and usually
+   * NOT writable even with `WRITE_SECURE_SETTINGS` (unlike accessibility services), so
+   * this is typically a silent no-op on the Portal. The reliable enabler is
+   * provisioning's `cmd notification allow_listener` (see provision.sh). Kept as a
+   * harmless best-effort for platforms where it does work. Idempotent.
+   */
+  fun enableMediaListener(context: Context) {
+    runCatching {
+      val resolver = context.contentResolver
+      val comp = ComponentName(context, MediaNotificationListenerService::class.java).flattenToString()
+      val current = Settings.Secure.getString(resolver, ENABLED_NOTIFICATION_LISTENERS) ?: ""
+      val parts = current.split(':').filter { it.isNotBlank() }
+      if (comp !in parts) {
+        Settings.Secure.putString(
+            resolver, ENABLED_NOTIFICATION_LISTENERS, (parts + comp).joinToString(":"))
+      }
+    }
+  }
+
+  /** Whether [MediaNotificationListenerService] is currently an enabled listener. */
+  fun isMediaListenerEnabled(context: Context): Boolean =
+      runCatching {
+            val comp =
+                ComponentName(context, MediaNotificationListenerService::class.java).flattenToString()
+            (Settings.Secure.getString(context.contentResolver, ENABLED_NOTIFICATION_LISTENERS) ?: "")
+                .split(':')
+                .any { it.equals(comp, ignoreCase = true) }
+          }
+          .getOrDefault(false)
+
   /** True if we hold WRITE_SECURE_SETTINGS (so self-healing is active). */
   fun canWriteSecureSettings(context: Context): Boolean =
       context.checkSelfPermission(android.Manifest.permission.WRITE_SECURE_SETTINGS) ==

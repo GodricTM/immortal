@@ -185,6 +185,30 @@ private fun ImmortalSettingsScreen() {
               },
           )
         }
+        Divider()
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(18.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+          Column(modifier = Modifier.weight(1f)) {
+            Text("Now-playing mini-player", color = Color.White, fontSize = 17.sp)
+            Text(
+                "Show the current track, cover art and controls in the header while music is playing.",
+                color = Color(0xFF9A9A9A),
+                fontSize = 13.sp,
+                modifier = Modifier.padding(top = 2.dp),
+            )
+          }
+          Segmented(
+              options = listOf("Off" to "off", "On" to "on"),
+              selected = if (settings.showMiniPlayer) "on" else "off",
+              onSelect = {
+                val on = it == "on"
+                ImmortalSettings.setShowMiniPlayer(context, on)
+                settings = settings.copy(showMiniPlayer = on)
+              },
+          )
+        }
       }
 
       Spacer(Modifier.size(26.dp))

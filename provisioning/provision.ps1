@@ -261,6 +261,9 @@ function Grant-Perms {
   # Device admin (force-lock only): lets Immortal turn the screen off for its idle
   # and overnight sleep features via lockNow(). Harmless if it can't be set.
   A shell dpm set-active-admin "$($cfg["PKG"])/.AdminReceiver" | Out-Null
+  # Lets Immortal read the device's active media sessions (native now-playing) for
+  # the screensaver card + header mini-player. Also self-enabled on app launch.
+  A shell cmd notification allow_listener "$($cfg["PKG"])/com.immortal.launcher.MediaNotificationListenerService" | Out-Null
   Ok "Permissions granted"
 }
 function Disable-Verifier {
@@ -720,6 +723,7 @@ if ($Restore) {
   Ok "Presence detector restored"
   Step "Removing Immortal's screen-off device admin"
   A shell dpm remove-active-admin "$($cfg["PKG"])/.AdminReceiver" | Out-Null; Ok "Device admin removed"
+  A shell cmd notification disallow_listener "$($cfg["PKG"])/com.immortal.launcher.MediaNotificationListenerService" | Out-Null
   Restore-Alexa-Undo
   Step "Restoring stock launcher"
   A shell cmd package set-home-activity $cfg["STOCK_HOME"] | Out-Null; Ok "Home restored ($($cfg["STOCK_HOME"]))"
