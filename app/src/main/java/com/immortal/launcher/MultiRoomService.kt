@@ -125,17 +125,21 @@ class MultiRoomService : Service() {
     onState(eff)
   }
 
-  /** Snapcast wins whenever its stream carries a track (MA library/radio via control.py); MA's
-   *  API fills in otherwise — notably an AirPlay receiver bridged to the group. The MA fill-in
-   *  is gated on OUR group's Snapcast stream actually flowing audio, so AirPlay to a subset of
-   *  groups never lights up the Portals that aren't rendering it. */
+  /**
+   * Snapcast metadata wins whenever its stream carries a track (MA library/radio via control.py);
+   * the MA poll fills in otherwise — notably an AirPlay receiver bridged to the group.
+   *
+   * The MA fill-in is inherently device-aware: [MaControl.nowPlaying] reports only THIS Portal's
+   * own player (resolved by our snapclient identity) and only when MA marks that player playing,
+   * so a Portal that isn't playing shows nothing. We deliberately do NOT gate on the Snapcast
+   * stream's status here — that went stale when AirPlay rotated to a new stream id, wrongly
+   * blanking a card that was in fact playing.
+   */
   private fun effective(): NowPlayingState {
     fun NowPlayingState.hasTrack() =
         title.isNotBlank() && (state == PlaybackState.PLAYING || state == PlaybackState.PAUSED)
     snapState?.let { if (it.hasTrack()) return it }
-    if (client?.ourStreamActive == true) {
-      maState?.let { if (it.hasTrack()) return it }
-    }
+    maState?.let { if (it.hasTrack()) return it }
     return NowPlayingState(PlaybackState.IDLE)
   }
 

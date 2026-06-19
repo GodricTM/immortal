@@ -41,15 +41,6 @@ class SnapcastControlClient(
   @Volatile private var socket: Socket? = null
   // streamId -> its "properties" object (metadata + playbackStatus).
   private val streams = HashMap<String, JSONObject>()
-  // streamId -> the stream's top-level "status" (idle/playing). Unlike props.playbackStatus
-  // (absent on the bare streams MA uses for AirPlay), this reflects whether audio is actually
-  // flowing — so we can tell if OUR group is really playing, not just any group.
-  private val streamStatus = HashMap<String, String>()
-  // True iff THIS Portal's group stream is currently flowing audio. Device-aware: lets the
-  // MA metadata fill-in light up only the Portals actually rendering the stream.
-  @Volatile
-  var ourStreamActive = false
-    private set
   // The stream THIS Portal's snapclient is consuming — resolved from the server
   // topology by matching our LAN IP to a group's client. We only ever surface this
   // stream, so a Portal whose group is idle never latches onto another group's audio.
@@ -80,7 +71,6 @@ class SnapcastControlClient(
       runCatching { connectAndRead() }
           .onFailure { Log.w(TAG, "control connection ended: ${it.message}") }
       streams.clear()
-      streamStatus.clear()
       if (running) {
         onConnected(false) // tell the UI we dropped (shows "Connecting…")
         onState(NowPlayingState(PlaybackState.IDLE)) // clear the card while disconnected
@@ -115,15 +105,11 @@ class SnapcastControlClient(
     // Full status response: rebuild the stream map and re-resolve our group's stream.
     msg.optJSONObject("result")?.optJSONObject("server")?.let { server ->
       streams.clear()
-      streamStatus.clear()
       val arr = server.optJSONArray("streams") ?: JSONArray()
       for (i in 0 until arr.length()) {
         val st = arr.getJSONObject(i)
         val id = st.optString("id")
-        if (id.isNotBlank()) {
-          streams[id] = st.optJSONObject("properties") ?: JSONObject()
-          streamStatus[id] = st.optString("status")
-        }
+        if (id.isNotBlank()) streams[id] = st.optJSONObject("properties") ?: JSONObject()
       }
       ourStreamId = resolveOurStream(server)
       Log.i(TAG, "our group stream = ${ourStreamId ?: "(this Portal isn't in a group)"} (ip=${localIp()})")
@@ -146,7 +132,6 @@ class SnapcastControlClient(
         val id = stream.optString("id")
         if (id.isNotBlank()) {
           streams[id] = stream.optJSONObject("properties") ?: JSONObject()
-          streamStatus[id] = stream.optString("status")
           emit()
         }
       }
@@ -191,7 +176,6 @@ class SnapcastControlClient(
 
   /** Emit the track for OUR group's stream only (playing/paused), else clear the card. */
   private fun emit() {
-    ourStreamActive = ourStreamId?.let { streamStatus[it] == "playing" } ?: false
     val props = ourStreamId?.let { streams[it] }
     val status = props?.optString("playbackStatus")
     if (props == null || (status != "playing" && status != "paused")) {
