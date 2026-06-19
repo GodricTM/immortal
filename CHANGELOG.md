@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.40 (2026-06-18)
+
+The biggest release yet: multi-room audio, now-playing on every Portal, and a thorough provisioning overhaul.
+
+- **Multi-room audio.** Group your Portals as synced speakers with [Snapcast](https://github.com/badaix/snapcast) and drive them from [Music Assistant](https://music-assistant.io/). Immortal runs an in-launcher relay so the track that's playing — title, artist and cover art — and the transport controls (play/pause/skip) appear on the now-playing card of **every** Portal in the group, not just the one you started playback from. It's group-aware: a Portal only shows what its own group is actually playing. **AirPlay** cast into a group works too — Immortal reads that metadata from Music Assistant, since AirPlay streams don't carry it over Snapcast.
+- **Now-playing mini-player.** The home header gains a compact now-playing player — cover art plus play/pause — whenever something is playing, sourced from the device's own media session. The screensaver can show the same. Both default on and stay out of the way when nothing's playing.
+- **"Start on boot" apps.** A new Settings page to choose which apps relaunch after a reboot — handy for the Music Assistant / Snapcast player so a room comes back on its own after a power blip.
+- **Provisioning: apps now install through the system installer — no daemon.** The old silent-install helper didn't survive a reboot, which is why installs sometimes "paused" until you re-ran setup. It's gone: the Gen-1 installer-dialog fix it worked around persists across reboots on its own, so the App Store, sideloading and self-update all go through the normal Android installer and just keep working.
+- **Provisioning: fewer decisions made for you.** Setup now *asks* whether to block OS updates (default yes) instead of doing it silently. The status bar is hidden by default but you can show it from Settings. The always-on fleet agent is opt-in (`--fleet`). Forced dark mode is gone — it was a Gen-1 install workaround and caused side effects elsewhere.
+- **Cleaner uninstall + honest restore.** Immortal can deactivate its own screen-off device admin from Settings, so it uninstalls cleanly. `--restore` no longer claims to have removed the admin when Android won't let it from a script — it tells you how to finish on-device.
+- **Android 10 fixes.** The "Restore Amazon Alexa" step no longer appears on Android 10 (it only works on the Gen-1), and no display settings are forced on A10.
+- **Release safety.** A new CI check parses `provision.ps1` (and `provision.sh`) on every change, so a Windows-script typo can't slip into a release.
+
 ## 1.39 (2026-06-14)
 
 One fix from a user bug report.
