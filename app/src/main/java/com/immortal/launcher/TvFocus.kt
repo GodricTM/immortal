@@ -7,6 +7,7 @@
 
 package com.immortal.launcher
 
+import android.view.SoundEffectConstants
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -27,6 +28,7 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.dp
 
 /**
@@ -51,6 +53,11 @@ fun Modifier.tvFocusable(
   val source = remember { MutableInteractionSource() }
   val focused by source.collectIsFocusedAsState()
   val scale by animateFloatAsState(if (focused) focusScale else 1f, label = "tvFocusScale")
+  val view = LocalView.current
+  val clickWithSound = {
+    view.playSoundEffect(SoundEffectConstants.CLICK)
+    onClick()
+  }
   val base =
       this.scale(scale)
           .border(
@@ -61,9 +68,12 @@ fun Modifier.tvFocusable(
   // caller); only the "hey" button opts into combinedClickable for its picker.
   return if (onLongClick != null) {
     base.combinedClickable(
-        interactionSource = source, indication = null, onClick = onClick, onLongClick = onLongClick)
+        interactionSource = source,
+        indication = null,
+        onClick = clickWithSound,
+        onLongClick = onLongClick)
   } else {
-    base.clickable(interactionSource = source, indication = null, onClick = onClick)
+    base.clickable(interactionSource = source, indication = null, onClick = clickWithSound)
   }
 }
 
@@ -78,8 +88,12 @@ fun Modifier.tvFocusableRow(
 ): Modifier {
   val source = remember { MutableInteractionSource() }
   val focused by source.collectIsFocusedAsState()
+  val view = LocalView.current
   return this.background(if (focused) focusFill else Color.Transparent)
-      .clickable(interactionSource = source, indication = null, onClick = onClick)
+      .clickable(interactionSource = source, indication = null) {
+        view.playSoundEffect(SoundEffectConstants.CLICK)
+        onClick()
+      }
 }
 
 /**
