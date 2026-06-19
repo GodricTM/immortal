@@ -63,9 +63,12 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.grid.itemsIndexed
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -79,6 +82,7 @@ import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
+import androidx.compose.runtime.key
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -510,6 +514,12 @@ private fun LauncherScreen(
   var showConverter by remember { mutableStateOf(false) }
   var showWhatChanged by remember { mutableStateOf(false) }
   var showNowPlaying by remember { mutableStateOf(false) }
+  // Which tool category folder is open (null = none); tools live in these folders now.
+  var openToolCat by remember { mutableStateOf<String?>(null) }
+  // Tool -> category overrides (user moved a tool between folders), + folder edit mode.
+  val toolAssign = remember { mutableStateMapOf<String, String>() }
+  LaunchedEffect(Unit) { toolAssign.putAll(UserLayout.loadToolCategories(context)) }
+  var toolEdit by remember { mutableStateOf(false) }
   // Bumped whenever a note changes so the home sticky card re-reads it.
   var noteVersion by remember { mutableStateOf(0) }
   // Bumped on every resume so home widgets that read SharedPrefs/files directly
@@ -830,25 +840,12 @@ private fun LauncherScreen(
             // only regular apps get a delete badge and become draggable.
             item { PortalHomeTile(onExitHome) }
             item { PortalHomeShortcutTile(onExitHome) }
-            item { CameraTile(onOpenCamera) }
             item { StoreTile(onOpenStore) }
-            item { SpeedTestTile(onClick = { showSpeedTest = true }) }
-            item { NowPlayingTile(onClick = { showNowPlaying = true }) }
-            item { NoteTile(onClick = { showNote = true }) }
-            item { TransitTile(onClick = { showTransit = true }) }
-            item { IssTile(onClick = { showIss = true }) }
-            item { AuroraTile(onClick = { showAurora = true }) }
-            item { StopwatchTile(onClick = { showStopwatch = true }) }
-            item { ConverterTile(onClick = { showConverter = true }) }
-            item { LampTile() }
-            item { BedtimeTile() }
-            item { SunriseTile() }
-            item { RequestAppTile() }
-            item { PingTile() }
-            item { WhatChangedTile(onClick = { showWhatChanged = true }) }
-            item { MyNoiseTile() }
-            if (DailyContent.modeOf(dailyTileMode) != DailyContent.Mode.OFF) {
-              item { DailyTile(mode = dailyTileMode, onClick = { showDaily = true }) }
+            // The built-in tools are grouped into a few category folders so the home
+            // grid stays uncluttered; tapping one opens a ToolCategoryOverlay of its
+            // tiles (the live tiles themselves, so Aurora/ISS still light up inside).
+            items(TOOL_CATEGORIES, key = { "toolcat:${it.id}" }) { cat ->
+              ToolFolderTile(label = cat.id, glyph = cat.glyph) { openToolCat = cat.id }
             }
             // Folders + loose installed apps belong to the "All" view only; the
             // "Tools" tab stops at the built-in tiles above (+ Updates below).
@@ -1134,6 +1131,73 @@ private fun LauncherScreen(
     // back button or tapping outside.
     if (openFolder != null) {
       FolderBackButton(onClick = { openFolder = null })
+    }
+
+    // A tool category folder is open: show its tiles in an overlay grid. In normal mode
+    // the live tiles render (so Aurora/ISS still update); in edit mode each tool shows a
+    // "move to another folder" chip and an Add button pulls tools in from other folders.
+    openToolCat?.let { cat ->
+      // Render the real, live tile for a tool id; tapping closes the folder then acts.
+      val renderLiveTool: @Composable (String) -> Unit = { id ->
+        when (id) {
+          TOOL_ISS -> IssTile(onClick = { openToolCat = null; showIss = true })
+          TOOL_AURORA -> AuroraTile(onClick = { openToolCat = null; showAurora = true })
+          TOOL_TRANSIT -> TransitTile(onClick = { openToolCat = null; showTransit = true })
+          TOOL_STOPWATCH -> StopwatchTile(onClick = { openToolCat = null; showStopwatch = true })
+          TOOL_CONVERTER -> ConverterTile(onClick = { openToolCat = null; showConverter = true })
+          TOOL_SPEEDTEST -> SpeedTestTile(onClick = { openToolCat = null; showSpeedTest = true })
+          TOOL_LAMP -> LampTile()
+          TOOL_MYNOISE -> MyNoiseTile()
+          TOOL_BEDTIME -> BedtimeTile()
+          TOOL_SUNRISE -> SunriseTile()
+          TOOL_PING -> PingTile()
+          TOOL_NOTE -> NoteTile(onClick = { openToolCat = null; showNote = true })
+          TOOL_NOWPLAYING -> NowPlayingTile(onClick = { openToolCat = null; showNowPlaying = true })
+          TOOL_CAMERA -> CameraTile(onClick = { openToolCat = null; onOpenCamera() })
+          TOOL_DAILY -> DailyTile(mode = dailyTileMode, onClick = { openToolCat = null; showDaily = true })
+          TOOL_WHATSNEW -> WhatChangedTile(onClick = { openToolCat = null; showWhatChanged = true })
+          TOOL_REQUEST -> RequestAppTile()
+          TOOL_REPORTAL ->
+              ReportalTile(onClick = {
+                openToolCat = null
+                runCatching {
+                  context.startActivity(
+                      Intent(Intent.ACTION_VIEW, Uri.parse("https://reportal.dev/"))
+                          .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                }
+              })
+        }
+      }
+      // Effective membership: a tool is in this category if its override (or default) matches.
+      // The Daily tile is suppressed unless its daily content mode is on.
+      fun catOf(t: ToolDef) = toolAssign[t.id] ?: t.defaultCat
+      val inThisCat =
+          ALL_TOOLS.filter {
+            catOf(it) == cat &&
+                (it.id != TOOL_DAILY || DailyContent.modeOf(dailyTileMode) != DailyContent.Mode.OFF)
+          }
+      val addable = ALL_TOOLS.filter { catOf(it) != cat }
+
+      ToolCategoryOverlay(
+          title = cat,
+          toolIds = inThisCat.map { it.id },
+          editMode = toolEdit,
+          onToggleEdit = { toolEdit = !toolEdit },
+          renderLive = renderLiveTool,
+          categories = TOOL_CATEGORIES.map { it.id },
+          addable = addable,
+          onMove = { id, target ->
+            toolAssign[id] = target
+            UserLayout.setToolCategory(context, id, target)
+          },
+          onDismiss = {
+            openToolCat = null
+            toolEdit = false
+          },
+      )
+    }
+    if (openToolCat != null) {
+      FolderBackButton(onClick = { openToolCat = null; toolEdit = false })
     }
 
     // Name a new folder (created by dropping one app on another).
@@ -4273,6 +4337,253 @@ private const val ICON_SATELLITE =
 
 /** A non-app tile injected into a folder (e.g. the Screensaver settings entry). */
 private data class FolderExtra(val label: String, val glyph: String, val onClick: () -> Unit)
+
+// ---- Tool category folders --------------------------------------------------
+// The built-in "tool" tiles (ISS, Aurora, Stopwatch, Lamp, Ping, …) are grouped
+// into these few category folders on the home grid. The folder tile opens a
+// ToolCategoryOverlay that renders the real tiles, so dynamic ones (Aurora lighting
+// up, ISS pass count) keep working inside the folder. Membership is wired where the
+// overlay is built in HomeScreen; this list only drives the folder tiles shown.
+private const val TOOLCAT_SKY = "Sky & Outdoors"
+private const val TOOLCAT_KITCHEN = "Kitchen & Tools"
+private const val TOOLCAT_AMBIENT = "Ambient & Sleep"
+private const val TOOLCAT_HOME = "Home & LAN"
+private const val TOOLCAT_MORE = "More"
+
+private data class ToolCat(val id: String, val glyph: String)
+
+private val TOOL_CATEGORIES =
+    listOf(
+        ToolCat(TOOLCAT_SKY, ICON_SATELLITE),
+        ToolCat(TOOLCAT_KITCHEN, ICON_STOPWATCH),
+        ToolCat(TOOLCAT_AMBIENT, ICON_MOON),
+        ToolCat(TOOLCAT_HOME, ICON_PING),
+        ToolCat(TOOLCAT_MORE, ICON_INBOX),
+    )
+
+// Canonical tool ids — persisted in UserLayout tool-category overrides, so keep stable.
+private const val TOOL_ISS = "iss"
+private const val TOOL_AURORA = "aurora"
+private const val TOOL_TRANSIT = "transit"
+private const val TOOL_STOPWATCH = "stopwatch"
+private const val TOOL_CONVERTER = "converter"
+private const val TOOL_SPEEDTEST = "speedtest"
+private const val TOOL_LAMP = "lamp"
+private const val TOOL_MYNOISE = "mynoise"
+private const val TOOL_BEDTIME = "bedtime"
+private const val TOOL_SUNRISE = "sunrise"
+private const val TOOL_PING = "ping"
+private const val TOOL_NOTE = "note"
+private const val TOOL_NOWPLAYING = "nowplaying"
+private const val TOOL_CAMERA = "camera"
+private const val TOOL_DAILY = "daily"
+private const val TOOL_WHATSNEW = "whatsnew"
+private const val TOOL_REQUEST = "request"
+private const val TOOL_REPORTAL = "reportal"
+
+/** A built-in tool: its stable id, a label + glyph for the folder editor's static chip,
+ *  and the category it lives in by default (a user override in UserLayout wins). */
+private data class ToolDef(
+    val id: String,
+    val label: String,
+    val glyph: String,
+    val defaultCat: String,
+)
+
+private val ALL_TOOLS =
+    listOf(
+        ToolDef(TOOL_ISS, "Space station", ICON_SATELLITE, TOOLCAT_SKY),
+        ToolDef(TOOL_AURORA, "Aurora", ICON_AURORA, TOOLCAT_SKY),
+        ToolDef(TOOL_TRANSIT, "Transit", ICON_BUS, TOOLCAT_SKY),
+        ToolDef(TOOL_STOPWATCH, "Stopwatch", ICON_STOPWATCH, TOOLCAT_KITCHEN),
+        ToolDef(TOOL_CONVERTER, "Converter", ICON_CONVERT, TOOLCAT_KITCHEN),
+        ToolDef(TOOL_SPEEDTEST, "Speed test", ICON_SPEEDTEST, TOOLCAT_KITCHEN),
+        ToolDef(TOOL_LAMP, "Lamp", ICON_LAMP, TOOLCAT_AMBIENT),
+        ToolDef(TOOL_MYNOISE, "Soundscapes", ICON_HEADPHONES, TOOLCAT_AMBIENT),
+        ToolDef(TOOL_BEDTIME, "Bedtime", ICON_BOOK, TOOLCAT_AMBIENT),
+        ToolDef(TOOL_SUNRISE, "Sunrise", ICON_SUNRISE, TOOLCAT_AMBIENT),
+        ToolDef(TOOL_PING, "Ping", ICON_PING, TOOLCAT_HOME),
+        ToolDef(TOOL_NOTE, "Note", ICON_NOTE, TOOLCAT_HOME),
+        ToolDef(TOOL_NOWPLAYING, "Now playing", ICON_PLAY, TOOLCAT_HOME),
+        ToolDef(TOOL_CAMERA, "Cameras", ICON_CAMERA, TOOLCAT_HOME),
+        ToolDef(TOOL_DAILY, "Daily", ICON_LIGHTBULB, TOOLCAT_MORE),
+        ToolDef(TOOL_WHATSNEW, "What's new", ICON_HISTORY, TOOLCAT_MORE),
+        ToolDef(TOOL_REQUEST, "Request app", ICON_INBOX, TOOLCAT_MORE),
+        ToolDef(TOOL_REPORTAL, "Reportal", ICON_GLOBE, TOOLCAT_MORE),
+    )
+
+private fun toolDefOf(id: String): ToolDef? = ALL_TOOLS.firstOrNull { it.id == id }
+
+/** Home-grid tile for a tool category. Styled like a folder (neutral slate) with the
+ *  category's glyph, to read as a container rather than a single action. */
+@Composable
+private fun ToolFolderTile(label: String, glyph: String, onClick: () -> Unit) {
+  BuiltInTile(label = label, background = Color(0xFF3A3A3A), glyph = glyph, onClick = onClick)
+}
+
+private const val ICON_GLOBE =
+    "M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"
+
+/** Web shortcut to reportal.dev — the community directory of Portal apps/widgets. Opens
+ *  in the device browser (Chromium handles https). Lives in the tools folders (movable). */
+@Composable
+private fun ReportalTile(onClick: () -> Unit) {
+  BuiltInTile(label = "Reportal", background = Color(0xFF1565C0), glyph = ICON_GLOBE, onClick = onClick)
+}
+
+/** Overlay listing one tool category's tiles in a grid. Lighter than [FolderOverlay]
+ *  (these aren't app folders). The ✎ button toggles edit mode: each tool becomes a chip
+ *  whose tap menu moves it to another folder, and an Add tile pulls tools in from other
+ *  folders. Back / tap-outside dismiss; the grid takes focus on open so the D-pad works. */
+@Composable
+private fun ToolCategoryOverlay(
+    title: String,
+    toolIds: List<String>,
+    editMode: Boolean,
+    onToggleEdit: () -> Unit,
+    renderLive: @Composable (String) -> Unit,
+    categories: List<String>,
+    addable: List<ToolDef>,
+    onMove: (String, String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+  val noRipple = remember { MutableInteractionSource() }
+  BackHandler { onDismiss() }
+  val gridFocus = remember { FocusRequester() }
+  LaunchedEffect(Unit) { runCatching { gridFocus.requestFocus() } }
+
+  val count = toolIds.size + if (editMode) 1 else 0
+  val cols = when {
+    count <= 3 -> 3
+    count <= 8 -> 4
+    else -> 5
+  }
+  val tileScale = LocalTileDp.current / 88.dp
+  val desiredWidth = (420.dp + 126.dp * (cols - 3)) * tileScale
+  val screenWidth = androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp.dp
+  val screenHeight = androidx.compose.ui.platform.LocalConfiguration.current.screenHeightDp.dp
+
+  Box(
+      contentAlignment = Alignment.Center,
+      modifier =
+          Modifier.fillMaxSize()
+              .onPreviewKeyEvent { e ->
+                if (e.key == Key.Back || e.key == Key.Escape) {
+                  if (e.type == KeyEventType.KeyUp) onDismiss()
+                  true
+                } else false
+              }
+              .background(Color(0xCC000000))
+              .clickable(interactionSource = noRipple, indication = null) { onDismiss() },
+  ) {
+    Surface(
+        color = Color(0xFF1C1C1E),
+        shape = RoundedCornerShape(28.dp),
+        modifier =
+            Modifier.width(desiredWidth)
+                .widthIn(max = screenWidth * 0.94f)
+                .clickable(interactionSource = noRipple, indication = null) {},
+    ) {
+      Column(modifier = Modifier.padding(28.dp)) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+          Text(title, color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Bold,
+              modifier = Modifier.weight(1f))
+          Surface(
+              color = if (editMode) MaterialTheme.colorScheme.primary else Color(0x33FFFFFF),
+              shape = androidx.compose.foundation.shape.CircleShape,
+              modifier =
+                  Modifier.size(40.dp).tvFocusable(androidx.compose.foundation.shape.CircleShape) {
+                    onToggleEdit()
+                  },
+          ) {
+            Box(contentAlignment = Alignment.Center) { Text("✎", color = Color.White, fontSize = 18.sp) }
+          }
+        }
+        Spacer(Modifier.size(20.dp))
+        LazyVerticalGrid(
+            columns = GridCells.Fixed(cols),
+            horizontalArrangement = Arrangement.spacedBy(16.dp),
+            verticalArrangement = Arrangement.spacedBy(20.dp),
+            modifier =
+                Modifier.heightIn(max = screenHeight * 0.62f).focusRequester(gridFocus).focusGroup(),
+        ) {
+          items(toolIds, key = { it }) { id ->
+            if (!editMode) {
+              renderLive(id)
+            } else {
+              val def = toolDefOf(id)
+              if (def != null) {
+                EditableToolTile(
+                    def = def,
+                    currentCat = title,
+                    categories = categories,
+                    onMove = { target -> onMove(id, target) },
+                )
+              }
+            }
+          }
+          if (editMode) {
+            item(key = "__add__") {
+              AddToolTile(addable = addable, onAdd = { d -> onMove(d.id, title) })
+            }
+          }
+        }
+        if (editMode) {
+          Spacer(Modifier.size(10.dp))
+          Text(
+              "Tap a tool to move it to another folder, or use Add to bring one in.",
+              color = Color(0xFF8A8A8A), fontSize = 13.sp,
+              modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.Center)
+        }
+      }
+    }
+  }
+}
+
+/** Edit-mode representation of a tool: a static glyph+label tile with a menu to move it
+ *  to a different category folder. */
+@Composable
+private fun EditableToolTile(
+    def: ToolDef,
+    currentCat: String,
+    categories: List<String>,
+    onMove: (String) -> Unit,
+) {
+  var menu by remember { mutableStateOf(false) }
+  Box {
+    BuiltInTile(label = def.label, background = Color(0xFF4A3B57), glyph = def.glyph) { menu = true }
+    DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+      Text("  Move to…", color = Color(0xFF9A9A9A), fontSize = 13.sp,
+          modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp))
+      categories.filter { it != currentCat }.forEach { cat ->
+        DropdownMenuItem(text = { Text(cat) }, onClick = { menu = false; onMove(cat) })
+      }
+    }
+  }
+}
+
+/** Edit-mode "Add" tile: a menu of tools currently living in other folders; picking one
+ *  moves it into this folder. */
+@Composable
+private fun AddToolTile(addable: List<ToolDef>, onAdd: (ToolDef) -> Unit) {
+  var menu by remember { mutableStateOf(false) }
+  Box {
+    BuiltInTile(label = "Add", background = Color(0xFF2E7D32), glyph = ICON_DOWNLOAD) { menu = true }
+    DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+      if (addable.isEmpty()) {
+        Text("  All tools are here", color = Color(0xFF9A9A9A), fontSize = 13.sp,
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp))
+      }
+      addable.forEach { d ->
+        DropdownMenuItem(text = { Text(d.label) }, onClick = { menu = false; onAdd(d) })
+      }
+    }
+  }
+}
 
 /** A built-in launcher tile: a rounded colour tile with a centered white vector
  * glyph, styled to sit naturally beside real app icons. */

@@ -67,7 +67,7 @@ object PingService {
 
   private fun onPing(context: Context, sender: String) {
     runCatching {
-      ChimePlayer.playTimerRing(context, repeats = 2)
+      ChimePlayer.playPing(context, repeats = 2)
       ChimePlayer.announce(context, "$sender is calling")
     }
   }

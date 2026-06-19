@@ -139,6 +139,24 @@ object UserLayout {
         .edit().putString(LAUNCH_COUNTS_KEY, obj.toString()).apply()
   }
 
+  // ----- tool-folder membership (which category each built-in tool tile lives in) ---
+  // Maps a tool id (see ALL_TOOLS in HomeActivity) -> category id. Overlays the per-tool
+  // default category, so the user can move tools between folders via the folder edit mode.
+
+  private const val TOOL_CATEGORIES_KEY = "tool_categories"
+
+  fun loadToolCategories(context: Context): Map<String, String> {
+    val raw = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        .getString(TOOL_CATEGORIES_KEY, null) ?: return emptyMap()
+    return deserialize(raw)
+  }
+
+  fun setToolCategory(context: Context, toolId: String, category: String) {
+    val updated = loadToolCategories(context).toMutableMap().apply { put(toolId, category) }
+    context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        .edit().putString(TOOL_CATEGORIES_KEY, serialize(updated)).apply()
+  }
+
   private fun serializeSet(set: Set<String>): String {
     val obj = JSONObject()
     obj.put("folders", org.json.JSONArray(set.toList()))

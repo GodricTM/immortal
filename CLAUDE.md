@@ -28,12 +28,21 @@ app ecosystem so the hardware stays useful.
 ## Architecture overview
 
 ```
-HomeActivity          — main launcher grid (Compose), weather, calendar widget
+HomeActivity          — main launcher grid (Compose), weather, calendar widget.
+                        Built-in tool tiles (ISS, Aurora, Stopwatch, Lamp, Ping, Reportal, …)
+                        are grouped into a few category folders (TOOL_CATEGORIES →
+                        ToolFolderTile → ToolCategoryOverlay), which render the live tiles so
+                        dynamic ones still update inside the folder. Each tool is an entry in
+                        ALL_TOOLS (id, label, glyph, defaultCat); the folder overlay's ✎ edit
+                        mode moves tools between folders (EditableToolTile menu) or pulls them
+                        in (AddToolTile), persisted as per-tool category overrides in
+                        UserLayout.loadToolCategories/setToolCategory. The "Reportal" tool is a
+                        web shortcut (ACTION_VIEW → reportal.dev in the device browser).
 ├── StoreActivity     — curated app catalog (catalog.json) + APK browser
 ├── ScreensaverSettingsActivity / ClockSettingsActivity / SleepSettingsActivity
 ├── WelcomeSettingsActivity    — welcome overlay greetings, colors, sizes, TTS
 ├── ImmortalSettingsActivity   — tile size, weather unit, accent, sort, tabs, dashboard page, name-day/feast/next-event toggles, gradient/sky background, daily tile
-├── ChimeSettingsActivity      — "Sounds": hourly chime / spoken time / golden-hour tone (per-cue volume) + quiet hours
+├── ChimeSettingsActivity      — "Sounds": hourly chime / spoken time / golden-hour tone / ping volume (per-cue volume) + quiet hours
 ├── CountdownSettingsActivity  — add/remove countdown chips
 ├── CameraViewerActivity       — RTSP camera viewer (VideoView, native RTSP)
 ├── IntercomActivity           — LAN one-way intercom / baby monitor (LanAudio)
@@ -101,8 +110,9 @@ StarField             — real night sky behind the grid after dark (BG_STARS ba
 AntiBurnIn            — slow Lissajous pixel-shift for always-on surfaces (applied to the
                         digital-clock dream). Pure + unit-tested.
 PingService           — "ping the other room": serverless LAN UDP broadcast; every
-                        Immortal listens and rings ChimePlayer + speaks the room name.
-                        Started in ImmortalApp. PingTile sends. Room name =
+                        Immortal listens and rings ChimePlayer.playPing (res/raw/ping.mp3,
+                        volume = ChimeConfig.pingVolume, set in Sounds) + speaks the room
+                        name. Started in ImmortalApp. PingTile sends. Room name =
                         ImmortalSettings.deviceRoomName (Build.MODEL; no rename UI yet).
 CalendarPacks/IrishHolidays/PrayerTimes — installable calendar packs (header lines): Irish
                         bank holidays + saints (computed Easter), Islamic prayer times
@@ -139,7 +149,7 @@ SystemBackGestureService    — overlay back-swipe (SYSTEM_ALERT_WINDOW)
 | `ScreensaverConfig` | `immortal_screensaver` | enabled, source folder, interval, fit mode, welcome enabled, art feed, soundscape + volume, ambient dashboard |
 | `WelcomeConfig`     | `immortal_welcome`   | greeting text per time-of-day, user name, colors, sizes, duration, TTS on/off |
 | `DigitalClockConfig`| `digital_clock_config` | style, font, color, size, layout, glow |
-| `ChimeConfig`       | `immortal_chime`     | hourly chime / spoken time / golden-hour toggles, per-cue volume, spoken-voice id, quiet-hours window |
+| `ChimeConfig`       | `immortal_chime`     | hourly chime / spoken time / golden-hour toggles, per-cue volume (incl. ping volume), spoken-voice id, quiet-hours window |
 | `CountdownConfig`   | `immortal_countdown` | countdown chips (label, emoji, date) |
 | `NotesConfig`       | `immortal_notes`     | typed sticky note text + voice-memo file pointer |
 | `CameraConfig`      | `immortal_cameras`   | saved rtsp:// camera URLs |
@@ -174,6 +184,21 @@ Utilities & Power Tools, Portal Originals.
 
 When adding apps: prefer F-Droid releases (stable URLs), open-source only,
 no GMS dependency, tested on Portal hardware.
+
+## Web widgets (`widgets/`)
+
+Self-contained HTML widgets for the **Portal Widgets** host
+(`compscirunner/portal-widgets` — a Chumby-style fullscreen WebView carousel, installed on
+the test device as `com.portal.widgets`). Each widget is one static page configured via URL
+query params, with a `meta-portal-widget.json` manifest (name/description/entry/config/
+urlParams; schema in the clock-widget repo). They run in the host's hardened WebView sandbox
+— no native bridge, no GMS. Current set: `ambient-clock`, `weather` (keyless Open-Meteo),
+`countdown`. The host discovers widgets from public GitHub repos tagged `meta-portal-widget`
+(served via GitHub Pages) and lists them on https://reportal.dev (a community Portal-app
+directory; also surfaced as the home-screen "Reportal" tool shortcut).
+
+Test locally with `node scripts/widget-serve.js 8099`, then open
+`http://<pc-lan-ip>:8099/<widget>/index.html?...` in the Portal browser. See `widgets/README.md`.
 
 ## Silent install daemon
 

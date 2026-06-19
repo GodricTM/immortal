@@ -69,6 +69,29 @@ object ChimePlayer {
     }
   }
 
+  /** Ring for an incoming "ping the other room" (res/raw/ping.mp3), a few times at the
+   *  ping volume from Sounds settings. Separate sound + volume from the kitchen timer. */
+  fun playPing(context: Context, repeats: Int = 2) {
+    val vol = (ChimeConfig.load(context).pingVolume / 100f).coerceIn(0f, 1f)
+    if (vol <= 0f) return
+    val h = Handler(Looper.getMainLooper())
+    for (i in 0 until repeats) {
+      h.postDelayed({
+        runCatching {
+          val mp = MediaPlayer()
+          mp.setAudioAttributes(ambientAttrs)
+          val afd = context.resources.openRawResourceFd(R.raw.ping) ?: return@postDelayed
+          afd.use { mp.setDataSource(it.fileDescriptor, it.startOffset, it.length) }
+          mp.setVolume(vol, vol)
+          mp.setOnCompletionListener { it.release() }
+          mp.setOnErrorListener { p, _, _ -> p.release(); true }
+          mp.prepare()
+          mp.start()
+        }.onFailure { Log.w(TAG, "ping ring failed", it) }
+      }, i * 1400L)
+    }
+  }
+
   /** Speak an arbitrary phrase (e.g. "Pasta timer done") at full volume. */
   fun announce(context: Context, text: String) = speak(context, text, volumeOverride = 1f)
 

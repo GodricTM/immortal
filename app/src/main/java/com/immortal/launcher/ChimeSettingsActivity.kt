@@ -132,6 +132,24 @@ private fun ChimeSettingsScreen() {
       }
 
       Card {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+          Column(modifier = Modifier.weight(1f)) {
+            Text("Ping the other room", color = Color.White, fontSize = 17.sp)
+            Text("Ring + spoken name when another Portal pings this one",
+                color = Color(0xFF9A9A9A), fontSize = 13.sp)
+          }
+        }
+        VolumeStepper("Volume", settings.pingVolume) { v ->
+          ChimeConfig.setPingVolume(context, v)
+          settings = settings.copy(pingVolume = v)
+        }
+        TestButton("Play ping") { ChimePlayer.playPing(context, repeats = 1) }
+      }
+
+      Card {
         ChimeToggleRow("Quiet hours", "Silence all cues overnight", settings.quietHoursOn) {
           ChimeConfig.setQuietHours(context, it)
           settings = settings.copy(quietHoursOn = it)

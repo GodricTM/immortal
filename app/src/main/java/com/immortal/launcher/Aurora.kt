@@ -19,6 +19,7 @@ import kotlin.math.asin
 import kotlin.math.cos
 import kotlin.math.sin
 import org.json.JSONArray
+import org.json.JSONObject
 
 /**
  * Keyless "is there a chance of aurora *here* tonight" check for the home screen —
@@ -184,9 +185,11 @@ object Aurora {
   private fun fetchCurrentKp(): Double? =
       runCatching {
             val arr = JSONArray(httpGet("https://services.swpc.noaa.gov/products/noaa-planetary-k-index.json"))
-            // Row 0 is the header; the last data row is the most recent reading.
-            if (arr.length() < 2) return null
-            arr.getJSONArray(arr.length() - 1).getString(1).toDouble()
+            // The most recent reading is the last element. SWPC now serves an array of
+            // objects ({"time_tag":…,"Kp":2.0,…}); older versions served an array of
+            // arrays with a header row (["time_tag","Kp",…]). Handle both.
+            if (arr.length() < 1) return null
+            kpOf(arr.get(arr.length() - 1))
           }
           .getOrNull()
 
@@ -199,19 +202,42 @@ object Aurora {
             val fmt = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US)
             fmt.timeZone = TimeZone.getTimeZone("UTC")
             var peak = 0.0
-            for (i in 1 until arr.length()) {
-              val row = arr.getJSONArray(i)
-              // Only future ("predicted") rows; "observed" ones are the past.
-              if (row.optString(2) != "predicted") continue
-              val t = runCatching { fmt.parse(row.getString(0))?.time }.getOrNull() ?: continue
+            for (i in 0 until arr.length()) {
+              val row = arr.get(i)
+              // Only future ("predicted") rows; observed/estimated ones are the past.
+              if (kindOf(row) != "predicted") continue
+              val t = runCatching { fmt.parse(timeOf(row))?.time }.getOrNull() ?: continue
               if (t in now..horizon) {
-                val kp = row.getString(1).toDoubleOrNull() ?: continue
+                val kp = kpOf(row) ?: continue
                 if (kp > peak) peak = kp
               }
             }
             peak
           }
           .getOrDefault(0.0)
+
+  // The SWPC feeds switched from array-of-arrays (with a header row) to array-of-objects;
+  // these read a field from either shape so a future flip back doesn't break the tile.
+  private fun kpOf(row: Any?): Double? =
+      when (row) {
+        is JSONObject -> row.optDouble("Kp", row.optDouble("kp", Double.NaN)).takeIf { !it.isNaN() }
+        is JSONArray -> row.optString(1).toDoubleOrNull()
+        else -> null
+      }
+
+  private fun timeOf(row: Any?): String =
+      when (row) {
+        is JSONObject -> row.optString("time_tag")
+        is JSONArray -> row.optString(0)
+        else -> ""
+      }
+
+  private fun kindOf(row: Any?): String =
+      when (row) {
+        is JSONObject -> row.optString("observed")
+        is JSONArray -> row.optString(2)
+        else -> ""
+      }
 
   private fun httpGet(spec: String): String {
     val c = URL(spec).openConnection() as HttpURLConnection

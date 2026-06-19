@@ -35,6 +35,8 @@ object ChimeConfig {
       val chimeVolume: Int = 60,
       val spokenVolume: Int = 70,
       val goldenVolume: Int = 60,
+      // "Ping the other room" ring volume (0..100). Louder by default — it's a doorbell.
+      val pingVolume: Int = 85,
       // TTS voice name for spoken time (TextToSpeech.Voice.getName()); "" = engine default.
       val spokenVoice: String = "",
       // Which sunrise sound to play: 0 = "Morning", 1 = "Rooster".
@@ -58,6 +60,7 @@ object ChimeConfig {
         chimeVolume = p.getInt("chime_volume", 60).coerceIn(0, 100),
         spokenVolume = p.getInt("spoken_volume", 70).coerceIn(0, 100),
         goldenVolume = p.getInt("golden_volume", 60).coerceIn(0, 100),
+        pingVolume = p.getInt("ping_volume", 85).coerceIn(0, 100),
         spokenVoice = p.getString("spoken_voice", "") ?: "",
         sunriseVariant = p.getInt("sunrise_variant", 0).coerceIn(0, 1),
     )
@@ -77,6 +80,9 @@ object ChimeConfig {
 
   fun setGoldenVolume(c: Context, v: Int) =
       prefs(c).edit().putInt("golden_volume", v.coerceIn(0, 100)).apply()
+
+  fun setPingVolume(c: Context, v: Int) =
+      prefs(c).edit().putInt("ping_volume", v.coerceIn(0, 100)).apply()
 
   fun setHourlyChime(c: Context, on: Boolean) =
       prefs(c).edit().putBoolean("hourly_chime_on", on).apply()
