@@ -1,6 +1,6 @@
 {
-  "versionCode": 40,
-  "versionName": "1.39",
+  "versionCode": 42,
+  "versionName": "1.41",
   "apkUrl": "https://github.com/starbrightlab/immortal/releases/latest/download/immortal.apk",
-  "notes": "Immortal 1.39 — Photo-frame screensaver: the built-in web photo feed is now sharp on every Portal. The default feed was requesting a fixed 1280x800 image, so on displays with a different resolution — the portrait Portal Mini (800x1280) and the higher-resolution Portal+ 2nd gen (2160x1440) — the photo was stretched to fit and looked blurry. It now requests photos at the device's actual screen resolution and orientation, so they fill the screen crisply. (Thanks to the user who reported this.)"
+  "notes": "Immortal 1.41 — merges upstream 1.40 (multi-room audio, now-playing on every Portal, and the provisioning overhaul) into the @GodricTM feature fork (ISS, aurora, sunrise, lamp, kitchen timers, room ping, chimes and more), plus a new system-wide touch & keypress sounds toggle."
 }

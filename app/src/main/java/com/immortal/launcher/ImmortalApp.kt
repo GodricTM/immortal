@@ -22,6 +22,16 @@ import android.content.IntentFilter
 class ImmortalApp : Application() {
   override fun onCreate() {
     super.onCreate()
+    // The shared presence source of truth: owns DREAMING_STARTED / SCREEN_OFF / POWER and
+    // exposes one PresenceState for the screensaver (in-process) and the Snapcast companion
+    // (broadcast). DREAMING_STOPPED stays here because it also drives the frame relaunch, and
+    // we feed its verdict into the hub from DreamPolicy.
+    PresenceHub.init(this)
+    // Read the device's native media session (whatever's playing) into NowPlayingHub
+    // for the screensaver card + header mini-player. Dormant until our notification
+    // listener is enabled — done at provisioning (`cmd notification allow_listener`);
+    // the reader attaches the moment that listener binds.
+    MediaSessionReader.init(this)
     val receiver =
         object : BroadcastReceiver() {
           override fun onReceive(c: Context, intent: Intent) {
@@ -31,6 +41,9 @@ class ImmortalApp : Application() {
           }
         }
     registerReceiver(receiver, IntentFilter(Intent.ACTION_DREAMING_STOPPED))
+
+    // Apply the user's status-bar choice (default hidden — the wall-frame look).
+    SettingsGuard.applyStatusBar(this)
 
     // Arm the overnight screen-off window (and apply it if we're inside it now).
     SleepScheduler.applyOvernightNow(this)
@@ -42,5 +55,13 @@ class ImmortalApp : Application() {
     SunriseScheduler.reschedule(this)
     // Start listening for "ping the other room" tones from other Portals on the LAN.
     PingService.start(this)
+
+    // Bring up the WiFi fleet agent if provisioning enabled it (no-op otherwise).
+    FleetAgentService.ensureRunning(this)
+
+    // Start the multi-room now-playing relay if this Portal is set up as a Snapcast
+    // speaker (no-op until the user configures a server). Surfaces the group's track on
+    // the now-playing card even when the Music Assistant app isn't running here.
+    MultiRoomService.sync(this)
   }
 }

@@ -37,6 +37,21 @@ object SettingsGuard {
     }
   }
 
+  /**
+   * Hide or show the system status bar per [ImmortalSettings.hideStatusBar]. Hiding uses
+   * the immersive `policy_control` (swipe from the top still reveals it briefly); showing
+   * clears it. `Settings.Global`, so needs `WRITE_SECURE_SETTINGS` (provisioning grants
+   * it) — a silent no-op without it. Applied on startup and whenever the toggle changes.
+   */
+  fun applyStatusBar(context: Context) {
+    runCatching {
+      Settings.Global.putString(
+          context.contentResolver,
+          "policy_control",
+          if (ImmortalSettings.hideStatusBar(context)) "immersive.status=*" else null)
+    }
+  }
+
   fun reaffirmScreensaver(context: Context) {
     runCatching {
       val resolver = context.contentResolver
@@ -108,6 +123,79 @@ object SettingsGuard {
       )
     }
   }
+
+  /**
+   * Enable [InstallConfirmService] so the fleet agent's installs auto-confirm.
+   * APPENDS our component to `enabled_accessibility_services` — the Portal ships
+   * Meta accessibility services (presence, key events) in that same list, so we
+   * must never overwrite it. Requires `WRITE_SECURE_SETTINGS`; a silent no-op
+   * without it. Idempotent.
+   */
+  fun enableInstallConfirm(context: Context) {
+    runCatching {
+      val resolver = context.contentResolver
+      val comp = ComponentName(context, InstallConfirmService::class.java).flattenToString()
+      val current =
+          Settings.Secure.getString(resolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES) ?: ""
+      val parts = current.split(':').filter { it.isNotBlank() }
+      if (comp !in parts) {
+        Settings.Secure.putString(
+            resolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES, (parts + comp).joinToString(":"))
+      }
+      Settings.Secure.putInt(resolver, Settings.Secure.ACCESSIBILITY_ENABLED, 1)
+    }
+  }
+
+  /** Whether [InstallConfirmService] is currently enabled (so dialog-mode installs
+   *  complete unattended). Lets the fleet dashboard show that a "dialog"-mode device
+   *  can still be deployed to without a tap. */
+  fun isInstallConfirmEnabled(context: Context): Boolean =
+      runCatching {
+            val comp = ComponentName(context, InstallConfirmService::class.java).flattenToString()
+            (Settings.Secure.getString(
+                    context.contentResolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES) ?: "")
+                .split(':')
+                .any { it.equals(comp, ignoreCase = true) }
+          }
+          .getOrDefault(false)
+
+  // The secure-setting key for notification listeners (the public constant is hidden).
+  private const val ENABLED_NOTIFICATION_LISTENERS = "enabled_notification_listeners"
+
+  /**
+   * Best-effort enable of [MediaNotificationListenerService] so the launcher may read
+   * the device's active media sessions (native now-playing). Append-don't-overwrite —
+   * the Portal ships Meta notification listeners in this list, so never clobber it.
+   *
+   * NOTE: on Android 10 `enabled_notification_listeners` is OS-protected and usually
+   * NOT writable even with `WRITE_SECURE_SETTINGS` (unlike accessibility services), so
+   * this is typically a silent no-op on the Portal. The reliable enabler is
+   * provisioning's `cmd notification allow_listener` (see provision.sh). Kept as a
+   * harmless best-effort for platforms where it does work. Idempotent.
+   */
+  fun enableMediaListener(context: Context) {
+    runCatching {
+      val resolver = context.contentResolver
+      val comp = ComponentName(context, MediaNotificationListenerService::class.java).flattenToString()
+      val current = Settings.Secure.getString(resolver, ENABLED_NOTIFICATION_LISTENERS) ?: ""
+      val parts = current.split(':').filter { it.isNotBlank() }
+      if (comp !in parts) {
+        Settings.Secure.putString(
+            resolver, ENABLED_NOTIFICATION_LISTENERS, (parts + comp).joinToString(":"))
+      }
+    }
+  }
+
+  /** Whether [MediaNotificationListenerService] is currently an enabled listener. */
+  fun isMediaListenerEnabled(context: Context): Boolean =
+      runCatching {
+            val comp =
+                ComponentName(context, MediaNotificationListenerService::class.java).flattenToString()
+            (Settings.Secure.getString(context.contentResolver, ENABLED_NOTIFICATION_LISTENERS) ?: "")
+                .split(':')
+                .any { it.equals(comp, ignoreCase = true) }
+          }
+          .getOrDefault(false)
 
   /** True if we hold WRITE_SECURE_SETTINGS (so self-healing is active). */
   fun canWriteSecureSettings(context: Context): Boolean =

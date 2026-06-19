@@ -137,6 +137,21 @@ object ImmortalSettings {
       val dashboardPage: Boolean = false,
       // Show the next calendar event in the header (header expansion).
       val showNextEvent: Boolean = false,
+      // Mini-player in the home header (cover art + controls), shown only while
+      // something is actually playing. Defaults on — useful to everyone, unobtrusive.
+      val showMiniPlayer: Boolean = true,
+      // Hide the system status bar (immersive). Default on — the clean wall-frame look,
+      // and what provisioning seeds; swipe from the top still reveals it transiently.
+      val hideStatusBar: Boolean = true,
+      // Multi-room audio: when this Portal is a Snapcast speaker, surface what the
+      // group is playing on the now-playing card (read from the Music Assistant /
+      // snapserver at [snapcastHost]). Off until configured.
+      val multiRoomEnabled: Boolean = false,
+      val snapcastHost: String = "",
+      // Music Assistant login — needed only to send transport (play/pause/next) to MA's
+      // authenticated API; the now-playing metadata itself needs no credentials.
+      val maUsername: String = "",
+      val maPassword: String = "",
   )
 
   private fun prefs(c: Context) = c.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
@@ -178,6 +193,12 @@ object ImmortalSettings {
         showTimeProgress = p.getBoolean("show_time_progress", false),
         showDashClock = p.getBoolean("show_dash_clock", true),
         showDashCountdowns = p.getBoolean("show_dash_countdowns", true),
+        showMiniPlayer = p.getBoolean("show_mini_player", true),
+        hideStatusBar = p.getBoolean("hide_status_bar", true),
+        multiRoomEnabled = p.getBoolean("multiroom_enabled", false),
+        snapcastHost = p.getString("snapcast_host", "") ?: "",
+        maUsername = p.getString("ma_username", "") ?: "",
+        maPassword = p.getString("ma_password", "") ?: "",
     )
   }
 
@@ -210,6 +231,25 @@ object ImmortalSettings {
 
   fun setDailyTileMode(c: Context, mode: String) =
       prefs(c).edit().putString("daily_tile_mode", mode).apply()
+
+  fun multiRoomEnabled(c: Context): Boolean = prefs(c).getBoolean("multiroom_enabled", false)
+
+  fun snapcastHost(c: Context): String = prefs(c).getString("snapcast_host", "")?.trim() ?: ""
+
+  fun maUser(c: Context): String = prefs(c).getString("ma_username", "")?.trim() ?: ""
+
+  fun maPass(c: Context): String = prefs(c).getString("ma_password", "") ?: ""
+
+  fun setMultiRoomEnabled(c: Context, on: Boolean) =
+      prefs(c).edit().putBoolean("multiroom_enabled", on).apply()
+
+  fun setSnapcastHost(c: Context, host: String) =
+      prefs(c).edit().putString("snapcast_host", host.trim()).apply()
+
+  fun setMaUsername(c: Context, v: String) =
+      prefs(c).edit().putString("ma_username", v.trim()).apply()
+
+  fun setMaPassword(c: Context, v: String) = prefs(c).edit().putString("ma_password", v).apply()
 
   fun setWeatherUnit(c: Context, unit: String) =
       prefs(c).edit().putString("weather_unit", unit).apply()
@@ -251,6 +291,13 @@ object ImmortalSettings {
 
   fun setShowDayProgress(c: Context, on: Boolean) =
       prefs(c).edit().putBoolean("show_day_progress", on).apply()
+  fun setShowMiniPlayer(c: Context, on: Boolean) =
+      prefs(c).edit().putBoolean("show_mini_player", on).apply()
+
+  fun hideStatusBar(c: Context): Boolean = prefs(c).getBoolean("hide_status_bar", true)
+
+  fun setHideStatusBar(c: Context, on: Boolean) =
+      prefs(c).edit().putBoolean("hide_status_bar", on).apply()
 
   /**
    * Whether the clock should render in 24-hour form. AUTO follows the device's

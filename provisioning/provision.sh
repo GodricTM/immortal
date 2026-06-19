@@ -12,10 +12,13 @@
 #   ./provision.sh            provision the connected Portal
 #   ./provision.sh --restore  put the stock launcher/screensaver/verifier back
 #   ./provision.sh --status   show what's currently set
-#   ./provision.sh --installd restart only the silent-install daemon
 #   ./provision.sh --overlay-fix  fix the Gen-1 white-on-white installer dialog
 #   ./provision.sh --shizuku  start the Shizuku server (optional; for apps that
 #                             use the Shizuku API, e.g. Aurora's Shizuku mode)
+#   ./provision.sh --fleet    enable the WiFi fleet agent and record this device
+#                             for the laptop fleet tool (the persistent channel)
+#   ./provision.sh --wifi-adb on-demand raw adb-over-WiFi for shell/scrcpy (temp;
+#                             pauses Shizuku, resets on reboot)
 #   ./provision.sh --alexa    restore the original Amazon Alexa app (the "hey"
 #                             free tier): revive falcon + install the wake word
 
@@ -168,40 +171,6 @@ install_client() {
   a install -r -d "$apk" >/dev/null 2>&1 && ok "Installed $PKG" || die "Install failed."
 }
 
-start_installd() {
-  # Start the shell-privileged install daemon so Immortal's on-device App Store
-  # can install apps SILENTLY (the launcher drops APKs in a queue; this installs
-  # them as the shell user). Essential on the Gen-1 Portal+, whose built-in
-  # installer dialog is broken; a nice one-tap upgrade on every other model too.
-  # Like all non-root helpers (Shizuku, etc.), it does NOT survive a reboot —
-  # re-run `provision.sh --installd` (or the kit) to restart it.
-  [ -f installd.sh ] || { warn "installd.sh missing — skipping silent-install daemon"; return; }
-  step "Starting the silent-install daemon"
-  a push installd.sh /data/local/tmp/installd.sh >/dev/null 2>&1
-  a shell "chmod 755 /data/local/tmp/installd.sh" >/dev/null 2>&1
-  # Kill any previous instance(s), then start detached. (toybox `ps` shows the
-  # process as "sh", not the script path, so scan /proc/*/cmdline instead;
-  # exclude our own shell so the scan doesn't kill itself.)
-  a shell 'me=$$; for d in /proc/[0-9]*; do p=${d#/proc/}; [ "$p" = "$me" ] && continue; c=$(cat "$d/cmdline" 2>/dev/null | tr "\0" " "); case "$c" in *installd.sh*) kill "$p" 2>/dev/null;; esac; done' >/dev/null 2>&1
-  # Remove any stale heartbeat so the check below can only pass on a FRESH one
-  # from the daemon we're about to start.
-  a shell "rm -f /sdcard/Android/data/$PKG/files/installq/.heartbeat" >/dev/null 2>&1
-  a shell "setsid sh /data/local/tmp/installd.sh /sdcard/Android/data/$PKG/files/installq >/dev/null 2>&1 &" >/dev/null 2>&1
-  # The first heartbeat can take a few seconds on a busy device (right after an
-  # app install the FUSE/package services are still churning), so poll instead
-  # of a single fixed-sleep check — a one-shot probe here used to false-fail.
-  local hb_try=0
-  while [ "$hb_try" -lt 15 ]; do
-    if a shell "cat /sdcard/Android/data/$PKG/files/installq/.heartbeat 2>/dev/null" | grep -q '[0-9]'; then
-      ok "Silent-install daemon running"
-      return
-    fi
-    hb_try=$((hb_try + 1))
-    sleep 1
-  done
-  warn "Daemon didn't report a heartbeat (the store will fall back to the system installer)"
-}
-
 start_shizuku() {
   # Shizuku (moe.shizuku.privileged.api) is a privileged broker: started over ADB
   # once, it lets apps that speak its API run shell-level operations without root.
@@ -252,7 +221,7 @@ start_shizuku() {
     fi
     sz_try=$((sz_try + 1)); sleep 1
   done
-  warn "Shizuku server didn't stay up (some firmware kills it on launch). Open the Shizuku app once and tap Start — or skip Shizuku: set Aurora Store to its Session installer, which routes through Immortal's own silent-install daemon."
+  warn "Shizuku server didn't stay up (some firmware kills it on launch). Open the Shizuku app once and tap Start — or skip Shizuku: set Aurora Store to its Session installer, which routes through the system installer (usable via the Gen-1 overlay fix)."
 }
 
 install_apps() {
@@ -298,10 +267,9 @@ apply_system_tweaks() {
   # reveals it transiently. Eliminates the white-on-white problem on
   # light-background apps (Aurora, Android Settings, etc.). Android 5.0+.
   a shell settings put global policy_control "immersive.status=*" >/dev/null 2>&1
-  # Force system-wide dark mode. On Android 9 (Portal+) some apps respond; on
-  # Android 10 (Portal Go) it's a first-class feature — far more apps follow it,
-  # meaning the status bar (when transiently visible) will be dark-styled.
-  a shell settings put secure ui_night_mode 2 >/dev/null 2>&1
+  # (Forced dark mode was removed: it was a redundant second attempt at the Gen-1
+  # white-on-white installer dialog — disable_installer_overlay is the real fix — and
+  # it had unaudited side effects on stock UI. The status-bar hide above stays.)
   # Allow apps (including Immortal) to call internal Android APIs that would
   # otherwise be blocked by the hidden-API blacklist. 1 = warn-only (calls
   # succeed; logcat warning only). Covers both pre-P and P+ app targets.
@@ -318,18 +286,49 @@ grant_perms() {
   for p in $PERMISSIONS; do a shell pm grant "$PKG" "$p" >/dev/null 2>&1; done
   # Self-healing: lets Immortal reaffirm its screensaver settings if reset.
   a shell pm grant "$PKG" android.permission.WRITE_SECURE_SETTINGS >/dev/null 2>&1
-  # Lets the "Install an APK" browser see downloaded APKs without a prompt.
+  # Lets the "Install an APK" browser see downloaded APKs, and the fleet agent
+  # read/write /sdcard over WiFi.
   a shell pm grant "$PKG" android.permission.READ_EXTERNAL_STORAGE >/dev/null 2>&1
+  a shell pm grant "$PKG" android.permission.WRITE_EXTERNAL_STORAGE >/dev/null 2>&1
+  # Lets the fleet agent's /logcat endpoint read system-wide logs (READ_LOGS is a
+  # development permission, so pm grant works). Harmless if it can't be granted.
+  a shell pm grant "$PKG" android.permission.READ_LOGS >/dev/null 2>&1
   # Lets Immortal bring the photo frame back instantly when the system force-wakes
   # the screensaver (~2 min in, a quirk of Meta's power manager) even if another
   # app is in the foreground. SYSTEM_ALERT_WINDOW holders may start activities
   # from the background on Android 10.
   a shell appops set "$PKG" SYSTEM_ALERT_WINDOW allow >/dev/null 2>&1
+  # Lets Immortal install apps via the system PackageInstaller (the App Store / self-update
+  # path now that the silent-install daemon is gone). The Portal's on-device "install unknown
+  # apps" toggle is non-functional, so grant the source op directly here; combined with the
+  # Gen-1 installer-overlay fix, the confirm dialog is then visible and usable.
+  a shell appops set "$PKG" REQUEST_INSTALL_PACKAGES allow >/dev/null 2>&1
   # Device admin (force-lock only): lets Immortal turn the screen off for its idle
   # and overnight sleep features via lockNow(). Harmless if it can't be set.
   a shell dpm set-active-admin "$PKG/.AdminReceiver" >/dev/null 2>&1 \
     && ok "Screen-off (device admin) enabled" || true
+  # Lets Immortal read the device's active media sessions (native now-playing) for
+  # the screensaver card + header mini-player. `cmd notification allow_listener`
+  # writes the secure setting AND rebinds the listener reliably on A9/A10. The app
+  # also self-enables on launch (WRITE_SECURE_SETTINGS), so this is belt-and-braces.
+  a shell cmd notification allow_listener \
+    "$PKG/com.immortal.launcher.MediaNotificationListenerService" >/dev/null 2>&1 || true
   ok "Permissions granted"
+}
+
+# Apps Immortal relaunches after a reboot (for ones with no boot receiver of their
+# own, e.g. the Music Assistant / Sendspin player). Writes the per-device list
+# Immortal reads on boot; also editable in-app under Settings > Start on boot.
+configure_boot_apps() {
+  local dir="/sdcard/Android/data/$PKG/files"
+  a shell "mkdir -p '$dir'" >/dev/null 2>&1
+  if [ -n "${BOOT_APPS:-}" ]; then
+    step "Setting apps to relaunch on boot"
+    a shell "printf '%s\n' $BOOT_APPS > '$dir/boot_apps.txt'" >/dev/null 2>&1
+    ok "Boot-launch apps: $BOOT_APPS"
+  else
+    a shell "rm -f '$dir/boot_apps.txt'" >/dev/null 2>&1
+  fi
 }
 
 disable_verifier() {
@@ -378,7 +377,23 @@ disable_installer_overlay() {
 }
 
 disable_ota() {
-  [ "${DISABLE_OTA:-false}" = true ] || return
+  # Ask the user (default YES). Blocking OTA stops a future Meta update from undoing this
+  # setup (re-enabling the verifier / replacing the launcher) — but also forgoes OS/security
+  # updates. DISABLE_OTA in config forces true/false for unattended runs; blank => ask
+  # interactively (and default to blocking on a non-interactive run).
+  local want="${DISABLE_OTA:-}"
+  if [ -z "$want" ]; then
+    if [ -t 0 ]; then
+      printf "\n%sBlock Meta OS updates on this Portal?%s A future Meta OTA could undo this\n" "$B" "$N"
+      printf "  setup (re-enable the verifier, replace the launcher). Blocking prevents that, but\n"
+      printf "  also stops OS / security updates. %s[Y/n]%s " "$B" "$N"
+      local ans; read -r ans || ans=""
+      case "$ans" in [Nn]*) want=false ;; *) want=true ;; esac
+    else
+      want=true
+    fi
+  fi
+  [ "$want" = true ] || { warn "Leaving Meta OS updates enabled"; return; }
   step "Disabling Meta OS updates (so a future OTA can't undo this setup)"
   for p in $OTA_PACKAGES; do a shell pm disable-user --user 0 "$p" >/dev/null 2>&1; done
   ok "OS updates disabled"
@@ -499,7 +514,22 @@ restore_alexa() {
   #    reconstruct it byte-identically from the public stock APK + our diff.
   if [ -n "${FALCON_PATCHED_LOCAL:-}" ] && [ -f "$FALCON_PATCHED_LOCAL" ]; then
     patched="$FALCON_PATCHED_LOCAL"; ok "Using local patched falcon ($(basename "$patched"))"
+  elif [ -n "${FALCON_PATCHED_URL:-}" ]; then
+    # PRIMARY path: download the patched falcon directly. One cross-platform download — no bspatch
+    # (Windows has none), no flaky firmware-dump fetch, no stock+diff checksum drift. Resumable.
+    step "Downloading Alexa (falcon) — about 115 MB"
+    rm -f "$work/falcon-patched.apk"   # never resume onto a stale/partial file — fetch fresh
+    curl -fSL --retry 3 --retry-all-errors --retry-delay 2 --connect-timeout 30 \
+      -o "$work/falcon-patched.apk" "$FALCON_PATCHED_URL" \
+      || { warn "falcon download failed — check your connection, then re-run './provision.sh --alexa'."; return 1; }
+    patched="$work/falcon-patched.apk"
+    if [ -n "${FALCON_RESULT_SHA256:-}" ] && [ "$(sha256 "$patched")" != "$FALCON_RESULT_SHA256" ]; then
+      warn "falcon download looks corrupted (checksum mismatch). Delete the 'alexa' folder next to this script, then re-run './provision.sh --alexa'."; return 1
+    fi
+    ok "Downloaded + verified"
   else
+    # FALLBACK (only when FALCON_PATCHED_URL is blank): reconstruct from the public stock APK + our
+    # binary diff. Needs bspatch — macOS/Linux only (Windows ships none).
     command -v bspatch >/dev/null 2>&1 || { warn "bspatch not found (macOS ships it; Linux: apt/brew install bsdiff). Skipping Alexa."; return 1; }
     local stock="${FALCON_STOCK_LOCAL:-$work/stock-falcon.apk}"
     if [ ! -f "$stock" ] || { [ -n "${FALCON_STOCK_SHA256:-}" ] && [ "$(sha256 "$stock")" != "$FALCON_STOCK_SHA256" ]; }; then
@@ -603,6 +633,13 @@ restore_alexa() {
 }
 
 maybe_restore_alexa() {
+  # A9-and-below only. A10+ hard-blocks background mic for sideloaded apps, so falcon never
+  # gets audio — skip the question entirely on newer Portals (it used to appear, then no-op
+  # inside restore_alexa, which was confusing on the Portal Go). Override: ALEXA_FORCE_A10=1.
+  local sdk; sdk="$(a shell getprop ro.build.version.sdk 2>/dev/null | tr -d '\r')"
+  if [ -n "$sdk" ] && [ "$sdk" -ge 29 ] 2>/dev/null && [ "${ALEXA_FORCE_A10:-}" != 1 ]; then
+    return 0
+  fi
   # RESTORE_ALEXA in config.env forces on/off for unattended runs; blank => ask
   # (only when interactive — a piped/CI run defaults to skipping).
   local want="${RESTORE_ALEXA:-}"
@@ -631,13 +668,102 @@ restore_alexa_undo() {
 }
 
 # ----- modes -----------------------------------------------------------------
+json_escape() { printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'; }
+
+enable_fleet() {
+  # Turn on the in-app Fleet Agent and record this device for the laptop tool.
+  # We can't write the app's private prefs from the shell user, so we hand it a
+  # provision.json in its shell-writable external files dir and (re)launch it; the
+  # app applies it on startup and writes agent.json (with the generated token)
+  # back for us to read. The agent is the persistent WiFi channel; we never switch
+  # the device to adb-over-WiFi here (that restarts adbd, killing the shell helpers).
+  [ "${ENABLE_FLEET:-true}" = true ] || return
+  step "Enabling the WiFi fleet agent"
+  local files_dir="/sdcard/Android/data/$PKG/files/fleet"
+  local name="${FLEET_NAME:-}"
+  if [ -z "$name" ] && [ -t 0 ]; then
+    printf "  %sName this Portal for the fleet dashboard (e.g. \"Living Room\"), Enter to skip: %s" "$D" "$N"
+    IFS= read -r name || name=""
+  fi
+  a shell "mkdir -p '$files_dir'" >/dev/null 2>&1
+  if [ -n "$name" ]; then
+    a shell "echo '{\"enabled\":true,\"name\":\"$(json_escape "$name")\"}' > '$files_dir/provision.json'" >/dev/null 2>&1
+  else
+    a shell "echo '{\"enabled\":true}' > '$files_dir/provision.json'" >/dev/null 2>&1
+  fi
+  # Force a fresh process so ImmortalApp.onCreate consumes provision.json.
+  a shell "am force-stop $PKG" >/dev/null 2>&1
+  a shell "am start -n $HOME_ACTIVITY" >/dev/null 2>&1
+  # Poll for the agent manifest the app writes back.
+  local json="" try=0
+  while [ "$try" -lt 15 ]; do
+    json="$(a shell "cat '$files_dir/agent.json' 2>/dev/null" | tr -d '\r')"
+    case "$json" in *'"enabled":true'*) break ;; esac
+    try=$((try + 1)); sleep 1
+  done
+  local token; token="$(printf '%s' "$json" | sed -n 's/.*"token":"\([0-9a-f]*\)".*/\1/p')"
+  if [ -z "$token" ]; then
+    warn "Fleet agent didn't report a token — open Immortal once, then re-run ./provision.sh --fleet"
+    return
+  fi
+  [ -z "$name" ] && name="$(printf '%s' "$json" | sed -n 's/.*"name":"\([^"]*\)".*/\1/p')"
+  local port; port="$(printf '%s' "$json" | sed -n 's/.*"port":\([0-9]*\).*/\1/p')"
+  [ -n "$port" ] || port="${FLEET_AGENT_PORT:-8723}"
+
+  # Capture the WiFi IP (USB still connected) so the laptop tool's inventory knows
+  # where to reach this Portal's agent.
+  local ip; ip="$(a shell "ip -f inet addr show wlan0 2>/dev/null" | sed -n 's/.*inet \([0-9.]*\).*/\1/p' | head -1)"
+
+  record_fleet_inventory "$name" "${ip:-}" "$token" "$port"
+  ok "Fleet agent enabled${name:+ as \"$name\"}${ip:+ at $ip:$port}"
+}
+
+record_fleet_inventory() {
+  # One file per device (keyed by serial) under fleet/ — robust to maintain from
+  # shell and trivial for the laptop tool to glob. Contains the agent TOKEN, so
+  # fleet/ is gitignored.
+  local name="$1" ip="$2" token="$3" port="$4"
+  local serial; serial="${ANDROID_SERIAL:-$(a get-serialno 2>/dev/null | tr -d '\r')}"
+  local model; model="$(a shell getprop ro.product.model 2>/dev/null | tr -d '\r')"
+  mkdir -p fleet
+  cat > "fleet/${serial}.json" <<EOF
+{
+  "serial": "$serial",
+  "name": "$(json_escape "$name")",
+  "model": "$(json_escape "$model")",
+  "ip": "$ip",
+  "agentPort": $port,
+  "token": "$token"
+}
+EOF
+  ok "Recorded fleet/${serial}.json"
+}
+
+enable_wifi_adb_now() {
+  # ON-DEMAND ONLY — deliberately NOT part of provisioning. Raw adb-over-WiFi is a
+  # power-user convenience (remote shell / scrcpy mirroring). Two honest caveats:
+  #   * `adb tcpip` restarts adbd, which STOPS shell-started helpers (Shizuku)
+  #     until the next USB kit run or a reboot.
+  #   * It does NOT survive a reboot (the TCP port needs a root-only prop here).
+  # The Fleet AGENT is the persistent channel for managing the device — including
+  # file transfer and logcat — so reach for this only when you specifically need
+  # a raw adb shell or scrcpy.
+  resolve_adb
+  wait_for_device
+  local ip; ip="$(a shell "ip -f inet addr show wlan0 2>/dev/null" | sed -n 's/.*inet \([0-9.]*\).*/\1/p' | head -1)"
+  [ -n "$ip" ] || die "This Portal isn't on WiFi."
+  step "Enabling adb-over-WiFi (temporary; pauses Shizuku)"
+  a tcpip 5555 >/dev/null 2>&1 || die "adb tcpip 5555 failed."
+  ok "adb-over-WiFi live — connect with: adb connect $ip:5555"
+  warn "Shizuku is now paused; re-run the kit over USB (or reboot) to restore it."
+}
+
 do_provision() {
   printf "%sPortal Provisioner%s\n" "$B" "$N"
   printf "%sThis will modify your Portal: install an app, replace the home screen and screensaver,\nand disable Meta's app-install verifier. Run with --restore to undo. %s\n\n" "$D" "$N"
   resolve_adb
   wait_for_device
   install_client
-  start_installd
   start_shizuku
   install_apps
   push_assets
@@ -650,6 +776,8 @@ do_provision() {
   snapshot_stock
   set_launcher
   set_screensaver
+  enable_fleet
+  configure_boot_apps
   maybe_restore_alexa
   a shell input keyevent KEYCODE_HOME >/dev/null 2>&1
   printf "\n%s✓ Done. Your Portal is provisioned.%s\n" "$G$B" "$N"
@@ -683,7 +811,18 @@ do_restore() {
   step "Re-enabling Meta's presence detector"
   a shell pm enable "$PRESENCE_PKG" >/dev/null 2>&1; ok "Presence detector restored"
   step "Removing Immortal's screen-off device admin"
-  a shell dpm remove-active-admin "$PKG/.AdminReceiver" >/dev/null 2>&1 || true; ok "Device admin removed"
+  # Android refuses to let the shell force-remove a non-test device admin, so this
+  # usually fails on a real device — don't claim success when it didn't. The active
+  # admin also blocks `adb uninstall` until it's deactivated on-device.
+  if a shell dpm remove-active-admin "$PKG/.AdminReceiver" 2>&1 | grep -qi "success\|removed"; then
+    ok "Device admin removed"
+  else
+    warn "Couldn't remove the device admin from here (Android blocks shell removal of a non-test admin)."
+    printf "  %sTo fully remove Immortal: on the Portal, deactivate it under Settings > device admin\n  apps, then run: adb uninstall %s%s\n" "$D" "$PKG" "$N"
+  fi
+  a shell cmd notification disallow_listener \
+    "$PKG/com.immortal.launcher.MediaNotificationListenerService" >/dev/null 2>&1 || true
+  a shell "rm -f /sdcard/Android/data/$PKG/files/boot_apps.txt" >/dev/null 2>&1 || true
   restore_alexa_undo
   step "Restoring stock launcher"
   a shell cmd package set-home-activity "$STOCK_HOME" >/dev/null 2>&1; ok "Home restored ($STOCK_HOME)"
@@ -708,7 +847,7 @@ do_status() {
   printf "  screensaver:%s\n" " $(a shell settings get secure screensaver_components 2>/dev/null | tr -d '\r')"
   printf "  verifier:   %s\n" "$(a shell pm list packages -d "$VERIFIER_PKG" 2>/dev/null | tr -d '\r' | grep -q . && echo disabled || echo enabled)"
   printf "  installer dialog: %s\n" "$([ "$(a shell settings get global immortal_overlay_fix 2>/dev/null | tr -d '\r')" = "1" ] && echo 'fixed (overlay disabled)' || echo 'stock')"
-  printf "  OS updates: %s\n" "$(a shell pm list packages -d 2>/dev/null | tr -d '\r' | grep -q 'alohaotasetup' && echo disabled || echo enabled)"
+  printf "  OS updates: %s\n" "$(a shell pm list packages -d 2>/dev/null | tr -d '\r' | grep -qE 'alohaotasetup|otaui' && echo disabled || echo enabled)"
   printf "  client:     %s\n" "$(a shell pm list packages "$PKG" 2>/dev/null | tr -d '\r' | grep -q . && echo installed || echo 'not installed')"
 }
 
@@ -716,9 +855,10 @@ case "${1:-}" in
   --restore|-r) do_restore ;;
   --status|-s)  do_status ;;
   --apps|-a)    resolve_adb; wait_for_device; install_apps ;;
-  --installd|-d) resolve_adb; wait_for_device; start_installd ;;
   --overlay-fix) resolve_adb; wait_for_device; disable_installer_overlay ;;
   --shizuku|-z) resolve_adb; wait_for_device; start_shizuku ;;
+  --fleet|-f)   resolve_adb; wait_for_device; enable_fleet ;;
+  --wifi-adb)   enable_wifi_adb_now ;;
   --alexa|-A)   resolve_adb; wait_for_device; restore_alexa ;;
   --help|-h)    sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//' ;;
   "")           do_provision ;;

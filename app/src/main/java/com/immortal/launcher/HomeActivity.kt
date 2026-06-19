@@ -26,7 +26,9 @@ import androidx.activity.result.contract.ActivityResultContracts
 import android.content.pm.PackageInstaller
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.clickable
@@ -66,6 +68,7 @@ import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.grid.itemsIndexed
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -104,6 +107,7 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.scale
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.vector.PathParser
 import androidx.compose.ui.input.pointer.pointerInput
@@ -141,7 +145,6 @@ import android.net.TrafficStats
 import android.net.wifi.WifiManager
 import android.view.KeyEvent
 import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
 import java.io.File
 import kotlinx.coroutines.launch
@@ -1434,6 +1437,22 @@ private fun HeaderBar(onScreensaver: () -> Unit, onClock: () -> Unit, onSleep: (
   var showNameDay by remember { mutableStateOf(ImmortalSettings.load(context).showNameDay) }
   var showFeastDay by remember { mutableStateOf(ImmortalSettings.load(context).showFeastDay) }
   var showNextEvent by remember { mutableStateOf(ImmortalSettings.load(context).showNextEvent) }
+  // The "hey" button only appears when Millennium is installed; re-checked on
+  // resume so it shows up the moment the user finishes provisioning without
+  // needing to relaunch the launcher.
+  var heyPkg by remember { mutableStateOf(heyPackage(context)) }
+  // The header mini-player toggle is re-read on resume so flipping it in Immortal
+  // Settings shows/hides the player the moment the user returns home.
+  var showMiniPlayer by remember { mutableStateOf(ImmortalSettings.load(context).showMiniPlayer) }
+  // Live now-playing from the device's media session. The hub notifies off-main, so
+  // hop back to the main thread before touching Compose state.
+  var nowPlaying by remember { mutableStateOf(NowPlayingHub.current) }
+  val mainHandler = remember { android.os.Handler(android.os.Looper.getMainLooper()) }
+  DisposableEffect(Unit) {
+    val l = NowPlayingHub.Listener { s -> mainHandler.post { nowPlaying = s } }
+    NowPlayingHub.addListener(l) // replays current immediately
+    onDispose { NowPlayingHub.removeListener(l) }
+  }
   val lifecycleOwner = LocalLifecycleOwner.current
   DisposableEffect(lifecycleOwner) {
     val obs = LifecycleEventObserver { _, e ->
@@ -1444,6 +1463,8 @@ private fun HeaderBar(onScreensaver: () -> Unit, onClock: () -> Unit, onSleep: (
         showNameDay = ImmortalSettings.load(context).showNameDay
         showFeastDay = ImmortalSettings.load(context).showFeastDay
         showNextEvent = ImmortalSettings.load(context).showNextEvent
+        heyPkg = heyPackage(context)
+        showMiniPlayer = ImmortalSettings.load(context).showMiniPlayer
       }
     }
     lifecycleOwner.lifecycle.addObserver(obs)
@@ -1577,7 +1598,16 @@ private fun HeaderBar(onScreensaver: () -> Unit, onClock: () -> Unit, onSleep: (
         }
       }
     }
-    Spacer(Modifier.weight(1f))
+    // Mini-player — sits in the left action cluster, only while something's playing.
+    // When shown it takes the flexible space (so its text uses the header width before
+    // it scrolls); otherwise a weight spacer pushes the weather/date to the right.
+    val np = nowPlaying
+    if (showMiniPlayer && np != null && np.active) {
+      Spacer(Modifier.size(16.dp))
+      MiniPlayer(np, modifier = Modifier.weight(1f).padding(end = 16.dp))
+    } else {
+      Spacer(Modifier.weight(1f))
+    }
     Column(horizontalAlignment = Alignment.End) {
       Row(
           verticalAlignment = Alignment.CenterVertically,
@@ -1663,6 +1693,87 @@ private fun HeaderBar(onScreensaver: () -> Unit, onClock: () -> Unit, onSleep: (
           )
         }
       }
+    }
+  }
+}
+
+/**
+ * Home-header mini-player: the play/pause control is a round button the same size as
+ * the other header buttons, styled with the cover art (tap to toggle), with the
+ * title/artist alongside. The text takes the available header width and only scrolls
+ * (ticker) when a track genuinely overruns it. Driven by [NowPlayingHub].
+ */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun MiniPlayer(state: NowPlayingState, modifier: Modifier = Modifier) {
+  Row(modifier = modifier, verticalAlignment = Alignment.CenterVertically) {
+    // The album art IS the play/pause button — same 56dp circle as the other header
+    // buttons, just filled with the cover instead of a flat tint.
+    Box(
+        modifier = Modifier.size(56.dp).clip(CircleShape).tvFocusable(CircleShape) { NowPlayingHub.playPause() },
+        contentAlignment = Alignment.Center,
+    ) {
+      val bmp = state.artBitmap
+      if (bmp != null) {
+        Image(
+            bitmap = bmp.asImageBitmap(),
+            contentDescription = null,
+            contentScale = ContentScale.Crop,
+            modifier = Modifier.size(56.dp),
+        )
+      } else {
+        Box(Modifier.size(56.dp).background(Color(0x33FFFFFF)))
+      }
+      Box(Modifier.size(56.dp).background(Color(0x3D000000)), contentAlignment = Alignment.Center) {
+        PlayPauseGlyph(playing = state.state == PlaybackState.PLAYING)
+      }
+    }
+    Spacer(Modifier.size(14.dp))
+    Column(modifier = Modifier.weight(1f)) {
+      Text(
+          state.title,
+          color = Color.White,
+          fontSize = 18.sp,
+          fontWeight = FontWeight.Medium,
+          maxLines = 1,
+          modifier = Modifier.basicMarquee(),
+      )
+      if (state.artist.isNotBlank()) {
+        Text(
+            state.artist,
+            color = Color(0xFFB6B6B6),
+            fontSize = 14.sp,
+            maxLines = 1,
+            modifier = Modifier.padding(top = 1.dp).basicMarquee(),
+        )
+      }
+    }
+  }
+}
+
+@Composable
+private fun PlayPauseGlyph(playing: Boolean) {
+  Canvas(modifier = Modifier.size(30.dp)) {
+    val w = size.minDimension
+    if (playing) {
+      // Two slim, fully-rounded bars with a clear gap between them — close-set square
+      // bars blur into a single block from across the room.
+      val barW = w * 0.13f
+      val top = w * 0.24f
+      val barH = w * 0.52f
+      val r = CornerRadius(barW * 0.5f, barW * 0.5f)
+      drawRoundRect(Color.White, topLeft = Offset(w * 0.30f, top), size = Size(barW, barH), cornerRadius = r)
+      drawRoundRect(Color.White, topLeft = Offset(w * 0.57f, top), size = Size(barW, barH), cornerRadius = r)
+    } else {
+      drawPath(
+          Path().apply {
+            moveTo(w * 0.32f, w * 0.22f)
+            lineTo(w * 0.32f, w * 0.78f)
+            lineTo(w * 0.80f, w * 0.50f)
+            close()
+          },
+          Color.White,
+      )
     }
   }
 }
@@ -4148,16 +4259,16 @@ private fun NowPlayingTile(onClick: () -> Unit) {
 private fun NowPlayingOverlay(onDismiss: () -> Unit) {
   val context = androidx.compose.ui.platform.LocalContext.current
   val audioMgr = remember { context.getSystemService(Context.AUDIO_SERVICE) as AudioManager }
-  var listenerOn by remember { mutableStateOf(NowPlaying.listenerEnabled(context)) }
-  var track by remember { mutableStateOf<NowPlaying.Track?>(null) }
+  var listenerOn by remember { mutableStateOf(SettingsGuard.isMediaListenerEnabled(context)) }
+  var track by remember { mutableStateOf<NowPlayingState?>(null) }
   var playing by remember { mutableStateOf(audioMgr.isMusicActive) }
 
   // Re-check the listener grant on resume (the user may have just enabled it) and poll
   // the current track while open.
   LaunchedEffect(Unit) {
     while (true) {
-      listenerOn = NowPlaying.listenerEnabled(context)
-      track = if (listenerOn) withContext(Dispatchers.IO) { NowPlaying.current(context) } else null
+      listenerOn = SettingsGuard.isMediaListenerEnabled(context)
+      track = if (listenerOn) NowPlayingHub.current else null
       playing = audioMgr.isMusicActive
       delay(1_500)
     }
@@ -4180,7 +4291,7 @@ private fun NowPlayingOverlay(onDismiss: () -> Unit) {
           verticalArrangement = Arrangement.spacedBy(16.dp)) {
         Text("Now Playing", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Bold)
 
-        val art = track?.art
+        val art = track?.artBitmap
         if (art != null) {
           Image(bitmap = art.asImageBitmap(), contentDescription = null,
               modifier = Modifier.size(180.dp).clip(RoundedCornerShape(16.dp)))
@@ -4199,7 +4310,6 @@ private fun NowPlayingOverlay(onDismiss: () -> Unit) {
                 Text(track!!.artist, color = Color(0xFFBFBFBF), fontSize = 15.sp, maxLines = 1)
           }
           !listenerOn -> {
-            val canSelf = remember { NowPlaying.canSelfEnable(context) }
             Text("To show the track name and album art, give Immortal permission to read " +
                 "media notifications.", color = Color(0xFF9A9A9A), fontSize = 14.sp,
                 textAlign = TextAlign.Center)
@@ -4207,7 +4317,8 @@ private fun NowPlayingOverlay(onDismiss: () -> Unit) {
                 modifier = Modifier.tvFocusable(RoundedCornerShape(12.dp), focusScale = 1f) {
                   // Prefer flipping the secure setting ourselves (Portal's listener
                   // settings UI is unreliable); fall back to it only if we can't.
-                  if (NowPlaying.enableListener(context)) {
+                  SettingsGuard.enableMediaListener(context)
+                  if (SettingsGuard.isMediaListenerEnabled(context)) {
                     listenerOn = true
                   } else {
                     runCatching {
@@ -4217,7 +4328,7 @@ private fun NowPlayingOverlay(onDismiss: () -> Unit) {
                     }
                   }
                 }) {
-              Text(if (canSelf) "Enable now-playing" else "Enable now-playing access",
+              Text("Enable now-playing access",
                   color = Color.White, fontSize = 15.sp,
                   fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(horizontal = 18.dp, vertical = 10.dp))
             }

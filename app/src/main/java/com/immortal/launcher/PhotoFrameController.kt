@@ -14,16 +14,19 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Color
 import android.graphics.Matrix
+import android.graphics.Outline
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.os.BatteryManager
 import android.os.Handler
 import android.os.Looper
 import android.speech.tts.TextToSpeech
+import android.text.TextUtils
 import android.view.GestureDetector
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
+import android.view.ViewOutlineProvider
 import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
@@ -49,11 +52,15 @@ import org.json.JSONObject
  *
  * Source is configurable via [ScreensaverConfig]:
  *  - **default** — the built-in keyless photo feed (Lorem Picsum, or Unsplash if a
- *    key is supplied). This is also the fallback whenever a local source is unset,
- *    empty, or unreachable (e.g. a USB drive was unplugged), so the frame is never
- *    blank.
+ *    key is supplied). This is also the fallback whenever any other source is unset,
+ *    empty, or unreachable (e.g. a USB drive was unplugged, a shared album was
+ *    unshared), so the frame is never blank.
  *  - **folder** — photos and videos from a folder the user picked (internal, SD, or
  *    a USB-C drive), read through the Storage Access Framework.
+ *  - **url** — a public share link to an iCloud Shared Album or a Google Photos
+ *    shared album. Fetched once on start; the screensaver rotates through the
+ *    returned direct image URLs and silently falls back to the default feed if the
+ *    album can't be resolved.
  *
  * Weather is Open-Meteo + IP geolocation (both keyless). All network is best-effort.
  */
@@ -77,11 +84,6 @@ class PhotoFrameController(
   private lateinit var batteryDot: View
   private lateinit var weatherDot: View
   private var weatherText: String = ""
-  // Now-playing display (visible only when media is active).
-  private lateinit var nowPlayingRow: LinearLayout
-  private lateinit var nowPlayingArt: ImageView
-  private lateinit var nowPlayingText: TextView
-  private var nowPlayingPollCounter = 0
 
   // Ambient dashboard: full-screen glanceable info card shown periodically.
   private var dashboardPanel: View? = null
@@ -90,6 +92,15 @@ class PhotoFrameController(
   private lateinit var dashWeather: TextView
   private lateinit var dashEvent: TextView
   private var dashboardVisible = false
+
+  // Now-playing card (driven by the device's media session; hidden when nothing plays).
+  private lateinit var nowPlayingCard: LinearLayout
+  private lateinit var npArt: ImageView
+  private lateinit var npTitle: TextView
+  private lateinit var npArtist: TextView
+  private var lastArtUrl: String = ""
+  private var lastArtBitmap: Bitmap? = null
+  private var npListener: NowPlayingHub.Listener? = null
 
   private var settings = ScreensaverConfig.Settings()
 
@@ -111,6 +122,12 @@ class PhotoFrameController(
   // Bumped on every advance so a slow image-decode or an old video's completion
   // callback can tell it's been superseded and bow out.
   private var gen = 0
+
+  // Remote-album playback state (iCloud / Google Photos shared albums).
+  private var remoteMode = false
+  private var remoteUrls: List<String> = emptyList()
+  private var remoteIndex = -1
+  private var remoteFailStreak = 0
 
   // Web-feed history so swipes can go back as well as forward.
   private val history = ArrayList<Bitmap>()
@@ -208,30 +225,59 @@ class PhotoFrameController(
     if (showWelcome && settings.welcomeEnabled) showWelcomeOverlay()
     tick.run()
     refreshWeather.run()
-    if (settings.usesFolder) {
-      val path = settings.folderPath
-      if (path.isNullOrBlank()) {
-        startWeb()
-        return
-      }
-      io.execute {
-        val list =
-            if (LocalMedia.isAccessible(path)) LocalMedia.enumerate(path, settings.includeVideo)
-            else emptyList()
-        ui.post {
-          if (list.isNotEmpty()) {
-            playlist = if (settings.shuffle) list.shuffled() else list
-            localMode = true
-            localIndex = -1
-            advanceLocal(+1)
-          } else {
-            // Folder empty / unreachable → never leave the frame blank.
-            startWeb()
+    // Listen for now-playing updates (replays the current track immediately).
+    npListener = NowPlayingHub.Listener { state -> ui.post { updateNowPlaying(state) } }
+    NowPlayingHub.addListener(npListener!!)
+    when {
+      settings.usesFolder -> {
+        val path = settings.folderPath
+        if (path.isNullOrBlank()) {
+          startWeb()
+          return
+        }
+        io.execute {
+          val list =
+              if (LocalMedia.isAccessible(path)) LocalMedia.enumerate(path, settings.includeVideo)
+              else emptyList()
+          ui.post {
+            if (list.isNotEmpty()) {
+              playlist = if (settings.shuffle) list.shuffled() else list
+              localMode = true
+              localIndex = -1
+              advanceLocal(+1)
+            } else {
+              // Folder empty / unreachable → never leave the frame blank.
+              startWeb()
+            }
           }
         }
       }
-    } else {
-      startWeb()
+      settings.usesUrl -> {
+        val shareUrl = settings.albumUrl
+        if (shareUrl.isNullOrBlank()) {
+          startWeb()
+          return
+        }
+        val m = context.resources.displayMetrics
+        io.execute {
+          val album = RemoteAlbum.fetch(shareUrl, m.widthPixels, m.heightPixels)
+          val urls = album?.photoUrls.orEmpty()
+          ui.post {
+            if (urls.isNotEmpty()) {
+              remoteUrls = if (settings.shuffle) urls.shuffled() else urls
+              remoteMode = true
+              remoteIndex = -1
+              remoteFailStreak = 0
+              advanceRemote(+1)
+              scheduleRemoteRefresh()
+            } else {
+              // Album unshared / unreachable → never leave the frame blank.
+              startWeb()
+            }
+          }
+        }
+      }
+      else -> startWeb()
     }
   }
 
@@ -241,6 +287,8 @@ class PhotoFrameController(
     runCatching { gestureCamera?.stop() }
     gestureCamera = null
     runCatching { soundscape.stop() }
+    npListener?.let { NowPlayingHub.removeListener(it) }
+    npListener = null
     if (this::videoView.isInitialized) runCatching { videoView.stopPlayback() }
     tts?.stop()
     tts?.shutdown()
@@ -297,21 +345,6 @@ class PhotoFrameController(
     row.addView(weather)
     col.addView(row)
 
-    // Now-playing row: album art thumb + "title — artist", shown only when media plays.
-    nowPlayingRow = LinearLayout(context)
-    nowPlayingRow.orientation = LinearLayout.HORIZONTAL
-    nowPlayingRow.gravity = Gravity.CENTER_VERTICAL
-    nowPlayingRow.visibility = View.GONE
-    nowPlayingArt = ImageView(context)
-    val artLp = LinearLayout.LayoutParams(dp(48), dp(48))
-    artLp.setMargins(0, dp(10), dp(12), 0)
-    nowPlayingArt.layoutParams = artLp
-    nowPlayingArt.scaleType = ImageView.ScaleType.CENTER_CROP
-    nowPlayingText = text(20f, Color.WHITE, false)
-    nowPlayingRow.addView(nowPlayingArt)
-    nowPlayingRow.addView(nowPlayingText)
-    col.addView(nowPlayingRow)
-
     // Ambient dashboard panel — full-screen glanceable card, hidden until cycled in.
     dashboardPanel = buildDashboardPanel().also {
       it.visibility = View.GONE
@@ -323,6 +356,8 @@ class PhotoFrameController(
     welcomeOverlay.visibility = View.GONE
     root.addView(welcomeOverlay, FrameLayout.LayoutParams(MATCH, MATCH))
 
+    // Now-playing card (upstream now-playing stack): bottom-right album art + title/artist.
+    buildNowPlaying(root)
     return root
   }
 
@@ -452,6 +487,92 @@ class PhotoFrameController(
         .start()
   }
 
+  /** A now-playing card bottom-right (album art + track / artist), over the scrim.
+   *  Hidden until something is playing. */
+  private fun buildNowPlaying(root: FrameLayout) {
+    nowPlayingCard = LinearLayout(context)
+    nowPlayingCard.orientation = LinearLayout.HORIZONTAL
+    nowPlayingCard.gravity = Gravity.CENTER_VERTICAL
+    nowPlayingCard.visibility = View.GONE
+    val lp = FrameLayout.LayoutParams(WRAP, WRAP, Gravity.BOTTOM or Gravity.END)
+    lp.setMargins(0, 0, dp(40), dp(44))
+    root.addView(nowPlayingCard, lp)
+
+    // Text first, art second: the cover sits at the right edge and the title/artist
+    // hug it (right-aligned), so there's no dead horizontal space on a bottom-right card.
+    val npCol = LinearLayout(context)
+    npCol.orientation = LinearLayout.VERTICAL
+    npCol.gravity = Gravity.END
+    nowPlayingCard.addView(npCol, LinearLayout.LayoutParams(WRAP, WRAP))
+
+    // Explicit WRAP params: a vertical LinearLayout otherwise defaults children to
+    // MATCH_PARENT width, which pins the column to its first width and re-truncates
+    // longer titles when the track changes.
+    npTitle = text(26f, Color.WHITE, false)
+    npTitle.typeface = Typeface.DEFAULT_BOLD
+    npTitle.maxLines = 1
+    npTitle.ellipsize = TextUtils.TruncateAt.END
+    npTitle.gravity = Gravity.END
+    npTitle.maxWidth = dp(560)
+    npCol.addView(npTitle, LinearLayout.LayoutParams(WRAP, WRAP))
+
+    npArtist = text(18f, 0xCCFFFFFF.toInt(), false)
+    npArtist.maxLines = 1
+    npArtist.ellipsize = TextUtils.TruncateAt.END
+    npArtist.gravity = Gravity.END
+    npArtist.maxWidth = dp(560)
+    npCol.addView(npArtist, LinearLayout.LayoutParams(WRAP, WRAP))
+
+    npArt = ImageView(context)
+    npArt.scaleType = ImageView.ScaleType.CENTER_CROP
+    npArt.clipToOutline = true
+    npArt.outlineProvider =
+        object : ViewOutlineProvider() {
+          override fun getOutline(v: View, o: Outline) {
+            o.setRoundRect(0, 0, v.width, v.height, dp(10).toFloat())
+          }
+        }
+    val artLp = LinearLayout.LayoutParams(dp(72), dp(72))
+    artLp.setMarginStart(dp(16))
+    nowPlayingCard.addView(npArt, artLp)
+  }
+
+  /** Reflect the latest now-playing state (called on the main thread). */
+  private fun updateNowPlaying(s: NowPlayingState?) {
+    if (s == null || !s.active || !settings.showNowPlaying) {
+      nowPlayingCard.visibility = View.GONE
+      lastArtUrl = ""
+      lastArtBitmap = null
+      return
+    }
+    nowPlayingCard.visibility = View.VISIBLE
+    npTitle.text = s.title
+    npArtist.text = s.artist
+    npArtist.visibility = if (s.artist.isBlank()) View.GONE else View.VISIBLE
+    val bitmap = s.artBitmap
+    if (bitmap != null) {
+      // Native art is a ready, downscaled bitmap — set it directly (no decode/network).
+      if (bitmap !== lastArtBitmap) {
+        lastArtBitmap = bitmap
+        lastArtUrl = ""
+        npArt.visibility = View.VISIBLE
+        npArt.setImageBitmap(bitmap)
+      }
+    } else if (s.artUrl != lastArtUrl) {
+      // Fallback for URI-only metadata (no embedded bitmap): download/decode off-thread.
+      lastArtBitmap = null
+      lastArtUrl = s.artUrl
+      npArt.setImageBitmap(null)
+      val want = s.artUrl
+      npArt.visibility = if (want.isNotBlank()) View.VISIBLE else View.GONE
+      if (want.isNotBlank())
+          io.execute {
+            val bmp = runCatching { downloadBitmap(want) }.getOrNull()
+            ui.post { if (lastArtUrl == want) npArt.setImageBitmap(bmp) }
+          }
+    }
+  }
+
   private fun applyFit() {
     // Video letterboxes either way (VideoView limitation); images honour the choice.
     photo.scaleType =
@@ -495,31 +616,9 @@ class PhotoFrameController(
           weather.text = weatherText
           weather.visibility = if (hasWeather) View.VISIBLE else View.GONE
           weatherDot.visibility = if (hasWeather) View.VISIBLE else View.GONE
-          // Poll the active media session every ~3s for the now-playing display.
-          if (nowPlayingPollCounter % 3 == 0) updateNowPlaying()
-          nowPlayingPollCounter++
           ui.postDelayed(this, 1_000L)
         }
       }
-
-  /** Refresh the now-playing strip from the active media session. */
-  private fun updateNowPlaying() {
-    if (!this::nowPlayingRow.isInitialized) return
-    val track = runCatching { NowPlaying.current(context) }.getOrNull()
-    if (track != null && track.title.isNotBlank()) {
-      nowPlayingText.text =
-          if (track.artist.isNotBlank()) "♪ ${track.title} — ${track.artist}" else "♪ ${track.title}"
-      if (track.art != null) {
-        nowPlayingArt.setImageBitmap(track.art)
-        nowPlayingArt.visibility = View.VISIBLE
-      } else {
-        nowPlayingArt.visibility = View.GONE
-      }
-      nowPlayingRow.visibility = View.VISIBLE
-    } else {
-      nowPlayingRow.visibility = View.GONE
-    }
-  }
 
   // --- ambient dashboard ------------------------------------------------------
 
@@ -611,11 +710,19 @@ class PhotoFrameController(
 
   // --- navigation (branches on the active source) -----------------------------
   fun next() {
-    if (localMode) advanceLocal(+1) else webNext()
+    when {
+      localMode -> advanceLocal(+1)
+      remoteMode -> advanceRemote(+1)
+      else -> webNext()
+    }
   }
 
   fun prev() {
-    if (localMode) advanceLocal(-1) else webPrev()
+    when {
+      localMode -> advanceLocal(-1)
+      remoteMode -> advanceRemote(-1)
+      else -> webPrev()
+    }
   }
 
   // --- local folder playback --------------------------------------------------
@@ -739,9 +846,84 @@ class PhotoFrameController(
     }
   }
 
+  // --- remote album playback (iCloud / Google Photos public shares) -----------
+  private val remoteTick =
+      object : Runnable {
+        override fun run() {
+          advanceRemote(+1)
+        }
+      }
+
+  // Shuffle is applied once at start, not on refresh — re-shuffling every tick
+  // would scramble the user's current position.
+  private val remoteRefresh =
+      object : Runnable {
+        override fun run() {
+          if (!remoteMode) return
+          val shareUrl = settings.albumUrl
+          if (shareUrl.isNullOrBlank()) return
+          val m = context.resources.displayMetrics
+          io.execute {
+            val fresh = RemoteAlbum.fetch(shareUrl, m.widthPixels, m.heightPixels)
+            val urls = fresh?.photoUrls.orEmpty()
+            ui.post {
+              if (remoteMode && urls.isNotEmpty()) {
+                remoteUrls = urls
+                if (remoteIndex >= remoteUrls.size) remoteIndex = -1
+                remoteFailStreak = 0
+              }
+              scheduleRemoteRefresh()
+            }
+          }
+        }
+      }
+
+  private fun scheduleRemoteRefresh() {
+    ui.removeCallbacks(remoteRefresh)
+    ui.postDelayed(remoteRefresh, settings.albumRefreshMin * 60_000L)
+  }
+
+  private fun advanceRemote(dir: Int) {
+    ui.removeCallbacks(remoteTick)
+    if (remoteUrls.isEmpty()) {
+      startWeb()
+      return
+    }
+    // One failure per URL = the whole album is unreachable; bail to the web feed
+    // so a dead share doesn't spin 8-12s timeouts indefinitely.
+    if (remoteFailStreak >= remoteUrls.size) {
+      startWeb()
+      return
+    }
+    gen++
+    remoteIndex = ((remoteIndex + dir) % remoteUrls.size + remoteUrls.size) % remoteUrls.size
+    val url = remoteUrls[remoteIndex]
+    val g = gen
+    stopVideo()
+    io.execute {
+      val bmp = runCatching { downloadBitmap(url) }.getOrNull()
+      ui.post {
+        if (g != gen) return@post // superseded by a newer advance
+        if (!remoteMode) return@post // raced with startWeb() flipping us off
+        if (bmp == null) {
+          remoteFailStreak++
+          advanceRemote(+1)
+          return@post
+        }
+        remoteFailStreak = 0
+        photo.visibility = View.VISIBLE
+        show(bmp)
+        ui.postDelayed(remoteTick, intervalMs())
+      }
+    }
+  }
+
   // --- web feed (default + fallback) ------------------------------------------
   private fun startWeb() {
     localMode = false
+    remoteMode = false
+    ui.removeCallbacks(remoteTick)
+    ui.removeCallbacks(remoteRefresh)
     stopVideo()
     rotate.run()
   }

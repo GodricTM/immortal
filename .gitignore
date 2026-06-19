@@ -40,6 +40,10 @@ app/libs/*.aar
 # Optional local clock fonts; verify licenses before force-adding any .ttf.
 app/src/main/assets/fonts/*.ttf
 
+# Per-device fleet inventory written by `provision.sh --fleet`. Contains each
+# device's agent auth TOKEN — never commit (the repo is public).
+provisioning/fleet/
+
 # Internal strategy/planning notes — never publish.
 _planning/
 CHANGELOG_IMMORTAL.md

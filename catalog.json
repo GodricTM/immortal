@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "updated": "2026-06-13",
+  "updated": "2026-06-17",
   "note": "Portal app catalog, schema v2. All v2 fields are ADDITIVE so v1 clients keep working. Entries with source 'fdroid' resolve the current APK at install time via the F-Droid API, so they never go stale. Entries with source 'url' use a direct apkUrl (use this for your own custom Portal apps). Multi-ABI apps (e.g. VLC) ship separate per-architecture APKs on F-Droid; pin the arm64-v8a build with 'versionCode' since Portal is arm64. New in v2: iconUrl (https PNG; omit to get a monogram tile), author, homepage, submittedBy (community credit), longDescription (detail page), devices (['touch','tv'] — omit when the app runs on every Portal). minSdk drives the compatibility badge: the first-gen Portal/Portal+ and Portal TV are API 28, the 2019/2021 models are API 29.",
   "categories": [
     {
@@ -79,6 +79,18 @@
           "iconUrl": "https://f-droid.org/repo/org.y20k.transistor/en-US/icon.png",
           "author": "y20k",
           "homepage": "https://codeberg.org/y20k/transistor"
+        },
+        {
+          "name": "Snapcast",
+          "packageName": "de.badaix.snapcast",
+          "source": "fdroid",
+          "fdroidId": "de.badaix.snapcast",
+          "minSdk": 21,
+          "description": "Synchronized multi-room audio — play music in perfect sync across Portals.",
+          "longDescription": "The official Snapcast client and player. Point it at a Snapcast (or Music Assistant) server on your network and the Portal becomes a synchronized speaker — every room plays the same audio in sync, Sonos-style. Bundles the native player, needs no Google services, and runs on every Portal. Note: this is the stock app for testing the multi-room setup; an Immortal-native always-on companion is on the roadmap (see snapcast-multiroom.md).",
+          "iconUrl": "https://f-droid.org/repo/de.badaix.snapcast/en-US/icon.png",
+          "author": "badaix",
+          "homepage": "https://github.com/badaix/snapcast"
         }
       ]
     },
@@ -196,6 +208,7 @@
           "packageName": "moe.shizuku.privileged.api",
           "source": "url",
           "apkUrl": "https://github.com/RikkaApps/Shizuku/releases/download/v13.6.0/shizuku-v13.6.0.r1086.2650830c-release.apk",
+          "versionCode": 1086,
           "minSdk": 23,
           "description": "Lets apps like Aurora install silently on a Gen-1 Portal.",
           "longDescription": "Gives selected apps shell-level powers over ADB — the piece that lets Aurora Store install apps silently on a first-gen Portal. After installing, run the kit's --shizuku step to start it, and re-run after a reboot.",
@@ -261,6 +274,7 @@
           "packageName": "com.portal.calendar",
           "source": "url",
           "apkUrl": "https://github.com/thefloppytaco/portal-calendar/releases/download/v2.10/portal-calendar-v2.10.apk",
+          "versionCode": 18,
           "minSdk": 28,
           "description": "Turn a Portal into an always-on family calendar and chore board.",
           "longDescription": "A Skylight-style family hub built for the Portal: multi-calendar sync, two-way Google events, shared lists, meal planning, and a kids' chore board with stars. Designed to live on the wall or counter and stay on all day.",
@@ -273,6 +287,7 @@
           "packageName": "com.family.hippomuncher",
           "source": "url",
           "apkUrl": "https://github.com/veereshai/HippoMuncher/releases/latest/download/HippoMuncher.apk",
+          "versionCode": 1,
           "minSdk": 28,
           "description": "Head-tracking arcade game — tilt your head to feed the hungry hippo.",
           "longDescription": "A hands-free family game made for the Portal's front camera: on-device face detection lets you steer a hungry hippo by tilting your head to catch falling fruit while dodging bombs. Three difficulty levels, per-difficulty high scores, and full sound effects.",
@@ -286,6 +301,7 @@
           "packageName": "com.portal.isstracker",
           "source": "url",
           "apkUrl": "https://github.com/compscirunner/portal-iss-tracker/releases/latest/download/space-portal.apk",
+          "versionCode": 2,
           "minSdk": 24,
           "description": "NASA-branded space dashboard — live ISS video, ground track, crew & launches.",
           "longDescription": "An always-on space dashboard built for the Portal: live ISS video feed, real-time ground track, current crew, space weather, upcoming launches, and Deep Space Network status — all from keyless public APIs, no Google services. Designed to live on the wall or counter and stay on all day.",

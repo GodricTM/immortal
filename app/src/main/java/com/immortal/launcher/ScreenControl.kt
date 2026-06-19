@@ -32,6 +32,19 @@ object ScreenControl {
   fun isAdminActive(context: Context): Boolean =
       runCatching { dpm(context).isAdminActive(admin(context)) }.getOrDefault(false)
 
+  /**
+   * Deactivate our own device admin. An app can always remove its OWN active admin
+   * (no privileged force-remove needed — unlike `dpm remove-active-admin` from the
+   * shell, which Android blocks for a non-test admin). This is what lets Immortal be
+   * cleanly uninstalled (`adb uninstall` is otherwise refused while the admin is
+   * active). Turns off the idle / overnight screen-off features until re-activated.
+   */
+  fun deactivateAdmin(context: Context) {
+    runCatching { dpm(context).removeActiveAdmin(admin(context)) }
+        .onSuccess { Log.i(TAG, "device admin deactivated") }
+        .onFailure { Log.w(TAG, "couldn't deactivate admin", it) }
+  }
+
   /** Blank the screen now, if we hold the device-admin force-lock policy. */
   fun sleep(context: Context) {
     if (!isAdminActive(context)) {
