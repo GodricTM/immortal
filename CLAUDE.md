@@ -8,8 +8,8 @@ app ecosystem so the hardware stays useful.
 
 | Device         | Android | API | Notes                              |
 | -------------- | ------- | --- | ---------------------------------- |
-| Portal / Portal+ (gen-1) | 9  | 28  | Broken system installer; daemon required for silent install |
-| Portal Go / Portal Mini / Portal+ (gen-2) | 10 | 29 | Working installer; daemon optional |
+| Portal / Portal+ (gen-1) | 9  | 28  | Installer dialog auto-confirmed by InstallConfirmService (daemon retired — see App installation) |
+| Portal Go / Portal Mini / Portal+ (gen-2) | 10 | 29 | Working system installer |
 | Portal TV      | 10      | 29  | D-pad only, no touchscreen, Leanback launcher |
 
 **Critical constraints:**
@@ -128,7 +128,10 @@ LanAudio              — server-less LAN PCM-over-TCP audio for IntercomActivit
 TimeProgress          — week/month/year progress bars, 365-day year dots, fading
                         month grid (dashboard card); plus the live SunArc in the home header.
 
-InstallDaemon         — client for the provisioning-kit shell daemon (silent install)
+InstallDaemon         — legacy client for the (retired) shell-daemon installer; the
+                        legacyInstaller()/installerDialogFixed() gates are kept in case
+                        the system-installer path ever needs the daemon again (see
+                        "App installation")
 UpdateManager         — self-update: fetches release JSON, downloads APK, installs
 StoreCatalog          — parses catalog.json, fetches latest APK URLs
 
@@ -200,16 +203,24 @@ directory; also surfaced as the home-screen "Reportal" tool shortcut).
 Test locally with `node scripts/widget-serve.js 8099`, then open
 `http://<pc-lan-ip>:8099/<widget>/index.html?...` in the Portal browser. See `widgets/README.md`.
 
-## Silent install daemon
+## App installation
 
-The provisioning kit starts `installd.sh` as the `shell` user via ADB. It watches
-`$externalFiles/installq/` and installs any `.apk` dropped there, renaming to
-`.apk.done` or `.apk.failed`. Immortal checks for a `.heartbeat` file (freshness
-window: 20s) to decide if the daemon is alive.
+Apps install through the **standard Android system installer** (`PackageInstaller`) on
+every model — App Store, sideloading, and self-update. The gen-1 Portal+ (API 28)
+historically had a broken installer dialog; that is now handled by **`InstallConfirmService`**
+(an accessibility service that auto-confirms the install dialog), which persists across
+reboots, so gen-1 needs no special install path anymore.
 
-Gen-1 Portal (API 28) **requires** the daemon — the stock system installer dialog
-is broken on that firmware. `InstallDaemon.legacyInstaller()` returns `true` on
-API < 29. Gen-2 models fall back gracefully to `PackageInstaller`.
+> **Note — the retired silent-install daemon (kept here in case we need it again).**
+> Before upstream 1.40 (commit `2ee772b`), gen-1 used a shell-privileged daemon
+> (`provisioning/installd.sh`, started over ADB as the `shell` user) that watched
+> `$externalFiles/installq/` for dropped `.apk`s, renaming them `.apk.done`/`.apk.failed`,
+> with a `.heartbeat` freshness file (20s window). It was removed because the
+> `InstallConfirmService` fix persists on its own. The **client still exists in the code**:
+> `InstallDaemon.legacyInstaller()` (true on API < 29) and `installerDialogFixed()`.
+> **If the system-installer path ever proves unreliable on a real gen-1 unit, revive the
+> daemon:** restore the script with `git show <pre-1.40-commit>:provisioning/installd.sh`
+> (e.g. from `backup-pre-upstream-merge`) and re-wire the provisioning kit to start it.
 
 ## Screensaver / presence interaction
 
