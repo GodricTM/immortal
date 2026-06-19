@@ -258,33 +258,6 @@
           "submittedBy": "starbrightlab"
         },
         {
-          "name": "Portal Calendar",
-          "packageName": "com.portal.calendar",
-          "source": "url",
-          "apkUrl": "https://github.com/thefloppytaco/portal-calendar/releases/download/v2.10/portal-calendar-v2.10.apk",
-          "versionCode": 18,
-          "minSdk": 28,
-          "description": "Turn a Portal into an always-on family calendar and chore board.",
-          "longDescription": "A Skylight-style family hub built for the Portal: multi-calendar sync, two-way Google events, shared lists, meal planning, and a kids' chore board with stars. Designed to live on the wall or counter and stay on all day.",
-          "author": "thefloppytaco",
-          "homepage": "https://github.com/thefloppytaco/portal-calendar",
-          "submittedBy": "thefloppytaco"
-        },
-        {
-          "name": "HippoMuncher",
-          "packageName": "com.family.hippomuncher",
-          "source": "url",
-          "apkUrl": "https://github.com/veereshai/HippoMuncher/releases/latest/download/HippoMuncher.apk",
-          "versionCode": 1,
-          "minSdk": 28,
-          "description": "Head-tracking arcade game — tilt your head to feed the hungry hippo.",
-          "longDescription": "A hands-free family game made for the Portal's front camera: on-device face detection lets you steer a hungry hippo by tilting your head to catch falling fruit while dodging bombs. Three difficulty levels, per-difficulty high scores, and full sound effects.",
-          "iconUrl": "https://raw.githubusercontent.com/veereshai/HippoMuncher/main/app/src/main/ic_launcher-playstore.png",
-          "author": "veereshai",
-          "homepage": "https://github.com/veereshai/HippoMuncher",
-          "submittedBy": "veereshai"
-        },
-        {
           "name": "Portal Checkers",
           "packageName": "com.portal.checkers",
           "source": "url",
@@ -302,7 +275,7 @@
           "name": "Portal Overlays",
           "packageName": "com.portal.overlays",
           "source": "url",
-          "apkUrl": "https://github.com/GodricTM/PortalOverlays/releases/latest/download/portal-overlays.apk",
+          "apkUrl": "https://github.com/GodricTM/PortalOverlays/releases/download/v1.4/PortalOverlays-v1.4-release.apk",
           "versionCode": 1,
           "minSdk": 28,
           "description": "Floating Back, Home, Recents, widgets, and notifications for Portal.",
