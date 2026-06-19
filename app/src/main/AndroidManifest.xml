@@ -35,18 +35,10 @@
     <uses-permission android:name="android.permission.WRITE_SECURE_SETTINGS"
         tools:ignore="ProtectedPermissions" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
-    <!-- Fleet Agent: a foreground service so WiFi device management survives a
-         reboot on these non-root Portals (where adb-over-WiFi can't). -->
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <!-- Multi-room now-playing: a media-session foreground service (see
          MultiRoomService). Harmless/unused on the Portal's Android 9/10, where the
          per-type FGS rules don't apply. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
-    <!-- Lets the headless fleet agent surface the package-installer confirm dialog
-         (which InstallConfirmService then auto-confirms) — holding it also exempts
-         the agent from Android 10's background-activity-start restriction. Granted
-         by provisioning; harmless if not held (the agent reports install mode). -->
-    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <!-- Lets the fleet agent's /logcat endpoint read system-wide logs. READ_LOGS is
          signature|privileged|development; the "development" flag means provisioning
          can grant it via `pm grant`. Without it the agent sees only its own logs. -->
