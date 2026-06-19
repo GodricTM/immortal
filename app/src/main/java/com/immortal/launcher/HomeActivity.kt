@@ -144,6 +144,7 @@ import android.media.AudioManager
 import android.net.TrafficStats
 import android.net.wifi.WifiManager
 import android.view.KeyEvent
+import android.view.SoundEffectConstants
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.res.painterResource
 import java.io.File
@@ -177,6 +178,17 @@ class HomeActivity : ComponentActivity() {
     if (SleepScheduler.isOvernightNow(this)) ScreenControl.sleep(this)
   }
   private var overnightWindow = false
+
+  override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+    if (event.action == KeyEvent.ACTION_DOWN &&
+        event.repeatCount == 0 &&
+        (event.keyCode == KeyEvent.KEYCODE_VOLUME_UP ||
+            event.keyCode == KeyEvent.KEYCODE_VOLUME_DOWN ||
+            event.keyCode == KeyEvent.KEYCODE_VOLUME_MUTE)) {
+      window.decorView.playSoundEffect(SoundEffectConstants.CLICK)
+    }
+    return super.dispatchKeyEvent(event)
+  }
 
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
