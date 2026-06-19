@@ -39,6 +39,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -55,9 +56,12 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import com.immortal.launcher.ui.theme.SampleAppTheme
 
 /**
@@ -751,6 +755,66 @@ private fun ImmortalSettingsScreen(
       }
 
       Spacer(Modifier.size(26.dp))
+
+      Spacer(Modifier.size(26.dp))
+
+      SectionLabel("System sounds")
+      Card {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(18.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+          var soundsOn by remember { mutableStateOf(SystemSounds.touchSoundsEnabled(context)) }
+          var needsGrant by remember { mutableStateOf(false) }
+          // Re-read on resume: the value may have changed on the grant screen.
+          val lifecycleOwner = LocalLifecycleOwner.current
+          DisposableEffect(lifecycleOwner) {
+            val obs = LifecycleEventObserver { _, event ->
+              if (event == Lifecycle.Event.ON_RESUME) {
+                soundsOn = SystemSounds.touchSoundsEnabled(context)
+                if (SystemSounds.canWrite(context)) needsGrant = false
+              }
+            }
+            lifecycleOwner.lifecycle.addObserver(obs)
+            onDispose { lifecycleOwner.lifecycle.removeObserver(obs) }
+          }
+          Column(modifier = Modifier.weight(1f)) {
+            Text("Touch & keypress sounds", color = Color.White, fontSize = 17.sp)
+            Text(
+                "The system-wide click sounds (keyboard taps, lock, dock). Portal ships " +
+                    "these off, which also mutes any click the launcher plays.",
+                color = Color(0xFF9A9A9A),
+                fontSize = 13.sp,
+                modifier = Modifier.padding(top = 2.dp),
+            )
+            if (needsGrant) {
+              Text(
+                  "Needs \"Modify system settings\" — opening that screen so you can allow it.",
+                  color = Color(0xFFE0A030),
+                  fontSize = 13.sp,
+                  modifier = Modifier.padding(top = 4.dp),
+              )
+            }
+          }
+          Segmented(
+              options =
+                  listOf(
+                      "Off" to "off",
+                      "On" to "on",
+                  ),
+              selected = if (soundsOn) "on" else "off",
+              onSelect = {
+                val on = it == "on"
+                if (!SystemSounds.canWrite(context)) {
+                  needsGrant = true
+                  SystemSounds.requestWriteAccess(context)
+                } else if (SystemSounds.setTouchSounds(context, on)) {
+                  soundsOn = on
+                }
+              },
+          )
+        }
+      }
 
       Spacer(Modifier.size(26.dp))
 

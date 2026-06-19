@@ -45,6 +45,14 @@
     <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
     <!-- Header volume button: adjust media volume. -->
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+    <!-- Quick-settings brightness + the "Touch & keypress sounds" toggle write
+         Settings.System (SCREEN_BRIGHTNESS / SOUND_EFFECTS_ENABLED). This is the
+         app-op "Modify system settings": grant it via the system screen the toggle
+         opens, or from the provisioning kit with
+         `appops set com.immortal.launcher android:write_settings allow`. Best-effort
+         no-op if not granted. -->
+    <uses-permission android:name="android.permission.WRITE_SETTINGS"
+        tools:ignore="ProtectedPermissions" />
     <!-- "Leave a note" voice memo: record a short message from the handset mic. -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
 
