@@ -156,14 +156,30 @@ EOF
 }
 
 # ----- individual actions ----------------------------------------------------
+# Resolve a download URL for the signed release APK. An explicit RELEASE_APK_URL
+# wins (pin a specific build); otherwise ask GitHub for the latest release on
+# RELEASE_REPO and pick its first .apk asset — so versioned asset names
+# (immortal-<version>.apk) keep working without editing this kit every release.
+resolve_release_apk_url() {
+  if [ -n "${RELEASE_APK_URL:-}" ]; then printf '%s\n' "$RELEASE_APK_URL"; return 0; fi
+  [ -n "${RELEASE_REPO:-}" ] || return 1
+  curl -fsSL -H "Accept: application/vnd.github+json" \
+    "https://api.github.com/repos/${RELEASE_REPO}/releases/latest" 2>/dev/null \
+    | grep -o '"browser_download_url"[[:space:]]*:[[:space:]]*"[^"]*\.apk"' \
+    | head -1 \
+    | sed 's/.*"\(https[^"]*\)".*/\1/'
+}
+
 install_client() {
   local apk
   apk="$(ls $APK_GLOB 2>/dev/null | head -1)"
-  if [ -z "$apk" ] && [ -n "${RELEASE_APK_URL:-}" ]; then
+  if [ -z "$apk" ]; then
+    local url; url="$(resolve_release_apk_url)"
+    [ -n "$url" ] || die "No local APK in apks/ and couldn't resolve a release APK. Drop a signed APK in apks/, or set RELEASE_APK_URL / RELEASE_REPO in config.env."
     step "No local APK — downloading the latest Immortal release"
     mkdir -p "$(dirname "$APK_GLOB")"
     apk="$(dirname "$APK_GLOB")/immortal.apk"
-    curl -fL "$RELEASE_APK_URL" -o "$apk" || die "Could not download the release APK. Check your connection."
+    curl -fL "$url" -o "$apk" || die "Could not download the release APK. Check your connection."
     ok "Downloaded $(basename "$apk")"
   fi
   [ -n "$apk" ] || die "No client APK found matching '$APK_GLOB'. Drop your signed APK in apks/."
@@ -303,10 +319,18 @@ grant_perms() {
   # apps" toggle is non-functional, so grant the source op directly here; combined with the
   # Gen-1 installer-overlay fix, the confirm dialog is then visible and usable.
   a shell appops set "$PKG" REQUEST_INSTALL_PACKAGES allow >/dev/null 2>&1
-  # Device admin (force-lock only): lets Immortal turn the screen off for its idle
-  # and overnight sleep features via lockNow(). Harmless if it can't be set.
-  a shell dpm set-active-admin "$PKG/.AdminReceiver" >/dev/null 2>&1 \
-    && ok "Screen-off (device admin) enabled" || true
+  # Lets the app switcher (Quick buttons) list recently-used apps via UsageStatsManager —
+  # getRecentTasks can't see other apps since Android 5. Harmless when the feature is off.
+  a shell appops set "$PKG" GET_USAGE_STATS allow >/dev/null 2>&1
+  # Device admin (force-lock only): lets Immortal turn the screen off for its idle and
+  # overnight sleep features (and the Home Assistant screen control) via lockNow(). Warn
+  # rather than swallow a failure — without it, screen-off silently won't work, which is a
+  # confusing thing to debug after the fact.
+  if a shell dpm set-active-admin "$PKG/.AdminReceiver" 2>&1 | grep -q "Success"; then
+    ok "Screen-off (device admin) enabled"
+  else
+    warn "Couldn't enable screen-off device admin — screensaver sleep and the Home Assistant screen control won't work on this device. Re-run setup; if it keeps failing, check Device health in Immortal settings."
+  fi
   # Lets Immortal read the device's active media sessions (native now-playing) for
   # the screensaver card + header mini-player. `cmd notification allow_listener`
   # writes the secure setting AND rebinds the listener reliably on A9/A10. The app

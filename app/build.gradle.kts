@@ -32,8 +32,8 @@ android {
     applicationId = "com.immortal.launcher"
     minSdk = 24
     targetSdk = 36
-    versionCode = 41
-    versionName = "1.40"
+    versionCode = 43
+    versionName = "1.42"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
@@ -60,7 +60,19 @@ android {
     release {
       isMinifyEnabled = false
       proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
-      if (keystorePropsFile.exists()) signingConfig = signingConfigs.getByName("release")
+      if (keystorePropsFile.exists()) {
+        signingConfig = signingConfigs.getByName("release")
+      } else if (gradle.startParameter.taskNames.any { it.contains("Release", ignoreCase = true) }) {
+        // Every Immortal release MUST be signed with the same key for in-place
+        // self-update to work. Without keystore.properties the release would be
+        // unsigned (or debug-signed), which SILENTLY breaks self-update on devices
+        // (signature mismatch). Fail loudly instead of shipping a mis-signed build.
+        throw GradleException(
+            "Release build requires signing but no keystore.properties was found " +
+                "(looked at ${keystorePropsFile.path}). Provide it (see the signing " +
+                "comment above) or build a debug variant — refusing to produce an " +
+                "unsigned/mis-signed release.")
+      }
     }
     debug {
     }

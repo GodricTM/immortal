@@ -1,6 +1,6 @@
 {
-  "versionCode": 42,
-  "versionName": "1.41",
+  "versionCode": 44,
+  "versionName": "1.43",
   "apkUrl": "https://github.com/starbrightlab/immortal/releases/latest/download/immortal.apk",
-  "notes": "Immortal 1.41 — merges upstream 1.40 (multi-room audio, now-playing on every Portal, and the provisioning overhaul) into the @GodricTM feature fork (ISS, aurora, sunrise, lamp, kitchen timers, room ping, chimes and more), plus a new system-wide touch & keypress sounds toggle."
+  "notes": "Immortal 1.43 — merges upstream 1.42 (top-bar app switcher, Home Assistant integration, multi-room setup polish) into the @GodricTM feature fork (ISS, aurora, sunrise, lamp, kitchen timers, room ping, chimes, system-wide touch & keypress sounds and more)."
 }

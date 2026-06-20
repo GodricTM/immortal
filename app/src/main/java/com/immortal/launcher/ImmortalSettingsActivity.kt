@@ -107,6 +107,8 @@ private fun ImmortalSettingsScreen(
   val context = LocalContext.current
   var showBootApps by remember { mutableStateOf(false) }
   var showMultiRoom by remember { mutableStateOf(false) }
+  var showMqtt by remember { mutableStateOf(false) }
+  var showHealth by remember { mutableStateOf(false) }
   var bootSelected by remember { mutableStateOf(BootLaunch.packages(context).toSet()) }
 
   if (showBootApps) {
@@ -124,12 +126,22 @@ private fun ImmortalSettingsScreen(
     MultiRoomScreen(onBack = { showMultiRoom = false })
     return
   }
+  if (showMqtt) {
+    MqttScreen(onBack = { showMqtt = false })
+    return
+  }
+  if (showHealth) {
+    DeviceHealthScreen(onBack = { showHealth = false })
+    return
+  }
 
   SettingsMain(
       bootCount = bootSelected.size,
       onOpenBootApps = { showBootApps = true },
       onOpenMultiRoom = { showMultiRoom = true },
       onAccentChange = onAccentChange,
+      onOpenMqtt = { showMqtt = true },
+      onOpenHealth = { showHealth = true },
   )
 }
 
@@ -139,6 +151,8 @@ private fun SettingsMain(
     onOpenBootApps: () -> Unit,
     onOpenMultiRoom: () -> Unit,
     onAccentChange: ((String) -> Unit)? = null,
+    onOpenMqtt: () -> Unit,
+    onOpenHealth: () -> Unit,
 ) {
   val context = LocalContext.current
   var settings by remember { mutableStateOf(ImmortalSettings.load(context)) }
@@ -958,10 +972,14 @@ private fun SettingsMain(
       Spacer(Modifier.size(26.dp))
       MultiRoomNavRow(onOpen = onOpenMultiRoom)
 
+      MqttNavRow(onOpen = onOpenMqtt)
+
+      QuickButtonsSection()
+
       Spacer(Modifier.size(26.dp))
       BootAppsNavRow(count = bootCount, onOpen = onOpenBootApps)
 
-      DeviceAdminRow()
+      DeviceHealthNavRow(onOpen = onOpenHealth)
 
       Text(
           "Changes apply as soon as you go back to the home screen.",
@@ -1363,6 +1381,331 @@ private fun MultiRoomScreen(onBack: () -> Unit) {
   }
 }
 
+/**
+ * "Quick buttons" section: a centered overlay button cluster at the top of the screen (v1: an
+ * app switcher). Enable it, and choose whether it shows only while the top bar is revealed
+ * (default) or always.
+ */
+@Composable
+private fun QuickButtonsSection() {
+  val context = LocalContext.current
+  var enabled by remember { mutableStateOf(QuickBarConfig.isEnabled(context)) }
+  var always by remember { mutableStateOf(QuickBarConfig.alwaysShow(context)) }
+
+  Spacer(Modifier.size(26.dp))
+  SectionLabel("Quick buttons")
+  Card {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(18.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+      Column(modifier = Modifier.weight(1f)) {
+        Text("Top-bar app switcher", color = Color.White, fontSize = 17.sp)
+        Text(
+            "A centered button at the top that opens your recent apps to switch between them.",
+            color = Color(0xFF9A9A9A),
+            fontSize = 13.sp,
+            modifier = Modifier.padding(top = 2.dp),
+        )
+      }
+      Segmented(
+          options = listOf("Off" to "off", "On" to "on"),
+          selected = if (enabled) "on" else "off",
+          onSelect = {
+            val on = it == "on"
+            enabled = on
+            QuickBarConfig.setEnabled(context, on)
+            // Enabling the bar watcher both detects the bar and hosts the cluster overlay; it
+            // runs only while the feature is on, so this is the whole on/off switch.
+            SettingsGuard.setBarWatchEnabled(context, on)
+          },
+      )
+    }
+    if (enabled) {
+      Divider()
+      Row(
+          modifier = Modifier.fillMaxWidth().padding(18.dp),
+          verticalAlignment = Alignment.CenterVertically,
+      ) {
+        Column(modifier = Modifier.weight(1f)) {
+          Text("When to show", color = Color.White, fontSize = 17.sp)
+          Text(
+              "Swipe down from the top to reveal the bar (and the buttons), or keep them always on.",
+              color = Color(0xFF9A9A9A),
+              fontSize = 13.sp,
+              modifier = Modifier.padding(top = 2.dp),
+          )
+        }
+        Segmented(
+            options = listOf("With bar" to "bar", "Always" to "always"),
+            selected = if (always) "always" else "bar",
+            onSelect = {
+              val a = it == "always"
+              always = a
+              QuickBarConfig.setAlwaysShow(context, a)
+              QuickBar.applyConfig()
+            },
+        )
+      }
+    }
+  }
+  Text(
+      "Needs the accessibility-based top-bar watch enabled during setup. The switcher shows your " +
+          "recently used apps; tap one to switch.",
+      color = Color(0xFF7C7C7C),
+      fontSize = 13.sp,
+      modifier = Modifier.padding(top = 10.dp, start = 4.dp, end = 4.dp),
+  )
+}
+
+/**
+ * Nav row into the Home Assistant (MQTT) subpage. Always shown — no companion app needed;
+ * the subtitle reflects whether publishing is on and the live connection status.
+ */
+@Composable
+private fun MqttNavRow(onOpen: () -> Unit) {
+  val context = LocalContext.current
+  Spacer(Modifier.size(26.dp))
+  SectionLabel("Home Assistant")
+  Card {
+    Row(
+        modifier = Modifier.fillMaxWidth().tvFocusableRow { onOpen() }.padding(18.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+      Column(modifier = Modifier.weight(1f)) {
+        Text("Home Assistant (MQTT)", color = Color.White, fontSize = 17.sp)
+        Text(
+            if (MqttConfig.isEnabled(context)) MqttStatus.text.ifBlank { "On" } else "Off",
+            color = Color(0xFF9A9A9A),
+            fontSize = 13.sp,
+            modifier = Modifier.padding(top = 2.dp),
+        )
+      }
+      Text("›", color = Color(0xFF7C7C7C), fontSize = 26.sp)
+    }
+  }
+}
+
+/**
+ * The Home Assistant (MQTT) subpage: publish this Portal to Home Assistant as auto-
+ * discovered entities (presence, screen, battery, now-playing, controls) over a local
+ * MQTT broker. Off by default; Back returns to the main settings page.
+ */
+@Composable
+private fun MqttScreen(onBack: () -> Unit) {
+  val context = LocalContext.current
+  var enabled by remember { mutableStateOf(MqttConfig.isEnabled(context)) }
+  var host by remember { mutableStateOf(MqttConfig.host(context)) }
+  var port by remember { mutableStateOf(MqttConfig.port(context).toString()) }
+  var user by remember { mutableStateOf(MqttConfig.username(context)) }
+  var pass by remember { mutableStateOf(MqttConfig.password(context)) }
+  // MqttStatus is a plain holder updated off the main thread, so poll it for live
+  // "Connecting… → Connected" feedback (Compose won't recompose on its writes).
+  var status by remember { mutableStateOf(MqttStatus.text) }
+  LaunchedEffect(Unit) {
+    while (true) {
+      status = MqttStatus.text
+      kotlinx.coroutines.delay(800)
+    }
+  }
+
+  val firstFocus = remember { FocusRequester() }
+  LaunchedEffect(Unit) { runCatching { firstFocus.requestFocus() } }
+  val focusManager = LocalFocusManager.current
+  val portFocus = remember { FocusRequester() }
+  val userFocus = remember { FocusRequester() }
+  val passFocus = remember { FocusRequester() }
+
+  fun apply() {
+    MqttConfig.setHost(context, host)
+    MqttConfig.setPort(context, port.toIntOrNull() ?: MqttConfig.DEFAULT_PORT)
+    MqttConfig.setUsername(context, user)
+    MqttConfig.setPassword(context, pass)
+    MqttService.sync(context)
+  }
+
+  Column(
+      modifier =
+          Modifier.fillMaxSize()
+              .onPreviewKeyEvent { e ->
+                if (e.key == Key.Back) {
+                  if (e.type == KeyEventType.KeyUp) onBack()
+                  true
+                } else false
+              }
+              .background(Color(0xFF101012))
+              .verticalScroll(rememberScrollState())
+              .padding(horizontal = 28.dp, vertical = 32.dp),
+  ) {
+    Column(modifier = Modifier.widthIn(max = 1100.dp).focusGroup()) {
+      Surface(
+          color = Color(0xFF1C1C1E),
+          shape = RoundedCornerShape(12.dp),
+          modifier =
+              Modifier.focusRequester(firstFocus).tvFocusable(RoundedCornerShape(12.dp)) { onBack() },
+      ) {
+        Text(
+            "‹  Back",
+            color = Color.White,
+            fontSize = 16.sp,
+            modifier = Modifier.padding(horizontal = 18.dp, vertical = 10.dp),
+        )
+      }
+      Spacer(Modifier.size(18.dp))
+
+      Text("Home Assistant", color = Color.White, fontSize = 34.sp, fontWeight = FontWeight.SemiBold)
+      Text(
+          "Publish this Portal to Home Assistant as auto-discovered entities — presence, " +
+              "screen, battery, now-playing, and controls — over your MQTT broker.",
+          color = Color(0xFF9A9A9A),
+          fontSize = 16.sp,
+          modifier = Modifier.padding(top = 6.dp),
+      )
+      Spacer(Modifier.size(22.dp))
+      Card {
+        Column(modifier = Modifier.padding(18.dp)) {
+          Text("Setting it up", color = Color.White, fontSize = 17.sp)
+          MultiRoomStep(
+              "1",
+              "In Home Assistant, add the Mosquitto broker add-on (Settings → Add-ons) and the " +
+                  "MQTT integration. New to MQTT? See home-assistant.io/integrations/mqtt")
+          MultiRoomStep(
+              "2", "Turn on the toggle below and enter your broker's address (and login, if any).")
+          MultiRoomStep(
+              "3",
+              "This Portal appears automatically under Settings → Devices as a new MQTT device — " +
+                  "no YAML needed.")
+        }
+      }
+      Spacer(Modifier.size(26.dp))
+      Card {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(18.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+          Column(modifier = Modifier.weight(1f)) {
+            Text("Publish to Home Assistant", color = Color.White, fontSize = 17.sp)
+            Text(
+                "Exposes this Portal's state and controls as Home Assistant entities over MQTT.",
+                color = Color(0xFF9A9A9A),
+                fontSize = 13.sp,
+                modifier = Modifier.padding(top = 2.dp),
+            )
+          }
+          Segmented(
+              options = listOf("Off" to "off", "On" to "on"),
+              selected = if (enabled) "on" else "off",
+              onSelect = {
+                val on = it == "on"
+                enabled = on
+                MqttConfig.setEnabled(context, on)
+                if (on) apply() else MqttService.sync(context)
+              },
+          )
+        }
+        if (enabled) {
+          Divider()
+          Row(
+              modifier = Modifier.fillMaxWidth().padding(18.dp),
+              verticalAlignment = Alignment.CenterVertically,
+          ) {
+            OutlinedTextField(
+                value = host,
+                onValueChange = {
+                  host = it
+                  MqttConfig.setHost(context, it)
+                },
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
+                keyboardActions = KeyboardActions(onNext = { portFocus.requestFocus() }),
+                label = { Text("MQTT broker IP / host") },
+                modifier = Modifier.weight(1f),
+            )
+            Surface(
+                color = Color(0xFF2E6BE6),
+                shape = RoundedCornerShape(10.dp),
+                modifier =
+                    Modifier.padding(start = 12.dp).tvFocusable(RoundedCornerShape(10.dp)) { apply() },
+            ) {
+              Text(
+                  "Apply",
+                  color = Color.White,
+                  fontSize = 15.sp,
+                  modifier = Modifier.padding(horizontal = 20.dp, vertical = 14.dp),
+              )
+            }
+          }
+          OutlinedTextField(
+              value = port,
+              onValueChange = {
+                port = it.filter { ch -> ch.isDigit() }
+                MqttConfig.setPort(context, port.toIntOrNull() ?: MqttConfig.DEFAULT_PORT)
+              },
+              singleLine = true,
+              keyboardOptions =
+                  KeyboardOptions(keyboardType = KeyboardType.Number, imeAction = ImeAction.Next),
+              keyboardActions = KeyboardActions(onNext = { userFocus.requestFocus() }),
+              label = { Text("Port (default 1883)") },
+              modifier =
+                  Modifier.fillMaxWidth()
+                      .padding(start = 18.dp, end = 18.dp, top = 4.dp)
+                      .focusRequester(portFocus),
+          )
+          OutlinedTextField(
+              value = user,
+              onValueChange = {
+                user = it
+                MqttConfig.setUsername(context, it)
+              },
+              singleLine = true,
+              keyboardOptions =
+                  KeyboardOptions(
+                      capitalization = KeyboardCapitalization.None, imeAction = ImeAction.Next),
+              keyboardActions = KeyboardActions(onNext = { passFocus.requestFocus() }),
+              label = { Text("Username (optional)") },
+              modifier =
+                  Modifier.fillMaxWidth()
+                      .padding(start = 18.dp, end = 18.dp, top = 8.dp)
+                      .focusRequester(userFocus),
+          )
+          OutlinedTextField(
+              value = pass,
+              onValueChange = {
+                pass = it
+                MqttConfig.setPassword(context, it)
+              },
+              singleLine = true,
+              visualTransformation = PasswordVisualTransformation(),
+              keyboardOptions =
+                  KeyboardOptions(keyboardType = KeyboardType.Password, imeAction = ImeAction.Done),
+              keyboardActions = KeyboardActions(onDone = { focusManager.clearFocus(); apply() }),
+              label = { Text("Password (optional)") },
+              modifier =
+                  Modifier.fillMaxWidth()
+                      .padding(start = 18.dp, end = 18.dp, top = 8.dp)
+                      .focusRequester(passFocus),
+          )
+          // Live connection status — gives Apply visible feedback (Connecting… → Connected).
+          Text(
+              status.ifBlank { "Starting…" },
+              color = Color(0xFF8AB4F8),
+              fontSize = 13.sp,
+              modifier = Modifier.padding(start = 18.dp, end = 18.dp, top = 12.dp, bottom = 16.dp),
+          )
+        }
+      }
+      Text(
+          "Connects to a broker on your LAN (plain MQTT). Your Portal shows up in Home " +
+              "Assistant automatically as a device with presence, screen, battery, now-playing " +
+              "and a few controls — no configuration.yaml editing.",
+          color = Color(0xFF7C7C7C),
+          fontSize = 13.sp,
+          modifier = Modifier.padding(top = 10.dp, start = 4.dp, end = 4.dp),
+      )
+    }
+  }
+}
+
 private data class BootAppOption(val pkg: String, val label: String, val icon: ImageBitmap)
 
 /** Every launchable app except our own launcher, for the boot-launch picker. */
@@ -1385,47 +1728,195 @@ private fun loadLaunchableApps(context: Context): List<BootAppOption> {
 }
 
 /**
- * Shown only when Immortal's screen-off device admin is active. Deactivating it turns off
- * the idle / overnight screen-off features AND lets Immortal be uninstalled — the shell
- * can't force-remove a non-test admin, so this in-app action is the clean path.
+ * Row on the main settings page into the "Device health" subpage. Subtitle reflects how
+ * many provisioned permissions are missing, so a problem is visible without drilling in.
  */
 @Composable
-private fun DeviceAdminRow() {
+private fun DeviceHealthNavRow(onOpen: () -> Unit) {
   val context = LocalContext.current
-  var active by remember { mutableStateOf(ScreenControl.isAdminActive(context)) }
-  if (!active) return
-
+  val issues = remember { DevicePermissions.issueCount(context) }
   Spacer(Modifier.size(26.dp))
-  SectionLabel("Device admin")
+  SectionLabel("Device")
   Card {
     Row(
-        modifier = Modifier.fillMaxWidth().padding(18.dp),
+        modifier = Modifier.fillMaxWidth().tvFocusableRow { onOpen() }.padding(18.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
       Column(modifier = Modifier.weight(1f)) {
-        Text("Screen-off control", color = Color.White, fontSize = 17.sp)
+        Text("Device health", color = Color.White, fontSize = 17.sp)
         Text(
-            "Lets Immortal turn the screen off for idle and overnight sleep. Turning it off " +
-                "also allows Immortal to be uninstalled.",
-            color = Color(0xFF9A9A9A),
+            if (issues == 0) "All set up"
+            else "$issues setting${if (issues == 1) " needs" else "s need"} attention",
+            color = if (issues == 0) Color(0xFF9A9A9A) else Color(0xFFE0A030),
             fontSize = 13.sp,
             modifier = Modifier.padding(top = 2.dp),
         )
       }
+      Text("›", color = Color(0xFF7C7C7C), fontSize = 26.sp)
+    }
+  }
+}
+
+/**
+ * The "Device health" subpage: a live status of every special permission provisioning
+ * grants (screen-off device admin, notification access, install, overlay, secure settings),
+ * with — for anything that's missing — what's degraded and how to fix it. A diagnostic to
+ * point a struggling user at. Replaces the old destructive "turn off device admin" button;
+ * the uninstall path it served is kept as a clearly-warned advanced action at the bottom.
+ */
+@Composable
+private fun DeviceHealthScreen(onBack: () -> Unit) {
+  val context = LocalContext.current
+  val checks = remember { DevicePermissions.all(context) }
+  val issues = checks.count { !it.granted }
+  var adminActive by remember { mutableStateOf(ScreenControl.isAdminActive(context)) }
+
+  Column(
+      modifier =
+          Modifier.fillMaxSize()
+              .onPreviewKeyEvent { e ->
+                if (e.key == Key.Back) {
+                  if (e.type == KeyEventType.KeyUp) onBack()
+                  true
+                } else false
+              }
+              .background(Color(0xFF101012))
+              .verticalScroll(rememberScrollState())
+              .padding(horizontal = 28.dp, vertical = 32.dp),
+  ) {
+    Column(modifier = Modifier.widthIn(max = 1100.dp).focusGroup()) {
       Surface(
-          color = Color(0xFF3A3A3C),
-          shape = RoundedCornerShape(10.dp),
-          modifier =
-              Modifier.padding(start = 12.dp).tvFocusable(RoundedCornerShape(10.dp)) {
-                ScreenControl.deactivateAdmin(context)
-                active = ScreenControl.isAdminActive(context)
-              },
+          color = Color(0xFF1C1C1E),
+          shape = RoundedCornerShape(12.dp),
+          modifier = Modifier.tvFocusable(RoundedCornerShape(12.dp)) { onBack() },
       ) {
         Text(
-            "Turn off",
+            "‹  Back",
             color = Color.White,
+            fontSize = 16.sp,
+            modifier = Modifier.padding(horizontal = 18.dp, vertical = 10.dp),
+        )
+      }
+      Spacer(Modifier.size(18.dp))
+
+      Text("Device health", color = Color.White, fontSize = 34.sp, fontWeight = FontWeight.SemiBold)
+      Text(
+          "The permissions your Portal was set up with, and what each one powers.",
+          color = Color(0xFF9A9A9A),
+          fontSize = 16.sp,
+          modifier = Modifier.padding(top = 6.dp),
+      )
+      Spacer(Modifier.size(22.dp))
+
+      // Summary banner — green when healthy, amber when something needs attention.
+      Surface(
+          color = if (issues == 0) Color(0xFF18301C) else Color(0xFF332813),
+          shape = RoundedCornerShape(14.dp),
+          modifier = Modifier.fillMaxWidth(),
+      ) {
+        Text(
+            if (issues == 0) "✓  Everything's set up correctly."
+            else "!  $issues setting${if (issues == 1) " needs" else "s need"} attention — your Portal " +
+                "still works, but some features are limited.",
+            color = if (issues == 0) Color(0xFF7FD18B) else Color(0xFFE0A030),
             fontSize = 15.sp,
-            modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp),
+            modifier = Modifier.padding(16.dp),
+        )
+      }
+      Spacer(Modifier.size(20.dp))
+
+      Card {
+        checks.forEachIndexed { i, c ->
+          if (i > 0) Divider()
+          HealthRow(c)
+        }
+      }
+
+      if (issues > 0) {
+        Spacer(Modifier.size(22.dp))
+        SectionLabel("How to fix")
+        Text(
+            "Reconnect your Portal to a computer and re-run Immortal setup — it re-grants all of " +
+                "these. (Advanced: re-run provision.sh / provision.ps1 from the provisioning kit.)",
+            color = Color(0xFFB8B8B8),
+            fontSize = 14.sp,
+            lineHeight = 20.sp,
+            modifier = Modifier.padding(start = 4.dp, end = 4.dp),
+        )
+      }
+
+      // Advanced: deactivating the screen-off admin is the clean path to uninstall Immortal
+      // (the shell can't force-remove a non-test admin). Tucked away and clearly warned — it
+      // turns off screen-off until re-provisioned.
+      if (adminActive) {
+        Spacer(Modifier.size(28.dp))
+        Text(
+            "Allow uninstall",
+            color = Color(0xFF8A8A8A),
+            fontSize = 13.sp,
+            fontWeight = FontWeight.SemiBold,
+            modifier = Modifier.padding(start = 4.dp, bottom = 6.dp),
+        )
+        Text(
+            "Disabling the screen-off device admin lets Immortal be uninstalled, but it also stops " +
+                "automatic screen-off (screensaver sleep and the Home Assistant control) until you " +
+                "re-run setup. Only do this if you know what you're doing.",
+            color = Color(0xFF7C7C7C),
+            fontSize = 13.sp,
+            modifier = Modifier.padding(start = 4.dp, end = 4.dp, bottom = 10.dp),
+        )
+        Text(
+            "Disable screen-off admin",
+            color = Color(0xFFE0908A),
+            fontSize = 15.sp,
+            modifier =
+                Modifier.tvFocusable(RoundedCornerShape(8.dp)) {
+                      ScreenControl.deactivateAdmin(context)
+                      adminActive = ScreenControl.isAdminActive(context)
+                    }
+                    .padding(start = 4.dp, top = 2.dp, bottom = 4.dp),
+        )
+      }
+    }
+  }
+}
+
+@Composable
+private fun HealthRow(c: DevicePermissions.Check) {
+  Row(
+      modifier = Modifier.fillMaxWidth().padding(start = 18.dp, end = 18.dp, top = 14.dp, bottom = 14.dp),
+      verticalAlignment = Alignment.Top,
+  ) {
+    Text(
+        if (c.granted) "✓" else "!",
+        color = if (c.granted) Color(0xFF7FD18B) else Color(0xFFE0A030),
+        fontSize = 18.sp,
+        fontWeight = FontWeight.SemiBold,
+        modifier = Modifier.padding(end = 14.dp, top = 1.dp),
+    )
+    Column(modifier = Modifier.weight(1f)) {
+      Text(c.title, color = Color.White, fontSize = 17.sp)
+      Text(
+          c.enables,
+          color = Color(0xFF9A9A9A),
+          fontSize = 13.sp,
+          lineHeight = 18.sp,
+          modifier = Modifier.padding(top = 2.dp),
+      )
+      if (!c.granted) {
+        Text(
+            "Without it: ${c.degraded}",
+            color = Color(0xFFE0A030),
+            fontSize = 13.sp,
+            lineHeight = 18.sp,
+            modifier = Modifier.padding(top = 6.dp),
+        )
+        Text(
+            c.fix,
+            color = Color(0xFF8AB4F8),
+            fontSize = 13.sp,
+            lineHeight = 18.sp,
+            modifier = Modifier.padding(top = 4.dp),
         )
       }
     }
