@@ -91,6 +91,15 @@ dependencies {
   implementation(libs.androidx.lifecycle.runtime.ktx)
   debugImplementation(libs.androidx.compose.ui.tooling)
 
+  // SMB/CIFS client for the "network share" screensaver source (smbj — SMB 2/3, incl. 3.1.1).
+  // minify is off, so no R8 keep rules are needed. slf4j-nop silences its logging facade.
+  implementation("com.hierynomus:smbj:0.13.0")
+  runtimeOnly("org.slf4j:slf4j-nop:1.7.36")
+
+  // QR encoder for the "Set up from your phone" screen (scan the LAN address). Core only — we
+  // render the BitMatrix to a Bitmap ourselves, no Android-specific zxing module needed.
+  implementation("com.google.zxing:core:3.5.3")
+
   // Unit tests (pure JVM — no device/emulator). org.json provides a real
   // implementation so JSON-parsing logic can be tested off-device (the android.jar
   // stub used in unit tests otherwise throws "not mocked").

@@ -8,35 +8,21 @@
 package com.immortal.launcher
 
 import android.content.Context
-import android.content.Intent
-import android.content.IntentFilter
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Color
 import android.graphics.Matrix
-import android.graphics.Outline
-import android.graphics.Typeface
-import android.graphics.drawable.GradientDrawable
-import android.os.BatteryManager
 import android.os.Handler
 import android.os.Looper
-import android.text.TextUtils
-import android.view.GestureDetector
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
-import android.view.ViewOutlineProvider
 import android.widget.FrameLayout
 import android.widget.ImageView
-import android.widget.LinearLayout
-import android.widget.TextView
 import android.widget.VideoView
 import androidx.exifinterface.media.ExifInterface
 import java.net.HttpURLConnection
 import java.net.URL
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
 import java.util.concurrent.Executors
 import kotlin.math.abs
 import org.json.JSONObject
@@ -73,22 +59,10 @@ class PhotoFrameController(
 
   private lateinit var photo: ImageView
   private lateinit var videoView: VideoView
-  private lateinit var clock: TextView
-  private lateinit var battery: TextView
-  private lateinit var date: TextView
-  private lateinit var weather: TextView
-  private lateinit var batteryDot: View
-  private lateinit var weatherDot: View
-  private var weatherText: String = ""
 
-  // Now-playing card (driven by the device's media session; hidden when nothing plays).
-  private lateinit var nowPlayingCard: LinearLayout
-  private lateinit var npArt: ImageView
-  private lateinit var npTitle: TextView
-  private lateinit var npArtist: TextView
-  private var lastArtUrl: String = ""
-  private var lastArtBitmap: Bitmap? = null
-  private var npListener: NowPlayingHub.Listener? = null
+  // The overlay (clock / date / weather / battery / now-playing) is built and driven by the
+  // FaceRenderer from a Face descriptor; this controller owns only the photo/video layer.
+  private val faceRenderer = FaceRenderer(context, weatherRefreshMs)
 
   private var settings = ScreensaverConfig.Settings()
 
@@ -100,11 +74,21 @@ class PhotoFrameController(
   // callback can tell it's been superseded and bow out.
   private var gen = 0
 
-  // Remote-album playback state (iCloud / Google Photos shared albums).
+  // Remote playback state (iCloud / Google Photos shared albums, or an Immich server).
   private var remoteMode = false
   private var remoteUrls: List<String> = emptyList()
   private var remoteIndex = -1
   private var remoteFailStreak = 0
+  // Auth headers sent with each remote image download — empty for public shares, the
+  // x-api-key for Immich. Applied in [advanceRemote]/[downloadBitmap].
+  private var remoteHeaders: Map<String, String> = emptyMap()
+  // Optional custom fetcher for the remote path: when set (SMB), each "url" is fetched through
+  // this instead of an HTTP download, so SMB reuses all the remote advance/tick/fallback logic.
+  private var remoteFetch: ((String) -> Bitmap?)? = null
+  private var smbSource: SmbSource? = null
+  // Web-page source: a fullscreen WebView that owns the whole frame (the page brings its own
+  // clock/widgets, so the photo layer and Immortal overlay are skipped).
+  private var webView: android.webkit.WebView? = null
 
   // Web-feed history so swipes can go back as well as forward.
   private val history = ArrayList<Bitmap>()
@@ -112,6 +96,9 @@ class PhotoFrameController(
 
   /** Host (dream / preview activity) sets this to dismiss the frame on tap. */
   var onExit: (() -> Unit)? = null
+
+  /** Debug/preview override: render this face instead of the built-in classic one. */
+  var faceOverride: Face? = null
 
   // Deterministic gesture from raw down/up deltas (robust to synthetic input
   // that omits MOVE events): clear horizontal swipe = prev/next, clear tap = exit.
@@ -141,12 +128,15 @@ class PhotoFrameController(
 
   fun start() {
     settings = ScreensaverConfig.load(context)
+    // Web-page source takes over the whole frame — no photo feed, no Immortal overlay.
+    if (faceOverride == null && settings.usesWebUrl) {
+      startWebPage(settings.webUrl!!)
+      return
+    }
     applyFit()
-    tick.run()
-    refreshWeather.run()
-    // Listen for now-playing updates (replays the current track immediately).
-    npListener = NowPlayingHub.Listener { state -> ui.post { updateNowPlaying(state) } }
-    NowPlayingHub.addListener(npListener!!)
+    // Build + drive the overlay from the user's selected face ([FaceCatalog]); faceOverride lets
+    // the debug preview harness (and the overnight night clock) render a specific face instead.
+    faceRenderer.start(faceOverride ?: FaceCatalog.active(context))
     when {
       settings.usesFolder -> {
         val path = settings.folderPath
@@ -184,6 +174,7 @@ class PhotoFrameController(
           ui.post {
             if (urls.isNotEmpty()) {
               remoteUrls = if (settings.shuffle) urls.shuffled() else urls
+              remoteHeaders = emptyMap()
               remoteMode = true
               remoteIndex = -1
               remoteFailStreak = 0
@@ -196,19 +187,122 @@ class PhotoFrameController(
           }
         }
       }
+      settings.usesImmich -> {
+        val base = settings.immichUrl
+        val key = settings.immichKey
+        if (base.isNullOrBlank() || key.isNullOrBlank()) {
+          startWeb()
+          return
+        }
+        io.execute {
+          val urls = ImmichSource.listImageUrls(base, key, settings.immichAlbumId).orEmpty()
+          ui.post {
+            if (urls.isNotEmpty()) {
+              remoteUrls = if (settings.shuffle) urls.shuffled() else urls
+              remoteHeaders = ImmichSource.authHeaders(key)
+              remoteMode = true
+              remoteIndex = -1
+              remoteFailStreak = 0
+              advanceRemote(+1)
+            } else {
+              // Server unreachable / album empty → never leave the frame blank.
+              startWeb()
+            }
+          }
+        }
+      }
+      settings.usesDav -> {
+        val url = settings.davUrl
+        if (url.isNullOrBlank()) {
+          startWeb()
+          return
+        }
+        io.execute {
+          val urls = DavSource.listImageUrls(url, settings.davUser, settings.davPass).orEmpty()
+          ui.post {
+            if (urls.isNotEmpty()) {
+              remoteUrls = if (settings.shuffle) urls.shuffled() else urls
+              remoteHeaders = DavSource.authHeaders(settings.davUser, settings.davPass)
+              remoteMode = true
+              remoteIndex = -1
+              remoteFailStreak = 0
+              advanceRemote(+1)
+            } else {
+              startWeb()
+            }
+          }
+        }
+      }
+      settings.usesSmb -> {
+        val src =
+            SmbSource(
+                host = settings.smbHost.orEmpty(),
+                shareName = settings.smbShare.orEmpty(),
+                basePath = settings.smbPath.orEmpty(),
+                user = settings.smbUser.orEmpty(),
+                password = settings.smbPass.orEmpty(),
+            )
+        io.execute {
+          val paths = if (src.connect()) src.listImages() else emptyList()
+          ui.post {
+            if (paths.isNotEmpty()) {
+              smbSource = src
+              remoteUrls = if (settings.shuffle) paths.shuffled() else paths
+              remoteFetch = { p -> src.openStream(p)?.use { BitmapFactory.decodeStream(it) } }
+              remoteMode = true
+              remoteIndex = -1
+              remoteFailStreak = 0
+              advanceRemote(+1)
+            } else {
+              // Share unreachable / no images → never leave the frame blank.
+              src.close()
+              startWeb()
+            }
+          }
+        }
+      }
       else -> startWeb()
     }
   }
 
+  /** Render an arbitrary web page fullscreen (Immich Kiosk, a dashboard, …). The page owns the
+   *  whole frame; the host's touch handling still gives tap-to-exit. */
+  @android.annotation.SuppressLint("SetJavaScriptEnabled")
+  private fun startWebPage(url: String) {
+    val wv = android.webkit.WebView(context)
+    wv.setBackgroundColor(Color.BLACK)
+    wv.isVerticalScrollBarEnabled = false
+    wv.isHorizontalScrollBarEnabled = false
+    wv.overScrollMode = View.OVER_SCROLL_NEVER
+    wv.setOnTouchListener { _, _ -> false } // host consumes touch for tap-to-exit
+    wv.settings.apply {
+      javaScriptEnabled = true
+      domStorageEnabled = true
+      mediaPlaybackRequiresUserGesture = false
+      loadWithOverviewMode = true
+      useWideViewPort = true
+    }
+    wv.webViewClient = android.webkit.WebViewClient() // keep navigation inside the WebView
+    (view as FrameLayout).addView(wv, FrameLayout.LayoutParams(MATCH, MATCH))
+    wv.loadUrl(url)
+    webView = wv
+  }
+
   fun stop() {
     ui.removeCallbacksAndMessages(null)
-    npListener?.let { NowPlayingHub.removeListener(it) }
-    npListener = null
+    faceRenderer.stop()
     if (this::videoView.isInitialized) runCatching { videoView.stopPlayback() }
+    webView?.let { runCatching { it.stopLoading(); it.destroy() } }
+    webView = null
+    // Close the SMB connection off-thread (network I/O) before the io executor is killed.
+    smbSource?.let { s -> Thread { runCatching { s.close() } }.start() }
+    smbSource = null
     io.shutdownNow()
   }
 
   // --- UI ---------------------------------------------------------------------
+  // The photo/video layer lives here; the overlay (clock / widgets / now-playing) is the
+  // FaceRenderer's [view], stacked on top from a Face descriptor.
   private fun buildUi(): View {
     val root = FrameLayout(context)
     root.setBackgroundColor(Color.BLACK)
@@ -221,128 +315,8 @@ class PhotoFrameController(
     videoView.visibility = View.GONE
     root.addView(videoView, FrameLayout.LayoutParams(MATCH, MATCH, Gravity.CENTER))
 
-    val scrim = View(context)
-    scrim.background =
-        GradientDrawable(
-            GradientDrawable.Orientation.BOTTOM_TOP,
-            intArrayOf(0xCC000000.toInt(), 0x00000000),
-        )
-    root.addView(scrim, FrameLayout.LayoutParams(MATCH, dp(320), Gravity.BOTTOM))
-
-    val col = LinearLayout(context)
-    col.orientation = LinearLayout.VERTICAL
-    val colLp = FrameLayout.LayoutParams(WRAP, WRAP, Gravity.BOTTOM or Gravity.START)
-    colLp.setMargins(dp(40), 0, 0, dp(40))
-    root.addView(col, colLp)
-
-    clock = text(96f, Color.WHITE, true)
-    col.addView(clock)
-
-    val row = LinearLayout(context)
-    row.gravity = Gravity.CENTER_VERTICAL
-    // Date is always present; battery and weather are optional. Each optional
-    // field owns the divider that precedes it, so the dot disappears with the
-    // field (no orphaned "•" when a battery-less Portal reports no charge).
-    date = text(22f, Color.WHITE, false)
-    battery = text(22f, Color.WHITE, false)
-    weather = text(22f, Color.WHITE, false)
-    batteryDot = divider()
-    weatherDot = divider()
-    row.addView(date)
-    row.addView(batteryDot)
-    row.addView(battery)
-    row.addView(weatherDot)
-    row.addView(weather)
-    col.addView(row)
-
-    buildNowPlaying(root)
+    root.addView(faceRenderer.view)
     return root
-  }
-
-  /** A now-playing card bottom-right (album art + track / artist), over the scrim.
-   *  Hidden until something is playing. */
-  private fun buildNowPlaying(root: FrameLayout) {
-    nowPlayingCard = LinearLayout(context)
-    nowPlayingCard.orientation = LinearLayout.HORIZONTAL
-    nowPlayingCard.gravity = Gravity.CENTER_VERTICAL
-    nowPlayingCard.visibility = View.GONE
-    val lp = FrameLayout.LayoutParams(WRAP, WRAP, Gravity.BOTTOM or Gravity.END)
-    lp.setMargins(0, 0, dp(40), dp(44))
-    root.addView(nowPlayingCard, lp)
-
-    // Text first, art second: the cover sits at the right edge and the title/artist
-    // hug it (right-aligned), so there's no dead horizontal space on a bottom-right card.
-    val npCol = LinearLayout(context)
-    npCol.orientation = LinearLayout.VERTICAL
-    npCol.gravity = Gravity.END
-    nowPlayingCard.addView(npCol, LinearLayout.LayoutParams(WRAP, WRAP))
-
-    // Explicit WRAP params: a vertical LinearLayout otherwise defaults children to
-    // MATCH_PARENT width, which pins the column to its first width and re-truncates
-    // longer titles when the track changes.
-    npTitle = text(26f, Color.WHITE, false)
-    npTitle.typeface = Typeface.DEFAULT_BOLD
-    npTitle.maxLines = 1
-    npTitle.ellipsize = TextUtils.TruncateAt.END
-    npTitle.gravity = Gravity.END
-    npTitle.maxWidth = dp(560)
-    npCol.addView(npTitle, LinearLayout.LayoutParams(WRAP, WRAP))
-
-    npArtist = text(18f, 0xCCFFFFFF.toInt(), false)
-    npArtist.maxLines = 1
-    npArtist.ellipsize = TextUtils.TruncateAt.END
-    npArtist.gravity = Gravity.END
-    npArtist.maxWidth = dp(560)
-    npCol.addView(npArtist, LinearLayout.LayoutParams(WRAP, WRAP))
-
-    npArt = ImageView(context)
-    npArt.scaleType = ImageView.ScaleType.CENTER_CROP
-    npArt.clipToOutline = true
-    npArt.outlineProvider =
-        object : ViewOutlineProvider() {
-          override fun getOutline(v: View, o: Outline) {
-            o.setRoundRect(0, 0, v.width, v.height, dp(10).toFloat())
-          }
-        }
-    val artLp = LinearLayout.LayoutParams(dp(72), dp(72))
-    artLp.setMarginStart(dp(16))
-    nowPlayingCard.addView(npArt, artLp)
-  }
-
-  /** Reflect the latest now-playing state (called on the main thread). */
-  private fun updateNowPlaying(s: NowPlayingState?) {
-    if (s == null || !s.active || !settings.showNowPlaying) {
-      nowPlayingCard.visibility = View.GONE
-      lastArtUrl = ""
-      lastArtBitmap = null
-      return
-    }
-    nowPlayingCard.visibility = View.VISIBLE
-    npTitle.text = s.title
-    npArtist.text = s.artist
-    npArtist.visibility = if (s.artist.isBlank()) View.GONE else View.VISIBLE
-    val bitmap = s.artBitmap
-    if (bitmap != null) {
-      // Native art is a ready, downscaled bitmap — set it directly (no decode/network).
-      if (bitmap !== lastArtBitmap) {
-        lastArtBitmap = bitmap
-        lastArtUrl = ""
-        npArt.visibility = View.VISIBLE
-        npArt.setImageBitmap(bitmap)
-      }
-    } else if (s.artUrl != lastArtUrl) {
-      // Fallback for URI-only metadata (no embedded bitmap): download/decode off-thread.
-      lastArtBitmap = null
-      lastArtUrl = s.artUrl
-      npArt.setImageBitmap(null)
-      val want = s.artUrl
-      npArt.visibility = if (want.isNotBlank()) View.VISIBLE else View.GONE
-      if (want.isNotBlank())
-          io.execute {
-            val bmp = runCatching { downloadBitmap(want) }.getOrNull()
-            ui.post { if (lastArtUrl == want) npArt.setImageBitmap(bmp) }
-          }
-    }
   }
 
   private fun applyFit() {
@@ -352,59 +326,14 @@ class PhotoFrameController(
         else ImageView.ScaleType.CENTER_CROP
   }
 
-  private fun text(sizeSp: Float, color: Int, light: Boolean): TextView {
-    val t = TextView(context)
-    t.textSize = sizeSp
-    t.setTextColor(color)
-    if (light) t.typeface = Typeface.create("sans-serif-light", Typeface.NORMAL)
-    t.setShadowLayer(8f, 0f, 2f, 0x99000000.toInt())
-    return t
-  }
-
-  private fun divider(): View {
-    val v = TextView(context)
-    v.text = "   •   "
-    v.textSize = 22f
-    v.setTextColor(0x88FFFFFF.toInt())
-    return v
-  }
-
   private fun intervalMs(): Long = settings.intervalSec * 1000L
 
   // --- periodic loops ---------------------------------------------------------
-  private val tick =
-      object : Runnable {
-        override fun run() {
-          val now = Date()
-          val clockPattern = if (ImmortalSettings.use24HourClock(context)) "H:mm" else "h:mm"
-          clock.text = SimpleDateFormat(clockPattern, Locale.getDefault()).format(now)
-          date.text = SimpleDateFormat("EEE, MMM d", Locale.getDefault()).format(now)
-          val pct = batteryPct()
-          val hasBattery = pct >= 0
-          battery.text = if (hasBattery) "$pct%" else ""
-          battery.visibility = if (hasBattery) View.VISIBLE else View.GONE
-          batteryDot.visibility = if (hasBattery) View.VISIBLE else View.GONE
-          val hasWeather = weatherText.isNotBlank()
-          weather.text = weatherText
-          weather.visibility = if (hasWeather) View.VISIBLE else View.GONE
-          weatherDot.visibility = if (hasWeather) View.VISIBLE else View.GONE
-          ui.postDelayed(this, 1_000L)
-        }
-      }
-
   private val rotate =
       object : Runnable {
         override fun run() {
           webNext()
           ui.postDelayed(this, intervalMs())
-        }
-      }
-
-  private val refreshWeather =
-      object : Runnable {
-        override fun run() {
-          fetchWeather()
-          ui.postDelayed(this, weatherRefreshMs)
         }
       }
 
@@ -592,7 +521,9 @@ class PhotoFrameController(
     val g = gen
     stopVideo()
     io.execute {
-      val bmp = runCatching { downloadBitmap(url) }.getOrNull()
+      val fetch = remoteFetch
+      val bmp =
+          runCatching { fetch?.invoke(url) ?: downloadBitmap(url, remoteHeaders) }.getOrNull()
       ui.post {
         if (g != gen) return@post // superseded by a newer advance
         if (!remoteMode) return@post // raced with startWeb() flipping us off
@@ -613,6 +544,10 @@ class PhotoFrameController(
   private fun startWeb() {
     localMode = false
     remoteMode = false
+    remoteHeaders = emptyMap()
+    remoteFetch = null
+    smbSource?.let { s -> io.execute { runCatching { s.close() } } }
+    smbSource = null
     ui.removeCallbacks(remoteTick)
     ui.removeCallbacks(remoteRefresh)
     stopVideo()
@@ -679,26 +614,6 @@ class PhotoFrameController(
   }
 
   // --- data -------------------------------------------------------------------
-  private fun batteryPct(): Int {
-    val i =
-        context.registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED)) ?: return -1
-    // Only Portal Go has a battery; the mains-powered Portals (Portal+, Mini,
-    // gen-2, TV) report no battery present but still publish a bogus level=0, so
-    // gate on EXTRA_PRESENT to avoid showing a permanent "0%". -1 hides the field.
-    if (!i.getBooleanExtra(BatteryManager.EXTRA_PRESENT, false)) return -1
-    val level = i.getIntExtra(BatteryManager.EXTRA_LEVEL, -1)
-    val scale = i.getIntExtra(BatteryManager.EXTRA_SCALE, -1)
-    return if (level >= 0 && scale > 0) level * 100 / scale else -1
-  }
-
-  private fun fetchWeather() {
-    io.execute {
-      // Shared resilient fetch: cached location + multi-provider geolocation.
-      val w = Weather.fetch(context)
-      if (w.isNotBlank()) weatherText = w
-    }
-  }
-
   private fun httpGet(spec: String): String {
     val c = URL(spec).openConnection() as HttpURLConnection
     c.connectTimeout = 8000
@@ -707,12 +622,13 @@ class PhotoFrameController(
     return c.inputStream.use { it.readBytes().toString(Charsets.UTF_8) }
   }
 
-  private fun downloadBitmap(spec: String): Bitmap? {
+  private fun downloadBitmap(spec: String, headers: Map<String, String> = emptyMap()): Bitmap? {
     val c = URL(spec).openConnection() as HttpURLConnection
     c.connectTimeout = 8000
     c.readTimeout = 12000
     c.instanceFollowRedirects = true
     c.setRequestProperty("User-Agent", "PortalPhotoFrame/1.0")
+    headers.forEach { (k, v) -> c.setRequestProperty(k, v) }
     return c.inputStream.use { BitmapFactory.decodeStream(it) }
   }
 
