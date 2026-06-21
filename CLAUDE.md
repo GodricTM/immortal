@@ -52,9 +52,30 @@ PhotoDreamService     — photo screensaver (DreamService)
 DigitalClockDreamService — digital clock screensaver (DreamService)
 DreamPolicy           — decides whether to hold screen on / relaunch frame
 PhotoFramePreviewActivity — full-screen holding Activity (keeps screen awake)
-PhotoFrameController  — shared photo-frame UI + logic (dream + preview). Also hosts
-                        the now-playing strip, the synthesized soundscape, and the
-                        cycling ambient-dashboard info card.
+PhotoFrameController  — shared photo-frame UI + logic (dream + preview). Owns only the
+                        photo/video layer; the overlay (clock / date / weather / battery /
+                        now-playing) is the upstream FaceRenderer's view, stacked on top.
+                        Also hosts the fork extras layered on the Face overlay: synthesized
+                        soundscape, cycling ambient-dashboard info card, wave-to-advance, and
+                        the welcome-back TTS overlay.
+FaceRenderer/FaceCatalog/ScreensaverFace/Face — upstream clock-face system: a declarative
+                        Face descriptor (clock/date/weather/battery/now-playing on a 9-point
+                        grid) rendered by FaceRenderer; FaceCatalog lists the faces
+                        (immortal-classic, big, bold, minimal, flip). FacePickerActivity is the
+                        picker (Screensaver settings → Clock face).
+FlipWebClockFaceView  — the "flip" face: a full-screen WebView (assets/faces/flip.html).
+                        fullBleed; it overrides onTouchEvent→false so it never swallows the
+                        host's tap-to-exit (a setOnTouchListener returning false is NOT enough —
+                        WebView.onTouchEvent consumes anyway). See PortalDevKit 06-gotchas.
+ImmichSource/SmbSource/DavSource + *ConnectActivity / LanSetupServer/Activity — upstream
+                        self-hosted photo sources (Immich, SMB/NAS, WebDAV, a web page), each
+                        set up from your phone via a LAN form + QR.
+CalendarFeed/CalendarUrlEntryActivity — upstream calendar widget on the frame from a public
+                        iCal (.ics) link (Google secret-iCal / Apple iCloud). Keyless.
+(Two independent screensavers: the photo frame above vs the digital clock. The active Dream is
+ chosen in SettingsGuard.reaffirmScreensaver from DigitalClockConfig.enabled — on = digital clock
+ (DigitalClockDreamService), off = photo frame (PhotoDreamService). Toggle: Clock tile → "Digital
+ clock", or the home header Clock button.)
 (Welcome-overlay TTS uses Android's built-in TextToSpeech — Piper/Sherpa-ONNX was removed)
 
 — Ambient / home-screen features (all added on the godric fork) —
@@ -149,7 +170,7 @@ SystemBackGestureService    — overlay back-swipe (SYSTEM_ALERT_WINDOW)
 | Object              | SharedPrefs key      | What it stores                        |
 | ------------------- | -------------------- | ------------------------------------- |
 | `ImmortalSettings`  | `immortal_settings`  | tile size, weather unit, accent, clock format, calendar/stats widgets, sort mode, tabs, dashboard page + its widget toggles, name-day/feast/next-event/sun-times flags, daily-tile mode, background mode (image/blur/gradient/sky) |
-| `ScreensaverConfig` | `immortal_screensaver` | enabled, source folder, interval, fit mode, welcome enabled, art feed, soundscape + volume, ambient dashboard |
+| `ScreensaverConfig` | `immortal_screensaver` | enabled, source (default/folder/url/immich/smb/dav/weburl) + per-source creds, interval, fit mode, faces on/off + faceId + size, calendar (.ics) link/range/size/side, idle + overnight sleep + night clock, welcome enabled, art feed, soundscape + volume, ambient dashboard, gesture wave |
 | `WelcomeConfig`     | `immortal_welcome`   | greeting text per time-of-day, user name, colors, sizes, duration, TTS on/off |
 | `DigitalClockConfig`| `digital_clock_config` | style, font, color, size, layout, glow |
 | `ChimeConfig`       | `immortal_chime`     | hourly chime / spoken time / golden-hour toggles, per-cue volume (incl. ping volume), spoken-voice id, quiet-hours window |
