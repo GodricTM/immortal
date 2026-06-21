@@ -95,7 +95,7 @@
         android:label="@string/app_name"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
-        android:usesCleartextTraffic="false"
+        android:usesCleartextTraffic="true"
         android:theme="@style/Theme.SampleApp">
 
         <!-- Immortal launcher. Eligible as the system home (HOME filter) for the
@@ -276,6 +276,48 @@
             android:excludeFromRecents="true"
             android:theme="@style/Theme.SampleApp" />
 
+        <!-- Photo-source picker subpage (standard + advanced sources). -->
+        <activity
+            android:name=".ScreensaverSourcesActivity"
+            android:exported="false"
+            android:theme="@style/Theme.SampleApp" />
+
+        <!-- Clock-face picker subpage (the FaceCatalog faces). -->
+        <activity
+            android:name=".FacePickerActivity"
+            android:exported="false"
+            android:theme="@style/Theme.SampleApp" />
+
+        <!-- "Set up from your phone": on-device LAN web form for source credentials. -->
+        <activity
+            android:name=".LanSetupActivity"
+            android:exported="false"
+            android:theme="@style/Theme.SampleApp" />
+
+        <!-- Connect a self-hosted Immich server as the screensaver source. -->
+        <activity
+            android:name=".ImmichConnectActivity"
+            android:exported="false"
+            android:theme="@style/Theme.SampleApp" />
+
+        <!-- Connect an SMB / network share (NAS) as the screensaver source. -->
+        <activity
+            android:name=".SmbConnectActivity"
+            android:exported="false"
+            android:theme="@style/Theme.SampleApp" />
+
+        <!-- Connect a WebDAV folder (NAS WebDAV / Nextcloud) as the screensaver source. -->
+        <activity
+            android:name=".DavConnectActivity"
+            android:exported="false"
+            android:theme="@style/Theme.SampleApp" />
+
+        <!-- Render an arbitrary web page (Immich Kiosk, a dashboard) as the screensaver. -->
+        <activity
+            android:name=".WebUrlEntryActivity"
+            android:exported="false"
+            android:theme="@style/Theme.SampleApp" />
+
         <!-- Immortal's own settings (weather unit, home-screen forecast widget, tile
              size), opened from the Immortal tile in the launcher's Settings folder. -->
         <activity
@@ -315,6 +357,16 @@
             android:name=".AlbumUrlEntryActivity"
             android:exported="false"
             android:label="Shared album link"
+            android:windowSoftInputMode="adjustResize"
+            android:theme="@style/Theme.SampleApp" />
+
+        <!-- One-field form for pasting a public iCalendar (.ics) feed link from Google
+             Calendar or Apple iCloud, reachable from the "Calendar" section in
+             screensaver settings. -->
+        <activity
+            android:name=".CalendarUrlEntryActivity"
+            android:exported="false"
+            android:label="Calendar link"
             android:windowSoftInputMode="adjustResize"
             android:theme="@style/Theme.SampleApp" />
 

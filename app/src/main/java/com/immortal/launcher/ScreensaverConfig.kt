@@ -17,7 +17,7 @@ import android.content.Context
  *    music must defer to Home Assistant / a manual override.
  *  - [PRESENCE]   — don't pin: let the Portal's presence policy sleep the screen when the room
  *    empties and re-dream when someone returns. This is the shared baseline the screensaver and
- *    the music both follow (see snapcast-multiroom.md → *Presence*). Confirmed on the Portal Go
+ *    the music both follow (see docs/design/multi-room-audio.md → *Presence*). Confirmed on the Portal Go
  *    on battery; verify empty-room sleep on a mains Portal before making it the global default.
  */
 enum class FrameMode {
@@ -42,10 +42,18 @@ object ScreensaverConfig {
   const val SOURCE_DEFAULT = "default"
   const val SOURCE_FOLDER = "folder"
   const val SOURCE_URL = "url"
+  const val SOURCE_IMMICH = "immich"
+  const val SOURCE_SMB = "smb"
+  const val SOURCE_DAV = "dav"
+  const val SOURCE_WEBURL = "weburl"
   const val FIT_FILL = "fill" // crop to fill the screen
   const val FIT_FIT = "fit" // letterbox to show the whole image
   const val DEFAULT_INTERVAL = 30
   const val DEFAULT_ALBUM_REFRESH_MIN = 60
+
+  // Which edge the calendar widget hugs. Top of that edge either way.
+  const val CAL_SIDE_LEFT = "left"
+  const val CAL_SIDE_RIGHT = "right"
 
   // Ambient soundscape played while the screensaver is showing. All are synthesized
   // on-device (no audio assets, no streaming), so they work offline on the Portal.
@@ -93,16 +101,55 @@ object ScreensaverConfig {
       val feed: String = FEED_PICSUM,
       val folderPath: String? = null,
       val albumUrl: String? = null,
+      // Immich (self-hosted) connection. albumId/Name null = the whole library.
+      val immichUrl: String? = null,
+      val immichKey: String? = null,
+      val immichAlbumId: String? = null,
+      val immichAlbumName: String? = null,
+      // SMB / network-share (NAS) connection. smbPath is the folder within the share.
+      val smbHost: String? = null,
+      val smbShare: String? = null,
+      val smbPath: String? = null,
+      val smbUser: String? = null,
+      val smbPass: String? = null,
+      // WebDAV: the full folder URL, with optional Basic-auth credentials.
+      val davUrl: String? = null,
+      val davUser: String? = null,
+      val davPass: String? = null,
+      // Web page: render an arbitrary URL fullscreen as the screensaver (the page supplies its
+      // own clock/widgets, so Immortal's overlay is skipped). Covers Immich Kiosk, HA dashboards,
+      // etc. A power-user "bring your own frame" option — not the promoted default.
+      val webUrl: String? = null,
       val fit: String = FIT_FILL,
       val intervalSec: Int = DEFAULT_INTERVAL,
       val albumRefreshMin: Int = DEFAULT_ALBUM_REFRESH_MIN,
       val shuffle: Boolean = false,
       val includeVideo: Boolean = true,
+      // Calendar widget: a public iCalendar (.ics) feed link (Google "secret iCal"
+      // address or an Apple iCloud public-calendar / webcal link) and how much of it
+      // to show on the frame. Empty link = the widget is off.
+      val calendarUrl: String? = null,
+      val calendarRange: String = CalendarFeed.RANGE_DAY,
+      // Show/hide the calendar widget without forgetting the link, so the user can
+      // toggle it off and back on. Defaults on, so a freshly-added link shows.
+      val calendarEnabled: Boolean = true,
+      // Calendar widget size (0 = Small, 1 = Medium, 2 = Large) and which screen edge
+      // it hugs (left/right). Defaults: medium, right — the original placement.
+      val calendarSize: Int = 1,
+      val calendarSide: String = CAL_SIDE_RIGHT,
       // Battery models (Portal Go) only: pause the screensaver while unplugged so
       // the device can actually sleep, instead of showing photos until empty.
       val batterySaver: Boolean = true,
       // Show the current track + album art on the frame while music is playing.
       val showNowPlaying: Boolean = true,
+      // Whether to draw a clock face at all. Off = photos only (the now-playing card still follows
+      // its own [showNowPlaying] switch). On by default.
+      val facesEnabled: Boolean = true,
+      // The selected clock face — a [FaceCatalog] entry id. Drives the screensaver overlay.
+      val faceId: String = "immortal-classic",
+      // Clock size for faces that offer size variants (0 = Small, 1 = Medium, 2 = Large). Ignored
+      // by faces without variants. See [FaceCatalog].
+      val faceSizeIndex: Int = 1,
       // Whether the frame is pinned on (ALWAYS_ON) or follows the Portal's presence policy
       // (PRESENCE — the shared screensaver/music baseline). Defaults to ALWAYS_ON to preserve
       // the original permanent-frame behaviour until PRESENCE is verified on mains hardware.
@@ -120,6 +167,10 @@ object ScreensaverConfig {
       val overnightEnabled: Boolean = false,
       val overnightStartMin: Int = 22 * 60,
       val overnightEndMin: Int = 7 * 60,
+      // What the overnight window shows. false = go dark (screen off). true = a dimmed flip
+      // clock as a bedside clock, kept on through the window. Only meaningful when
+      // [overnightEnabled].
+      val overnightNightClock: Boolean = false,
       // Ambient soundscape (synthesized) played while the screensaver shows. Off by
       // default; [soundscapeVolume] is 0..100.
       val soundscape: String = SOUND_OFF,
@@ -155,6 +206,24 @@ object ScreensaverConfig {
     /** True when the user has pasted a public album share link for us to fetch. */
     val usesUrl: Boolean
       get() = source == SOURCE_URL && !albumUrl.isNullOrBlank()
+    /** True when a calendar link is set, regardless of the on/off toggle. */
+    val hasCalendarLink: Boolean
+      get() = !calendarUrl.isNullOrBlank()
+    /** True when the widget should show: a link is set AND the toggle is on. */
+    val usesCalendar: Boolean
+      get() = calendarEnabled && hasCalendarLink
+    /** True when the user has connected an Immich server for us to pull from. */
+    val usesImmich: Boolean
+      get() = source == SOURCE_IMMICH && !immichUrl.isNullOrBlank() && !immichKey.isNullOrBlank()
+    /** True when the user has connected an SMB network share for us to read. */
+    val usesSmb: Boolean
+      get() = source == SOURCE_SMB && !smbHost.isNullOrBlank() && !smbShare.isNullOrBlank()
+    /** True when the user has connected a WebDAV folder for us to read. */
+    val usesDav: Boolean
+      get() = source == SOURCE_DAV && !davUrl.isNullOrBlank()
+    /** True when the screensaver should render an arbitrary web page. */
+    val usesWebUrl: Boolean
+      get() = source == SOURCE_WEBURL && !webUrl.isNullOrBlank()
   }
 
   /** Keep the slideshow interval sane (5s … 10min). */
@@ -173,14 +242,37 @@ object ScreensaverConfig {
         feed = p.getString("feed", FEED_PICSUM) ?: FEED_PICSUM,
         folderPath = p.getString("folder_path", null),
         albumUrl = p.getString("album_url", null),
+        immichUrl = p.getString("immich_url", null),
+        immichKey = p.getString("immich_key", null),
+        immichAlbumId = p.getString("immich_album_id", null),
+        immichAlbumName = p.getString("immich_album_name", null),
+        smbHost = p.getString("smb_host", null),
+        smbShare = p.getString("smb_share", null),
+        smbPath = p.getString("smb_path", null),
+        smbUser = p.getString("smb_user", null),
+        smbPass = p.getString("smb_pass", null),
+        davUrl = p.getString("dav_url", null),
+        davUser = p.getString("dav_user", null),
+        davPass = p.getString("dav_pass", null),
+        webUrl = p.getString("web_url", null),
         fit = p.getString("fit", FIT_FILL) ?: FIT_FILL,
         intervalSec = clampInterval(p.getInt("interval_sec", DEFAULT_INTERVAL)),
         albumRefreshMin =
             clampAlbumRefresh(p.getInt("album_refresh_min", DEFAULT_ALBUM_REFRESH_MIN)),
         shuffle = p.getBoolean("shuffle", false),
         includeVideo = p.getBoolean("include_video", true),
+        calendarUrl = p.getString("calendar_url", null),
+        calendarRange = CalendarFeed.clampRange(p.getString("calendar_range", CalendarFeed.RANGE_DAY)),
+        calendarEnabled = p.getBoolean("calendar_enabled", true),
+        calendarSize = p.getInt("calendar_size", 1).coerceIn(0, 2),
+        calendarSide =
+            if (p.getString("calendar_side", CAL_SIDE_RIGHT) == CAL_SIDE_LEFT) CAL_SIDE_LEFT
+            else CAL_SIDE_RIGHT,
         batterySaver = p.getBoolean("battery_saver", true),
         showNowPlaying = p.getBoolean("show_now_playing", true),
+        facesEnabled = p.getBoolean("faces_enabled", true),
+        faceId = p.getString("face_id", "immortal-classic") ?: "immortal-classic",
+        faceSizeIndex = p.getInt("face_size_index", 1),
         presenceMode =
             runCatching { FrameMode.valueOf(p.getString("presence_mode", FrameMode.ALWAYS_ON.name)!!) }
                 .getOrDefault(FrameMode.ALWAYS_ON),
@@ -192,6 +284,7 @@ object ScreensaverConfig {
         overnightEnabled = p.getBoolean("overnight_enabled", false),
         overnightStartMin = p.getInt("overnight_start_min", 22 * 60),
         overnightEndMin = p.getInt("overnight_end_min", 7 * 60),
+        overnightNightClock = p.getBoolean("overnight_night_clock", false),
         soundscape = p.getString("soundscape", SOUND_OFF) ?: SOUND_OFF,
         soundscapeVolume = p.getInt("soundscape_volume", 40).coerceIn(0, 100),
         ambientDashboard = p.getBoolean("ambient_dashboard", false),
@@ -225,6 +318,56 @@ object ScreensaverConfig {
   fun setAlbumUrl(c: Context, url: String) =
       prefs(c).edit().putString("album_url", url.trim()).putString("source", SOURCE_URL).apply()
 
+  /** Connect an Immich server and make it the active source (whole library by default). */
+  fun setImmich(c: Context, url: String, key: String) =
+      prefs(c)
+          .edit()
+          .putString("immich_url", ImmichSource.normalizeBase(url))
+          .putString("immich_key", key.trim())
+          .putString("source", SOURCE_IMMICH)
+          .apply()
+
+  /** Pick which Immich album to show; null/blank id = the whole library. */
+  fun setImmichAlbum(c: Context, albumId: String?, albumName: String?) =
+      prefs(c)
+          .edit()
+          .apply {
+            if (albumId.isNullOrBlank()) {
+              remove("immich_album_id")
+              remove("immich_album_name")
+            } else {
+              putString("immich_album_id", albumId)
+              putString("immich_album_name", albumName)
+            }
+          }
+          .apply()
+
+  /** Connect an SMB network share and make it the active source. */
+  fun setSmb(c: Context, host: String, share: String, path: String, user: String, pass: String) =
+      prefs(c)
+          .edit()
+          .putString("smb_host", host.trim())
+          .putString("smb_share", share.trim())
+          .putString("smb_path", path.trim())
+          .putString("smb_user", user.trim())
+          .putString("smb_pass", pass)
+          .putString("source", SOURCE_SMB)
+          .apply()
+
+  /** Connect a WebDAV folder and make it the active source (credentials optional). */
+  fun setDav(c: Context, url: String, user: String, pass: String) =
+      prefs(c)
+          .edit()
+          .putString("dav_url", url.trim())
+          .putString("dav_user", user.trim())
+          .putString("dav_pass", pass)
+          .putString("source", SOURCE_DAV)
+          .apply()
+
+  /** Render an arbitrary web page as the screensaver (e.g. Immich Kiosk, a dashboard). */
+  fun setWebUrl(c: Context, url: String) =
+      prefs(c).edit().putString("web_url", url.trim()).putString("source", SOURCE_WEBURL).apply()
+
   fun useDefault(c: Context) = prefs(c).edit().putString("source", SOURCE_DEFAULT).apply()
 
   /** Pick the online feed and switch the source back to the default (online) feed. */
@@ -241,6 +384,33 @@ object ScreensaverConfig {
 
   fun setShuffle(c: Context, on: Boolean) = prefs(c).edit().putBoolean("shuffle", on).apply()
 
+  /** Save (or clear, when blank) the calendar feed link. */
+  fun setCalendarUrl(c: Context, url: String) {
+    val trimmed = url.trim()
+    if (trimmed.isEmpty()) prefs(c).edit().remove("calendar_url").apply()
+    else prefs(c).edit().putString("calendar_url", trimmed).apply()
+  }
+
+  fun clearCalendarUrl(c: Context) = prefs(c).edit().remove("calendar_url").apply()
+
+  /** Show/hide the calendar widget without clearing the saved link. */
+  fun setCalendarEnabled(c: Context, on: Boolean) =
+      prefs(c).edit().putBoolean("calendar_enabled", on).apply()
+
+  /** Calendar widget size: 0 = Small, 1 = Medium, 2 = Large. */
+  fun setCalendarSize(c: Context, i: Int) =
+      prefs(c).edit().putInt("calendar_size", i.coerceIn(0, 2)).apply()
+
+  /** Which edge the calendar widget hugs ([CAL_SIDE_LEFT] / [CAL_SIDE_RIGHT]). */
+  fun setCalendarSide(c: Context, side: String) =
+      prefs(c)
+          .edit()
+          .putString("calendar_side", if (side == CAL_SIDE_LEFT) CAL_SIDE_LEFT else CAL_SIDE_RIGHT)
+          .apply()
+
+  fun setCalendarRange(c: Context, range: String) =
+      prefs(c).edit().putString("calendar_range", CalendarFeed.clampRange(range)).apply()
+
   fun setIncludeVideo(c: Context, on: Boolean) =
       prefs(c).edit().putBoolean("include_video", on).apply()
 
@@ -249,6 +419,16 @@ object ScreensaverConfig {
 
   fun setShowNowPlaying(c: Context, on: Boolean) =
       prefs(c).edit().putBoolean("show_now_playing", on).apply()
+
+  /** Turn the clock face on/off (off = photos only). */
+  fun setFacesEnabled(c: Context, on: Boolean) =
+      prefs(c).edit().putBoolean("faces_enabled", on).apply()
+
+  /** Select a clock face by its [FaceCatalog] entry id. */
+  fun setFaceId(c: Context, id: String) = prefs(c).edit().putString("face_id", id).apply()
+
+  /** Set the clock size variant (0 = Small, 1 = Medium, 2 = Large) for faces that offer it. */
+  fun setFaceSizeIndex(c: Context, i: Int) = prefs(c).edit().putInt("face_size_index", i).apply()
 
   fun setPresenceMode(c: Context, mode: FrameMode) =
       prefs(c).edit().putString("presence_mode", mode.name).apply()
@@ -283,6 +463,10 @@ object ScreensaverConfig {
 
   fun setOvernightEndMin(c: Context, min: Int) =
       prefs(c).edit().putInt("overnight_end_min", wrapMinuteOfDay(min)).apply()
+
+  /** Choose the overnight display: false = screen off, true = a dimmed flip night clock. */
+  fun setOvernightNightClock(c: Context, on: Boolean) =
+      prefs(c).edit().putBoolean("overnight_night_clock", on).apply()
 
   // --- Dismiss target (launcher / app / Home Assistant dashboard) ---------------
   // The three are mutually exclusive, so each setter clears the others.

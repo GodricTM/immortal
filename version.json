@@ -1,6 +1,6 @@
 {
-  "versionCode": 44,
-  "versionName": "1.43",
+  "versionCode": 45,
+  "versionName": "1.44",
   "apkUrl": "https://github.com/starbrightlab/immortal/releases/latest/download/immortal.apk",
-  "notes": "Immortal 1.43 — merges upstream 1.42 (top-bar app switcher, Home Assistant integration, multi-room setup polish) into the @GodricTM feature fork (ISS, aurora, sunrise, lamp, kitchen timers, room ping, chimes, system-wide touch & keypress sounds and more)."
+  "notes": "Immortal 1.44 — merges upstream 1.42 & 1.43 (screensaver clock faces + picker, self-hosted photo sources via QR, calendar widget from a public iCal link, dimmed overnight night clock, Home Assistant over MQTT with TLS, top-bar app switcher, new iCloud shared-album links) into the @GodricTM feature fork (ISS, aurora, sunrise, lamp, kitchen timers, room ping, chimes, system-wide touch & keypress sounds and more)."
 }

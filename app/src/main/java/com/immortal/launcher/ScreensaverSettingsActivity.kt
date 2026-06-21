@@ -32,7 +32,6 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
@@ -67,7 +66,6 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.immortal.launcher.ui.theme.SampleAppTheme
-import kotlin.concurrent.thread
 
 /**
  * Settings screen for the photo-frame screensaver. Reached from a "Screensaver"
@@ -86,15 +84,12 @@ class ScreensaverSettingsActivity : ComponentActivity() {
 private fun ScreensaverSettingsScreen() {
   val context = LocalContext.current
   var settings by remember { mutableStateOf(ScreensaverConfig.load(context)) }
-  // null = not counted yet; -1 = unreadable; >=0 = media items found.
-  var mediaCount by remember { mutableStateOf<Int?>(null) }
-  var folderName by remember { mutableStateOf<String?>(null) }
 
   // Live soundscape preview while this screen is open; always released on exit.
   val soundscapePreview = remember { SoundscapePlayer() }
   DisposableEffect(Unit) { onDispose { soundscapePreview.stop() } }
 
-  // Re-read config when we come back from the folder picker (a separate activity).
+  // Re-read config when we come back from a subpage (source picker, dismiss target).
   val lifecycleOwner = LocalLifecycleOwner.current
   DisposableEffect(lifecycleOwner) {
     val obs = LifecycleEventObserver { _, e ->
@@ -105,46 +100,25 @@ private fun ScreensaverSettingsScreen() {
     onDispose { lifecycleOwner.lifecycle.removeObserver(obs) }
   }
 
-  LaunchedEffect(settings.folderPath, settings.includeVideo, settings.source) {
-    val path = if (settings.usesFolder) settings.folderPath else null
-    if (path == null) {
-      mediaCount = null
-      folderName = null
-    } else {
-      mediaCount = null
-      folderName = LocalMedia.displayName(path)
-      thread {
-        mediaCount =
-            if (LocalMedia.isAccessible(path)) LocalMedia.enumerate(path, settings.includeVideo).size
-            else -1
-      }
-    }
-  }
-
-  fun openPicker() {
-    context.startActivity(Intent(context, FolderPickerActivity::class.java))
-  }
-
   // Remote support: focus the first control on open; Back exits the screen.
   val activity = context as? Activity
   val firstFocus = remember { FocusRequester() }
   LaunchedEffect(Unit) { runCatching { firstFocus.requestFocus() } }
 
-  Box(modifier = Modifier.fillMaxSize()) {
-    Column(
-        modifier =
-            Modifier.fillMaxSize()
-                .onPreviewKeyEvent { e ->
-                  if (e.key == Key.Back) {
-                    if (e.type == KeyEventType.KeyUp) activity?.finish()
-                    true
-                  } else false
-                }
-                .background(Color(0xFF101012))
-                .verticalScroll(rememberScrollState())
-                .padding(horizontal = 28.dp, vertical = 32.dp),
-    ) {
-      Column(modifier = Modifier.widthIn(max = 1100.dp).focusRequester(firstFocus).focusGroup()) {
+  Column(
+      modifier =
+          Modifier.fillMaxSize()
+              .onPreviewKeyEvent { e ->
+                if (e.key == Key.Back) {
+                  if (e.type == KeyEventType.KeyUp) activity?.finish()
+                  true
+                } else false
+              }
+              .background(Color(0xFF101012))
+              .verticalScroll(rememberScrollState())
+              .padding(horizontal = 28.dp, vertical = 32.dp),
+  ) {
+    Column(modifier = Modifier.widthIn(max = 1100.dp).focusRequester(firstFocus).focusGroup()) {
       Text("Screensaver", color = Color.White, fontSize = 34.sp, fontWeight = FontWeight.SemiBold)
       Text(
           "Choose what shows on the photo frame when your Portal is idle.",
@@ -172,88 +146,35 @@ private fun ScreensaverSettingsScreen() {
       if (settings.enabled) {
         Spacer(Modifier.size(26.dp))
 
-        SectionLabel("Source")
+        SectionLabel("Clock face")
         Card {
-        SelectableRow(
-            title = "Immortal photos",
-            subtitle = "A calming built-in photo feed (no setup).",
-            selected = !settings.usesFolder && !settings.usesUrl,
-            onClick = {
-              ScreensaverConfig.useDefault(context)
-              settings = ScreensaverConfig.load(context)
-            },
-        )
-        Divider()
-        SelectableRow(
-            title = "My photos & videos",
-            subtitle = folderSubtitle(settings.usesFolder, folderName, mediaCount),
-            selected = settings.usesFolder,
-            onClick = { openPicker() },
-        )
-        if (settings.usesFolder) {
-          Divider()
-          TextButtonRow("Choose a different folder…") { openPicker() }
-        }
-        Divider()
-        SelectableRow(
-            title = "Shared album link",
-            subtitle = albumUrlSubtitle(settings.usesUrl, settings.albumUrl),
-            selected = settings.usesUrl,
-            onClick = {
-              context.startActivity(Intent(context, AlbumUrlEntryActivity::class.java))
-            },
-        )
-        if (settings.usesUrl) {
-          Divider()
-          AlbumRefreshStepper(settings.albumRefreshMin) { v ->
-            val c = ScreensaverConfig.clampAlbumRefresh(v)
-            ScreensaverConfig.setAlbumRefreshMin(context, c)
-            settings = settings.copy(albumRefreshMin = c)
-          }
-          Divider()
-          TextButtonRow("Paste a different link…") {
-            context.startActivity(Intent(context, AlbumUrlEntryActivity::class.java))
+          NavRow(title = "Clock face", value = FaceCatalog.entryFor(settings.faceId).name) {
+            context.startActivity(Intent(context, FacePickerActivity::class.java))
           }
         }
-      }
-      Text(
-          "Tip: put your photos and videos in a folder on your Portal and pick it here — for " +
-              "example, copy them across while it's connected to your computer. (An SD card or " +
-              "USB-C drive can work too on models that support one.) Or paste a public iCloud / " +
-              "Google Photos share link to pull from there. If a source can't be read, Immortal " +
-              "shows its built-in photos instead.",
-          color = Color(0xFF7C7C7C),
-          fontSize = 13.sp,
-          modifier = Modifier.padding(top = 10.dp, start = 4.dp, end = 4.dp),
-      )
+        Text(
+            "Choose how the time looks — the classic corner clock, a big centred clock, or the " +
+                "full-screen flip clock.",
+            color = Color(0xFF7C7C7C),
+            fontSize = 13.sp,
+            modifier = Modifier.padding(top = 10.dp, start = 4.dp, end = 4.dp),
+        )
 
-      // Online feed picker — only relevant when using the built-in (non-folder) source.
-      if (!settings.usesFolder) {
         Spacer(Modifier.size(26.dp))
-        SectionLabel("Photo feed")
+
+        SectionLabel("Photos")
         Card {
-          ScreensaverConfig.FEEDS.forEachIndexed { i, feed ->
-            if (i > 0) Divider()
-            SelectableRow(
-                title = ScreensaverConfig.feedLabel(feed),
-                subtitle =
-                    when (feed) {
-                      ScreensaverConfig.FEED_MET -> "Public-domain works from The Met."
-                      ScreensaverConfig.FEED_ARTIC ->
-                          "Public-domain art from the Art Institute of Chicago."
-                      ScreensaverConfig.FEED_WIKIMEDIA -> "Wikimedia's featured Picture of the Day."
-                      ScreensaverConfig.FEED_APOD -> "NASA's daily astronomy photo."
-                      else -> "Random calming photography."
-                    },
-                selected = settings.feed == feed,
-                onClick = {
-                  ScreensaverConfig.setFeed(context, feed)
-                  settings = ScreensaverConfig.load(context)
-                },
-            )
+          NavRow(title = "Photo source", value = currentSourceLabel(settings)) {
+            context.startActivity(Intent(context, ScreensaverSourcesActivity::class.java))
           }
         }
-      }
+        Text(
+            "Pick where your photos come from — the built-in feed, your own folder or a shared " +
+                "album, or a self-hosted source like Immich or a NAS.",
+            color = Color(0xFF7C7C7C),
+            fontSize = 13.sp,
+            modifier = Modifier.padding(top = 10.dp, start = 4.dp, end = 4.dp),
+        )
 
       Spacer(Modifier.size(26.dp))
 
@@ -420,6 +341,93 @@ private fun ScreensaverSettingsScreen() {
           modifier = Modifier.padding(top = 10.dp, start = 4.dp, end = 4.dp),
       )
 
+      // Calendar — a clean upcoming-events panel, fed by a public iCalendar (.ics)
+      // link from Google Calendar or Apple iCloud (no account sign-in).
+      Spacer(Modifier.size(26.dp))
+      SectionLabel("Calendar")
+      Card {
+        NavRow(
+            title = "Calendar link",
+            value = calendarValue(settings),
+        ) {
+          context.startActivity(Intent(context, CalendarUrlEntryActivity::class.java))
+        }
+        if (settings.hasCalendarLink) {
+          Divider()
+          // Show/hide the widget without forgetting the link, so it's a quick toggle.
+          ToggleRow("Show calendar widget", settings.calendarEnabled) {
+            ScreensaverConfig.setCalendarEnabled(context, it)
+            settings = settings.copy(calendarEnabled = it)
+          }
+        }
+        if (settings.usesCalendar) {
+          Divider()
+          Row(
+              modifier = Modifier.fillMaxWidth().padding(18.dp),
+              verticalAlignment = Alignment.CenterVertically,
+          ) {
+            Text("Show", color = Color.White, fontSize = 17.sp, modifier = Modifier.weight(1f))
+            Segmented(
+                options =
+                    listOf(
+                        "1 day" to CalendarFeed.RANGE_DAY,
+                        "3 days" to CalendarFeed.RANGE_3DAY,
+                        "Week" to CalendarFeed.RANGE_WEEK,
+                        "Events" to CalendarFeed.RANGE_AGENDA,
+                    ),
+                selected = settings.calendarRange,
+                onSelect = {
+                  ScreensaverConfig.setCalendarRange(context, it)
+                  settings = settings.copy(calendarRange = it)
+                },
+            )
+          }
+          Divider()
+          Row(
+              modifier = Modifier.fillMaxWidth().padding(18.dp),
+              verticalAlignment = Alignment.CenterVertically,
+          ) {
+            Text("Size", color = Color.White, fontSize = 17.sp, modifier = Modifier.weight(1f))
+            Segmented(
+                options = listOf("Small" to "0", "Medium" to "1", "Large" to "2"),
+                selected = settings.calendarSize.toString(),
+                onSelect = {
+                  val i = it.toIntOrNull() ?: 1
+                  ScreensaverConfig.setCalendarSize(context, i)
+                  settings = settings.copy(calendarSize = i)
+                },
+            )
+          }
+          Divider()
+          Row(
+              modifier = Modifier.fillMaxWidth().padding(18.dp),
+              verticalAlignment = Alignment.CenterVertically,
+          ) {
+            Text("Position", color = Color.White, fontSize = 17.sp, modifier = Modifier.weight(1f))
+            Segmented(
+                options =
+                    listOf(
+                        "Left" to ScreensaverConfig.CAL_SIDE_LEFT,
+                        "Right" to ScreensaverConfig.CAL_SIDE_RIGHT,
+                    ),
+                selected = settings.calendarSide,
+                onSelect = {
+                  ScreensaverConfig.setCalendarSide(context, it)
+                  settings = settings.copy(calendarSide = it)
+                },
+            )
+          }
+        }
+      }
+      Text(
+          "Shows your upcoming events on the frame. \"Events\" lists the next " +
+              "few whenever they are; the others show a day, three days, or the week ahead. " +
+              "Use a Google \"secret iCal\" address or an Apple iCloud public-calendar link.",
+          color = Color(0xFF7C7C7C),
+          fontSize = 13.sp,
+          modifier = Modifier.padding(top = 10.dp, start = 4.dp, end = 4.dp),
+      )
+
       Spacer(Modifier.size(26.dp))
 
       val hasBattery = remember { DreamPolicy.hasBattery(context) }
@@ -509,9 +517,18 @@ private fun ScreensaverSettingsScreen() {
               settings = settings.copy(overnightEndMin = ScreensaverConfig.wrapMinuteOfDay(v))
               SleepScheduler.applyOvernightNow(context)
             }
+            Divider()
+            ToggleRow("Show a night clock instead of going dark", settings.overnightNightClock) {
+              ScreensaverConfig.setOvernightNightClock(context, it)
+              settings = settings.copy(overnightNightClock = it)
+              SleepScheduler.applyOvernightNow(context)
+            }
           }
           Text(
-              "Keeps the screen off between these times every night.",
+              if (settings.overnightEnabled && settings.overnightNightClock)
+                  "Shows a dimmed flip clock between these times every night — a bedside clock. " +
+                      "Tap it any time to use the device."
+              else "Keeps the screen off between these times every night.",
               fontSize = 13.sp,
               color = Color(0xFF9A9A9A),
               modifier = Modifier.padding(start = 18.dp, end = 18.dp, top = 4.dp, bottom = 14.dp),
@@ -521,13 +538,11 @@ private fun ScreensaverSettingsScreen() {
 
       Spacer(Modifier.size(28.dp))
       Surface(
-          color = MaterialTheme.colorScheme.primary,
+          color = Color(0xFF2E6BE6),
           shape = RoundedCornerShape(16.dp),
           modifier =
               Modifier.fillMaxWidth().tvFocusable(RoundedCornerShape(16.dp), focusScale = 1f) {
-                val intent = Intent(context, PhotoFramePreviewActivity::class.java)
-                intent.putExtra(PhotoFramePreviewActivity.EXTRA_SHOW_WELCOME, true)
-                context.startActivity(intent)
+                context.startActivity(Intent(context, PhotoFramePreviewActivity::class.java))
               },
       ) {
         Text(
@@ -542,30 +557,37 @@ private fun ScreensaverSettingsScreen() {
       } // end if (settings.enabled)
     }
   }
-  FolderBackButton(onClick = { activity?.finish() })
- }
 }
 
-private fun folderSubtitle(usesFolder: Boolean, name: String?, count: Int?): String =
+/** Short summary of the active source, shown on the "Photo source" nav row. */
+private fun currentSourceLabel(s: ScreensaverConfig.Settings): String =
     when {
-      !usesFolder -> "Pick a folder of your photos and videos on your Portal."
-      count == null -> "${name ?: "Selected folder"} — scanning…"
-      count < 0 -> "${name ?: "Selected folder"} — can't read it; showing built-in photos"
-      count == 0 -> "${name ?: "Selected folder"} — no photos or videos found"
-      else -> "${name ?: "Selected folder"} — $count item${if (count == 1) "" else "s"}"
+      s.usesFolder -> "My photos & videos"
+      s.usesUrl -> "Shared album link"
+      s.usesImmich ->
+          if (s.immichAlbumName.isNullOrBlank()) "Immich — whole library"
+          else "Immich — ${s.immichAlbumName}"
+      s.usesSmb -> "Network share"
+      s.usesDav -> "WebDAV folder"
+      s.usesWebUrl -> "Web page"
+      else -> "Immortal photos"
     }
 
-private fun albumUrlSubtitle(usesUrl: Boolean, url: String?): String =
+private fun calendarValue(s: ScreensaverConfig.Settings): String =
     when {
-      !usesUrl -> "Paste a public iCloud or Google Photos share link."
-      url.isNullOrBlank() -> "No link yet — tap to paste one."
-      else -> "${RemoteAlbum.providerName(url)} — ${shortUrl(url)}"
+      s.calendarUrl.isNullOrBlank() -> "Off"
+      !s.calendarEnabled -> "${CalendarFeed.providerName(s.calendarUrl)} - hidden"
+      else -> "${CalendarFeed.providerName(s.calendarUrl)} - ${calendarRangeLabel(s.calendarRange)}"
     }
 
-private fun shortUrl(url: String): String {
-  val trimmed = url.trim()
-  return if (trimmed.length <= 56) trimmed else trimmed.take(53) + "…"
-}
+private fun calendarRangeLabel(range: String): String =
+    when (CalendarFeed.clampRange(range)) {
+      CalendarFeed.RANGE_DAY -> "1 day"
+      CalendarFeed.RANGE_3DAY -> "3 days"
+      CalendarFeed.RANGE_WEEK -> "Week"
+      CalendarFeed.RANGE_AGENDA -> "Events"
+      else -> "1 day"
+    }
 
 @Composable
 private fun SectionLabel(text: String) {
@@ -576,6 +598,25 @@ private fun SectionLabel(text: String) {
       fontWeight = FontWeight.SemiBold,
       modifier = Modifier.padding(start = 4.dp, bottom = 8.dp),
   )
+}
+
+@Composable
+private fun ArrowButton(glyph: String, rowFocused: Boolean, onClick: () -> Unit) {
+  Box(
+      modifier =
+          Modifier.size(48.dp)
+              .clip(RoundedCornerShape(12.dp))
+              .focusProperties { canFocus = false }
+              .clickable(onClick = onClick),
+      contentAlignment = Alignment.Center,
+  ) {
+    Text(
+        glyph,
+        color = if (rowFocused) Color.White else Color(0xFFBBBBBB),
+        fontSize = 20.sp,
+        fontWeight = FontWeight.SemiBold,
+    )
+  }
 }
 
 @Composable
@@ -592,28 +633,6 @@ private fun Card(content: @Composable () -> Unit) {
 @Composable
 private fun Divider() {
   Spacer(Modifier.fillMaxWidth().height(1.dp).background(Color(0x14FFFFFF)))
-}
-
-@Composable
-private fun SelectableRow(title: String, subtitle: String, selected: Boolean, onClick: () -> Unit) {
-  Row(
-      modifier =
-          Modifier.fillMaxWidth().tvFocusableRow { onClick() }
-              .padding(start = 18.dp, end = 12.dp, top = 14.dp, bottom = 14.dp),
-      verticalAlignment = Alignment.CenterVertically,
-  ) {
-    Column(modifier = Modifier.weight(1f)) {
-      Text(title, color = Color.White, fontSize = 17.sp)
-      Text(
-          subtitle,
-          color = Color(0xFF9A9A9A),
-          fontSize = 13.sp,
-          modifier = Modifier.padding(top = 2.dp),
-      )
-    }
-    // Visual only — the whole row is the focus/click target.
-    RadioButton(selected = selected, onClick = null)
-  }
 }
 
 /** A row that opens a sub-page; shows the current [value] and a chevron. */
@@ -694,61 +713,6 @@ private fun IntervalStepper(seconds: Int, onChange: (Int) -> Unit) {
   }
 }
 
-@Composable
-private fun ArrowButton(glyph: String, rowFocused: Boolean, onClick: () -> Unit) {
-  Box(
-      modifier =
-          Modifier.size(48.dp)
-              .clip(RoundedCornerShape(12.dp))
-              .focusProperties { canFocus = false }
-              .clickable(onClick = onClick),
-      contentAlignment = Alignment.Center,
-  ) {
-    Text(
-        glyph,
-        color = if (rowFocused) Color.White else Color(0xFFBBBBBB),
-        fontSize = 20.sp,
-        fontWeight = FontWeight.SemiBold,
-    )
-  }
-}
-
-/** Remote-friendly volume stepper for the soundscape (10% steps, 0..100). */
-@Composable
-private fun SoundVolumeStepper(volume: Int, onChange: (Int) -> Unit) {
-  val src = remember { MutableInteractionSource() }
-  val focused by src.collectIsFocusedAsState()
-  Row(
-      modifier =
-          Modifier.fillMaxWidth()
-              .onKeyEvent { e ->
-                if (e.type == KeyEventType.KeyDown) {
-                  when (e.key) {
-                    Key.DirectionLeft -> { onChange((volume - 10).coerceIn(0, 100)); true }
-                    Key.DirectionRight -> { onChange((volume + 10).coerceIn(0, 100)); true }
-                    else -> false
-                  }
-                } else false
-              }
-              .focusable(interactionSource = src)
-              .background(if (focused) Color(0x402E6BE6) else Color.Transparent)
-              .padding(start = 18.dp, end = 6.dp, top = 6.dp, bottom = 6.dp),
-      verticalAlignment = Alignment.CenterVertically,
-  ) {
-    Text("Volume", color = Color.White, fontSize = 17.sp, modifier = Modifier.weight(1f))
-    ArrowButton("◀", focused) { onChange((volume - 10).coerceIn(0, 100)) }
-    Text(
-        "${volume}%",
-        color = if (focused) Color.White else Color(0xFFDDDDDD),
-        fontSize = 17.sp,
-        fontWeight = FontWeight.SemiBold,
-        textAlign = TextAlign.Center,
-        modifier = Modifier.widthIn(min = 52.dp),
-    )
-    ArrowButton("▶", focused) { onChange((volume + 10).coerceIn(0, 100)) }
-  }
-}
-
 /** Remote-friendly minute stepper for the idle screen-off timeout (5-min steps). */
 @Composable
 private fun MinuteStepper(minutes: Int, onChange: (Int) -> Unit) {
@@ -784,63 +748,6 @@ private fun MinuteStepper(minutes: Int, onChange: (Int) -> Unit) {
     ArrowButton("▶", focused) { onChange(minutes + 5) }
   }
 }
-
-// Non-uniform steps so every LEFT/RIGHT tap lands on a value users actually think in
-// (15m, 30m, 45m, 1h, 2h, ...), instead of a flat N-minute jump.
-@Composable
-private fun AlbumRefreshStepper(minutes: Int, onChange: (Int) -> Unit) {
-  val src = remember { MutableInteractionSource() }
-  val focused by src.collectIsFocusedAsState()
-  Row(
-      modifier =
-          Modifier.fillMaxWidth()
-              .onKeyEvent { e ->
-                if (e.type == KeyEventType.KeyDown) {
-                  when (e.key) {
-                    Key.DirectionLeft -> { onChange(prevAlbumRefreshStep(minutes)); true }
-                    Key.DirectionRight -> { onChange(nextAlbumRefreshStep(minutes)); true }
-                    else -> false
-                  }
-                } else false
-              }
-              .focusable(interactionSource = src)
-              .background(if (focused) Color(0x402E6BE6) else Color.Transparent)
-              .padding(start = 18.dp, end = 6.dp, top = 6.dp, bottom = 6.dp),
-      verticalAlignment = Alignment.CenterVertically,
-  ) {
-    Text(
-        "Refresh album",
-        color = Color.White,
-        fontSize = 17.sp,
-        modifier = Modifier.weight(1f),
-    )
-    ArrowButton("◀", focused) { onChange(prevAlbumRefreshStep(minutes)) }
-    Text(
-        formatRefreshMinutes(minutes),
-        color = if (focused) Color.White else Color(0xFFDDDDDD),
-        fontSize = 17.sp,
-        fontWeight = FontWeight.SemiBold,
-        textAlign = TextAlign.Center,
-        modifier = Modifier.widthIn(min = 64.dp),
-    )
-    ArrowButton("▶", focused) { onChange(nextAlbumRefreshStep(minutes)) }
-  }
-}
-
-private val ALBUM_REFRESH_STEPS = listOf(15, 30, 45, 60, 120, 180, 240, 360, 720, 1440)
-
-private fun nextAlbumRefreshStep(minutes: Int): Int =
-    ALBUM_REFRESH_STEPS.firstOrNull { it > minutes } ?: ALBUM_REFRESH_STEPS.last()
-
-private fun prevAlbumRefreshStep(minutes: Int): Int =
-    ALBUM_REFRESH_STEPS.lastOrNull { it < minutes } ?: ALBUM_REFRESH_STEPS.first()
-
-private fun formatRefreshMinutes(minutes: Int): String =
-    when {
-      minutes < 60 -> "${minutes}m"
-      minutes % 60 == 0 -> "${minutes / 60}h"
-      else -> "${minutes / 60}h ${minutes % 60}m"
-    }
 
 /** Remote-friendly time-of-day stepper for the overnight window (15-min steps). */
 @Composable
@@ -884,16 +791,6 @@ private fun formatMinuteOfDay(min: Int): String {
 }
 
 @Composable
-private fun TextButtonRow(label: String, onClick: () -> Unit) {
-  Text(
-      label,
-      color = Color(0xFF8AB4F8),
-      fontSize = 16.sp,
-      modifier = Modifier.fillMaxWidth().tvFocusableRow { onClick() }.padding(18.dp),
-  )
-}
-
-@Composable
 private fun Segmented(
     options: List<Pair<String, String>>,
     selected: String,
@@ -906,7 +803,7 @@ private fun Segmented(
     options.forEach { (label, value) ->
       val on = value == selected
       Surface(
-          color = if (on) MaterialTheme.colorScheme.primary else Color.Transparent,
+          color = if (on) Color(0xFF2E6BE6) else Color.Transparent,
           shape = RoundedCornerShape(10.dp),
           modifier = Modifier.tvFocusable(RoundedCornerShape(10.dp)) { onSelect(value) },
       ) {
@@ -918,5 +815,64 @@ private fun Segmented(
         )
       }
     }
+  }
+}
+
+/** A single-select row with a title + subtitle and a radio indicator (soundscape picker). */
+@Composable
+private fun SelectableRow(title: String, subtitle: String, selected: Boolean, onClick: () -> Unit) {
+  Row(
+      modifier =
+          Modifier.fillMaxWidth().tvFocusableRow { onClick() }
+              .padding(start = 18.dp, end = 12.dp, top = 14.dp, bottom = 14.dp),
+      verticalAlignment = Alignment.CenterVertically,
+  ) {
+    Column(modifier = Modifier.weight(1f)) {
+      Text(title, color = Color.White, fontSize = 17.sp)
+      Text(
+          subtitle,
+          color = Color(0xFF9A9A9A),
+          fontSize = 13.sp,
+          modifier = Modifier.padding(top = 2.dp),
+      )
+    }
+    // Visual only — the whole row is the focus/click target.
+    RadioButton(selected = selected, onClick = null)
+  }
+}
+
+/** Remote-friendly volume stepper for the soundscape (10% steps, 0..100). */
+@Composable
+private fun SoundVolumeStepper(volume: Int, onChange: (Int) -> Unit) {
+  val src = remember { MutableInteractionSource() }
+  val focused by src.collectIsFocusedAsState()
+  Row(
+      modifier =
+          Modifier.fillMaxWidth()
+              .onKeyEvent { e ->
+                if (e.type == KeyEventType.KeyDown) {
+                  when (e.key) {
+                    Key.DirectionLeft -> { onChange((volume - 10).coerceIn(0, 100)); true }
+                    Key.DirectionRight -> { onChange((volume + 10).coerceIn(0, 100)); true }
+                    else -> false
+                  }
+                } else false
+              }
+              .focusable(interactionSource = src)
+              .background(if (focused) Color(0x402E6BE6) else Color.Transparent)
+              .padding(start = 18.dp, end = 6.dp, top = 6.dp, bottom = 6.dp),
+      verticalAlignment = Alignment.CenterVertically,
+  ) {
+    Text("Volume", color = Color.White, fontSize = 17.sp, modifier = Modifier.weight(1f))
+    ArrowButton("◀", focused) { onChange((volume - 10).coerceIn(0, 100)) }
+    Text(
+        "${volume}%",
+        color = if (focused) Color.White else Color(0xFFDDDDDD),
+        fontSize = 17.sp,
+        fontWeight = FontWeight.SemiBold,
+        textAlign = TextAlign.Center,
+        modifier = Modifier.widthIn(min = 52.dp),
+    )
+    ArrowButton("▶", focused) { onChange((volume + 10).coerceIn(0, 100)) }
   }
 }

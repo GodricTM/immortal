@@ -12,7 +12,10 @@ import android.content.Context
 import android.content.Intent
 import android.util.Log
 
-/** Handles the idle and overnight alarms from [SleepScheduler]. */
+/**
+ * Routes the idle and overnight alarms to [SleepScheduler], which owns the policy. This class only
+ * maps an alarm action to the corresponding event — it makes no screen-state decisions itself.
+ */
 class SleepReceiver : BroadcastReceiver() {
   override fun onReceive(context: Context, intent: Intent) {
     when (intent.action) {
@@ -25,23 +28,9 @@ class SleepReceiver : BroadcastReceiver() {
             closeApp = settings.closeAppOnSleep,
         )
       }
-      SleepScheduler.ACTION_IDLE -> {
-        Log.i(TAG, "idle timeout reached → sleep")
-        SleepScheduler.sleepNow(context, pauseAudio = false, closeApp = false)
-      }
-      SleepScheduler.ACTION_OVERNIGHT_START -> {
-        Log.i(TAG, "overnight start → sleep")
-        // Disable the screensaver for the window so nothing re-lights the screen,
-        // then blank it. HomeActivity.onResume re-sleeps any accidental wake.
-        SettingsGuard.reaffirmScreensaver(context)
-        ScreenControl.sleep(context)
-        SleepScheduler.scheduleOvernight(context) // arm tomorrow
-      }
-      SleepScheduler.ACTION_OVERNIGHT_END -> {
-        Log.i(TAG, "overnight end → restore screensaver")
-        SettingsGuard.reaffirmScreensaver(context) // restores enabled per user setting
-        SleepScheduler.scheduleOvernight(context) // arm tomorrow
-      }
+      SleepScheduler.ACTION_IDLE -> SleepScheduler.onIdleElapsed(context)
+      SleepScheduler.ACTION_OVERNIGHT_START -> SleepScheduler.onWindowStart(context)
+      SleepScheduler.ACTION_OVERNIGHT_END -> SleepScheduler.onWindowEnd(context)
     }
   }
 

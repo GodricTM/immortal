@@ -34,7 +34,7 @@ class DigitalClockDreamService : DreamService() {
   override fun onDreamingStarted() {
     super.onDreamingStarted()
     Log.i(TAG, "onDreamingStarted")
-    SleepScheduler.armIdle(this)
+    SleepScheduler.onScreensaverStarted(this)
   }
 
   override fun onDetachedFromWindow() {

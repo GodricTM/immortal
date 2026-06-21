@@ -8,25 +8,19 @@
 package com.immortal.launcher
 
 import android.content.Context
-import android.content.Intent
-import android.content.IntentFilter
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Color
 import android.graphics.Matrix
-import android.graphics.Outline
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
-import android.os.BatteryManager
 import android.os.Handler
 import android.os.Looper
 import android.speech.tts.TextToSpeech
 import android.text.TextUtils
-import android.view.GestureDetector
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
-import android.view.ViewOutlineProvider
 import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
@@ -71,40 +65,43 @@ class PhotoFrameController(
     private val unsplashKey: String = "",
     private val unsplashQuery: String = "nature,landscape,scenic",
     private val weatherRefreshMs: Long = 30 * 60_000L,
+    private val calendarRefreshMs: Long = 30 * 60_000L,
 ) {
   private val io = Executors.newSingleThreadExecutor()
   private val ui = Handler(Looper.getMainLooper())
 
   private lateinit var photo: ImageView
   private lateinit var videoView: VideoView
-  private lateinit var clock: TextView
-  private lateinit var battery: TextView
-  private lateinit var date: TextView
-  private lateinit var weather: TextView
-  private lateinit var batteryDot: View
-  private lateinit var weatherDot: View
-  private var weatherText: String = ""
 
-  // Ambient dashboard: full-screen glanceable info card shown periodically.
+  // The overlay (clock / date / weather / battery / now-playing) is built and driven by the
+  // FaceRenderer from a Face descriptor; this controller owns only the photo/video layer.
+  private val faceRenderer = FaceRenderer(context, weatherRefreshMs)
+
+  // Calendar widget (top-right): a clean upcoming-events panel fed by a public ICS
+  // feed (Google secret-iCal / Apple iCloud public-calendar). Hidden when no link.
+  private lateinit var calendarPanel: LinearLayout
+  private lateinit var calendarHeader: TextView
+  private lateinit var calendarRows: LinearLayout
+  private var calendarEvents: List<CalendarFeed.Event> = emptyList()
+  // Text/padding scale for the current calendar size (0/1/2 → small/medium/large),
+  // applied as the panel is (re)rendered so a size change takes effect live.
+  private var calScale: Float = 1f
+  // The minute we last re-windowed the calendar, so the 1s tick only rebuilds it
+  // when the clock minute changes (drops past events, refreshes Today/Tomorrow).
+  private var lastCalMinute: Long = -1L
+
+  // Ambient dashboard: full-screen glanceable info card shown periodically (fork feature).
   private var dashboardPanel: View? = null
   private lateinit var dashClock: TextView
   private lateinit var dashDate: TextView
   private lateinit var dashWeather: TextView
   private lateinit var dashEvent: TextView
   private var dashboardVisible = false
+  // Weather string for the dashboard. The Face overlay fetches its own weather; this
+  // small keyless fetch feeds the ambient-dashboard card so it stays self-contained.
+  private var weatherText: String = ""
 
-  // Now-playing card (driven by the device's media session; hidden when nothing plays).
-  private lateinit var nowPlayingCard: LinearLayout
-  private lateinit var npArt: ImageView
-  private lateinit var npTitle: TextView
-  private lateinit var npArtist: TextView
-  private var lastArtUrl: String = ""
-  private var lastArtBitmap: Bitmap? = null
-  private var npListener: NowPlayingHub.Listener? = null
-
-  private var settings = ScreensaverConfig.Settings()
-
-  // Welcome-back overlay state.
+  // Welcome-back overlay + TTS greeting (fork feature; off unless WelcomeConfig enables it).
   private lateinit var welcomeOverlay: View
   private var welcomeVisible = false
   private val dismissWelcomeRunnable = Runnable { dismissWelcomeAnimated() }
@@ -112,8 +109,13 @@ class PhotoFrameController(
   @Volatile private var ttsReady = false
   @Volatile private var pendingSpeech: String? = null
 
-  // Ambient soundscape (synthesized) played while the frame is up.
+  // Ambient soundscape (synthesized) played while the frame is up (fork feature).
   private val soundscape = SoundscapePlayer()
+
+  // Optional contact-free "wave to advance" (Camera2 motion; opt-in, off by default).
+  private var gestureCamera: GestureCamera? = null
+
+  private var settings = ScreensaverConfig.Settings()
 
   // Local-folder playback state.
   private var localMode = false
@@ -123,21 +125,31 @@ class PhotoFrameController(
   // callback can tell it's been superseded and bow out.
   private var gen = 0
 
-  // Remote-album playback state (iCloud / Google Photos shared albums).
+  // Remote playback state (iCloud / Google Photos shared albums, or an Immich server).
   private var remoteMode = false
   private var remoteUrls: List<String> = emptyList()
   private var remoteIndex = -1
   private var remoteFailStreak = 0
+  // Auth headers sent with each remote image download — empty for public shares, the
+  // x-api-key for Immich. Applied in [advanceRemote]/[downloadBitmap].
+  private var remoteHeaders: Map<String, String> = emptyMap()
+  // Optional custom fetcher for the remote path: when set (SMB), each "url" is fetched through
+  // this instead of an HTTP download, so SMB reuses all the remote advance/tick/fallback logic.
+  private var remoteFetch: ((String) -> Bitmap?)? = null
+  private var smbSource: SmbSource? = null
+  // Web-page source: a fullscreen WebView that owns the whole frame (the page brings its own
+  // clock/widgets, so the photo layer and Immortal overlay are skipped).
+  private var webView: android.webkit.WebView? = null
 
   // Web-feed history so swipes can go back as well as forward.
   private val history = ArrayList<Bitmap>()
   private var index = -1
 
-  // Optional contact-free "wave to advance" (Camera2 motion; opt-in, off by default).
-  private var gestureCamera: GestureCamera? = null
-
   /** Host (dream / preview activity) sets this to dismiss the frame on tap. */
   var onExit: (() -> Unit)? = null
+
+  /** Debug/preview override: render this face instead of the built-in classic one. */
+  var faceOverride: Face? = null
 
   // Deterministic gesture from raw down/up deltas (robust to synthetic input
   // that omits MOVE events): clear horizontal swipe = prev/next, clear tap = exit.
@@ -173,13 +185,23 @@ class PhotoFrameController(
 
   fun start() {
     settings = ScreensaverConfig.load(context)
+    // Web-page source takes over the whole frame — no photo feed, no Immortal overlay.
+    if (faceOverride == null && settings.usesWebUrl) {
+      startWebPage(settings.webUrl!!)
+      return
+    }
     applyFit()
+    refreshCalendar.run()
+    calendarTick.run()
+    // Build + drive the overlay from the user's selected face ([FaceCatalog]); faceOverride lets
+    // the debug preview harness (and the overnight night clock) render a specific face instead.
+    faceRenderer.start(faceOverride ?: FaceCatalog.active(context))
 
-    // Only spin up TTS when the welcome overlay will actually speak. The greeting uses
-    // the Android TTS engine (reliable, instant, no large download). Piper neural TTS
-    // was dropped from this path: its model download is unreliable on the Portal's
-    // connection and a truncated model makes onnxruntime abort natively (SIGABRT),
-    // taking the whole dream down. See [[project_piper_crash]].
+    // --- fork features layered on top of the Face overlay ---
+    // Only spin up TTS when the welcome overlay will actually speak. The greeting uses the
+    // Android TTS engine (reliable, instant, no large download). Piper neural TTS was dropped
+    // from this path: its model download is unreliable on the Portal's connection and a
+    // truncated model makes onnxruntime abort natively (SIGABRT), taking the whole dream down.
     val welcomeCfg = WelcomeConfig.load(context)
     val ttsEnabled = showWelcome && settings.welcomeEnabled && welcomeCfg.enableTts
     if (ttsEnabled) {
@@ -219,15 +241,11 @@ class PhotoFrameController(
       }
     }
 
-    // Schedule the ambient dashboard cycle (first card after ~45s).
+    // Feed the ambient dashboard's weather, and schedule its cycle (first card after ~45s).
+    refreshWeather.run()
     if (settings.ambientDashboard) ui.postDelayed(dashboardCycle, 45_000L)
 
     if (showWelcome && settings.welcomeEnabled) showWelcomeOverlay()
-    tick.run()
-    refreshWeather.run()
-    // Listen for now-playing updates (replays the current track immediately).
-    npListener = NowPlayingHub.Listener { state -> ui.post { updateNowPlaying(state) } }
-    NowPlayingHub.addListener(npListener!!)
     when {
       settings.usesFolder -> {
         val path = settings.folderPath
@@ -265,6 +283,7 @@ class PhotoFrameController(
           ui.post {
             if (urls.isNotEmpty()) {
               remoteUrls = if (settings.shuffle) urls.shuffled() else urls
+              remoteHeaders = emptyMap()
               remoteMode = true
               remoteIndex = -1
               remoteFailStreak = 0
@@ -277,8 +296,105 @@ class PhotoFrameController(
           }
         }
       }
+      settings.usesImmich -> {
+        val base = settings.immichUrl
+        val key = settings.immichKey
+        if (base.isNullOrBlank() || key.isNullOrBlank()) {
+          startWeb()
+          return
+        }
+        io.execute {
+          val urls = ImmichSource.listImageUrls(base, key, settings.immichAlbumId).orEmpty()
+          ui.post {
+            if (urls.isNotEmpty()) {
+              remoteUrls = if (settings.shuffle) urls.shuffled() else urls
+              remoteHeaders = ImmichSource.authHeaders(key)
+              remoteMode = true
+              remoteIndex = -1
+              remoteFailStreak = 0
+              advanceRemote(+1)
+            } else {
+              // Server unreachable / album empty → never leave the frame blank.
+              startWeb()
+            }
+          }
+        }
+      }
+      settings.usesDav -> {
+        val url = settings.davUrl
+        if (url.isNullOrBlank()) {
+          startWeb()
+          return
+        }
+        io.execute {
+          val urls = DavSource.listImageUrls(url, settings.davUser, settings.davPass).orEmpty()
+          ui.post {
+            if (urls.isNotEmpty()) {
+              remoteUrls = if (settings.shuffle) urls.shuffled() else urls
+              remoteHeaders = DavSource.authHeaders(settings.davUser, settings.davPass)
+              remoteMode = true
+              remoteIndex = -1
+              remoteFailStreak = 0
+              advanceRemote(+1)
+            } else {
+              startWeb()
+            }
+          }
+        }
+      }
+      settings.usesSmb -> {
+        val src =
+            SmbSource(
+                host = settings.smbHost.orEmpty(),
+                shareName = settings.smbShare.orEmpty(),
+                basePath = settings.smbPath.orEmpty(),
+                user = settings.smbUser.orEmpty(),
+                password = settings.smbPass.orEmpty(),
+            )
+        io.execute {
+          val paths = if (src.connect()) src.listImages() else emptyList()
+          ui.post {
+            if (paths.isNotEmpty()) {
+              smbSource = src
+              remoteUrls = if (settings.shuffle) paths.shuffled() else paths
+              remoteFetch = { p -> src.openStream(p)?.use { BitmapFactory.decodeStream(it) } }
+              remoteMode = true
+              remoteIndex = -1
+              remoteFailStreak = 0
+              advanceRemote(+1)
+            } else {
+              // Share unreachable / no images → never leave the frame blank.
+              src.close()
+              startWeb()
+            }
+          }
+        }
+      }
       else -> startWeb()
     }
+  }
+
+  /** Render an arbitrary web page fullscreen (Immich Kiosk, a dashboard, …). The page owns the
+   *  whole frame; the host's touch handling still gives tap-to-exit. */
+  @android.annotation.SuppressLint("SetJavaScriptEnabled")
+  private fun startWebPage(url: String) {
+    val wv = android.webkit.WebView(context)
+    wv.setBackgroundColor(Color.BLACK)
+    wv.isVerticalScrollBarEnabled = false
+    wv.isHorizontalScrollBarEnabled = false
+    wv.overScrollMode = View.OVER_SCROLL_NEVER
+    wv.setOnTouchListener { _, _ -> false } // host consumes touch for tap-to-exit
+    wv.settings.apply {
+      javaScriptEnabled = true
+      domStorageEnabled = true
+      mediaPlaybackRequiresUserGesture = false
+      loadWithOverviewMode = true
+      useWideViewPort = true
+    }
+    wv.webViewClient = android.webkit.WebViewClient() // keep navigation inside the WebView
+    (view as FrameLayout).addView(wv, FrameLayout.LayoutParams(MATCH, MATCH))
+    wv.loadUrl(url)
+    webView = wv
   }
 
   fun stop() {
@@ -287,18 +403,24 @@ class PhotoFrameController(
     runCatching { gestureCamera?.stop() }
     gestureCamera = null
     runCatching { soundscape.stop() }
-    npListener?.let { NowPlayingHub.removeListener(it) }
-    npListener = null
-    if (this::videoView.isInitialized) runCatching { videoView.stopPlayback() }
     tts?.stop()
     tts?.shutdown()
     tts = null
     ttsReady = false
     pendingSpeech = null
+    faceRenderer.stop()
+    if (this::videoView.isInitialized) runCatching { videoView.stopPlayback() }
+    webView?.let { runCatching { it.stopLoading(); it.destroy() } }
+    webView = null
+    // Close the SMB connection off-thread (network I/O) before the io executor is killed.
+    smbSource?.let { s -> Thread { runCatching { s.close() } }.start() }
+    smbSource = null
     io.shutdownNow()
   }
 
   // --- UI ---------------------------------------------------------------------
+  // The photo/video layer lives here; the overlay (clock / widgets / now-playing) is the
+  // FaceRenderer's [view], stacked on top from a Face descriptor.
   private fun buildUi(): View {
     val root = FrameLayout(context)
     root.setBackgroundColor(Color.BLACK)
@@ -311,39 +433,8 @@ class PhotoFrameController(
     videoView.visibility = View.GONE
     root.addView(videoView, FrameLayout.LayoutParams(MATCH, MATCH, Gravity.CENTER))
 
-    val scrim = View(context)
-    scrim.background =
-        GradientDrawable(
-            GradientDrawable.Orientation.BOTTOM_TOP,
-            intArrayOf(0xCC000000.toInt(), 0x00000000),
-        )
-    root.addView(scrim, FrameLayout.LayoutParams(MATCH, dp(320), Gravity.BOTTOM))
-
-    val col = LinearLayout(context)
-    col.orientation = LinearLayout.VERTICAL
-    val colLp = FrameLayout.LayoutParams(WRAP, WRAP, Gravity.BOTTOM or Gravity.START)
-    colLp.setMargins(dp(40), 0, 0, dp(40))
-    root.addView(col, colLp)
-
-    clock = text(96f, Color.WHITE, true)
-    col.addView(clock)
-
-    val row = LinearLayout(context)
-    row.gravity = Gravity.CENTER_VERTICAL
-    // Date is always present; battery and weather are optional. Each optional
-    // field owns the divider that precedes it, so the dot disappears with the
-    // field (no orphaned "•" when a battery-less Portal reports no charge).
-    date = text(22f, Color.WHITE, false)
-    battery = text(22f, Color.WHITE, false)
-    weather = text(22f, Color.WHITE, false)
-    batteryDot = divider()
-    weatherDot = divider()
-    row.addView(date)
-    row.addView(batteryDot)
-    row.addView(battery)
-    row.addView(weatherDot)
-    row.addView(weather)
-    col.addView(row)
+    root.addView(faceRenderer.view)
+    buildCalendar(root)
 
     // Ambient dashboard panel — full-screen glanceable card, hidden until cycled in.
     dashboardPanel = buildDashboardPanel().also {
@@ -351,17 +442,167 @@ class PhotoFrameController(
       root.addView(it, FrameLayout.LayoutParams(MATCH, MATCH))
     }
 
-    // Welcome-back overlay — added last so it renders above photos and scrim.
+    // Welcome-back overlay — added last so it renders above photos and the Face overlay.
     welcomeOverlay = buildWelcomeOverlay()
     welcomeOverlay.visibility = View.GONE
     root.addView(welcomeOverlay, FrameLayout.LayoutParams(MATCH, MATCH))
-
-    // Now-playing card (upstream now-playing stack): bottom-right album art + title/artist.
-    buildNowPlaying(root)
     return root
   }
 
-  // --- welcome-back overlay ----------------------------------------------------
+  /** A clean upcoming-events panel top-right, over the photo. Its own translucent
+   *  rounded backing keeps it legible without a full-screen scrim. Hidden until a
+   *  calendar link is set and there's something to show. */
+  private fun buildCalendar(root: FrameLayout) {
+    calendarPanel = LinearLayout(context)
+    calendarPanel.orientation = LinearLayout.VERTICAL
+    calendarPanel.visibility = View.GONE
+    val bg = GradientDrawable()
+    bg.setColor(0x66000000)
+    bg.cornerRadius = dp(18).toFloat()
+    calendarPanel.background = bg
+    calendarPanel.setPadding(dp(22), dp(18), dp(22), dp(18))
+    val lp = FrameLayout.LayoutParams(WRAP, WRAP, Gravity.TOP or Gravity.END)
+    lp.setMargins(0, dp(40), dp(40), 0)
+    root.addView(calendarPanel, lp)
+
+    calendarHeader = text(15f, 0xCCFFFFFF.toInt(), false)
+    calendarHeader.typeface = Typeface.DEFAULT_BOLD
+    calendarHeader.letterSpacing = 0.08f
+    calendarPanel.addView(calendarHeader)
+
+    calendarRows = LinearLayout(context)
+    calendarRows.orientation = LinearLayout.VERTICAL
+    val rowsLp = LinearLayout.LayoutParams(WRAP, WRAP)
+    rowsLp.topMargin = dp(10)
+    calendarPanel.addView(calendarRows, rowsLp)
+  }
+
+  /** Rebuild the calendar panel from the cached events for the chosen range. Cheap
+   *  (no network) — called when a fetch lands and once per minute from [tick]. */
+  private fun renderCalendar() {
+    if (!this::calendarPanel.isInitialized) return
+    if (!settings.usesCalendar) {
+      calendarPanel.visibility = View.GONE
+      return
+    }
+    val now = System.currentTimeMillis()
+    val shown = CalendarFeed.window(calendarEvents, settings.calendarRange, now)
+    // Size + position can change at runtime (settings screen or a fleet push), so
+    // (re)apply the chrome each render. Scale drives text/padding; side drives the edge.
+    calScale =
+        when (settings.calendarSize) {
+          0 -> 0.82f
+          2 -> 1.22f
+          else -> 1f
+        }
+    applyCalendarChrome()
+    calendarHeader.textSize = 15f * calScale
+    calendarHeader.text = rangeLabel(settings.calendarRange).uppercase(Locale.getDefault())
+    calendarRows.removeAllViews()
+    calendarPanel.visibility = View.VISIBLE
+
+    if (shown.isEmpty()) {
+      val empty = text(17f * calScale, 0xCCFFFFFF.toInt(), false)
+      empty.text = "Nothing scheduled"
+      calendarRows.addView(empty)
+      return
+    }
+
+    val agenda = settings.calendarRange == CalendarFeed.RANGE_AGENDA
+    var lastDayKey = ""
+    for (ev in shown) {
+      // Day header whenever the day changes (and always in agenda mode, which spans
+      // arbitrary dates). A single-day range needs no per-day header.
+      val key = dayKey(ev.startMillis)
+      if (key != lastDayKey && (agenda || settings.calendarRange != CalendarFeed.RANGE_DAY)) {
+        val header = text(13f * calScale, 0x99FFFFFF.toInt(), false)
+        header.typeface = Typeface.DEFAULT_BOLD
+        header.text = dayHeader(ev.startMillis).uppercase(Locale.getDefault())
+        val hlp = LinearLayout.LayoutParams(WRAP, WRAP)
+        hlp.topMargin = if (calendarRows.childCount == 0) 0 else dp(12)
+        calendarRows.addView(header, hlp)
+      }
+      lastDayKey = key
+      calendarRows.addView(buildEventRow(ev))
+    }
+  }
+
+  /** Position the panel against the chosen edge and scale its padding to the size. */
+  private fun applyCalendarChrome() {
+    val pad = (22 * calScale).toInt()
+    val padV = (18 * calScale).toInt()
+    calendarPanel.setPadding(dp(pad), dp(padV), dp(pad), dp(padV))
+    val gravity =
+        Gravity.TOP or
+            (if (settings.calendarSide == ScreensaverConfig.CAL_SIDE_LEFT) Gravity.START
+            else Gravity.END)
+    val lp = FrameLayout.LayoutParams(WRAP, WRAP, gravity)
+    val side = dp(40)
+    if (settings.calendarSide == ScreensaverConfig.CAL_SIDE_LEFT) lp.setMargins(side, dp(40), 0, 0)
+    else lp.setMargins(0, dp(40), side, 0)
+    calendarPanel.layoutParams = lp
+  }
+
+  private fun buildEventRow(ev: CalendarFeed.Event): View {
+    val row = LinearLayout(context)
+    row.orientation = LinearLayout.HORIZONTAL
+    row.gravity = Gravity.CENTER_VERTICAL
+    val rowLp = LinearLayout.LayoutParams(WRAP, WRAP)
+    rowLp.topMargin = dp(6)
+
+    val time = text(17f * calScale, Color.WHITE, false)
+    time.text = if (ev.allDay) "All day" else timeLabel(ev.startMillis)
+    time.width = dp((96 * calScale).toInt())
+
+    val title = text(17f * calScale, Color.WHITE, false)
+    title.typeface = Typeface.DEFAULT_BOLD
+    title.text = ev.title
+    title.maxLines = 1
+    title.ellipsize = TextUtils.TruncateAt.END
+    title.maxWidth = dp((360 * calScale).toInt())
+
+    row.addView(time)
+    row.addView(title)
+    row.layoutParams = rowLp
+    return row
+  }
+
+  private fun rangeLabel(range: String): String =
+      when (range) {
+        CalendarFeed.RANGE_3DAY -> "Next 3 days"
+        CalendarFeed.RANGE_WEEK -> "This week"
+        CalendarFeed.RANGE_AGENDA -> "Upcoming"
+        else -> "Today"
+      }
+
+  private fun timeLabel(millis: Long): String {
+    val pattern = if (ImmortalSettings.use24HourClock(context)) "H:mm" else "h:mm a"
+    return SimpleDateFormat(pattern, Locale.getDefault()).format(Date(millis))
+  }
+
+  /** A stable per-day key (yyyyDDD) so the renderer can tell when the day changes. */
+  private fun dayKey(millis: Long): String =
+      SimpleDateFormat("yyyyDDD", Locale.US).format(Date(millis))
+
+  /** "Today" / "Tomorrow" / "Sat, Jun 21" relative to now. */
+  private fun dayHeader(millis: Long): String {
+    val today = dayKey(System.currentTimeMillis())
+    val tomorrow = dayKey(System.currentTimeMillis() + 24L * 60 * 60 * 1000)
+    return when (dayKey(millis)) {
+      today -> "Today"
+      tomorrow -> "Tomorrow"
+      else -> SimpleDateFormat("EEE, MMM d", Locale.getDefault()).format(Date(millis))
+    }
+  }
+
+  private fun applyFit() {
+    // Video letterboxes either way (VideoView limitation); images honour the choice.
+    photo.scaleType =
+        if (settings.fit == ScreensaverConfig.FIT_FIT) ImageView.ScaleType.FIT_CENTER
+        else ImageView.ScaleType.CENTER_CROP
+  }
+
+  // --- welcome-back overlay (fork) --------------------------------------------
 
   private fun buildWelcomeOverlay(): View {
     val welcomeCfg = WelcomeConfig.load(context)
@@ -487,140 +728,7 @@ class PhotoFrameController(
         .start()
   }
 
-  /** A now-playing card bottom-right (album art + track / artist), over the scrim.
-   *  Hidden until something is playing. */
-  private fun buildNowPlaying(root: FrameLayout) {
-    nowPlayingCard = LinearLayout(context)
-    nowPlayingCard.orientation = LinearLayout.HORIZONTAL
-    nowPlayingCard.gravity = Gravity.CENTER_VERTICAL
-    nowPlayingCard.visibility = View.GONE
-    val lp = FrameLayout.LayoutParams(WRAP, WRAP, Gravity.BOTTOM or Gravity.END)
-    lp.setMargins(0, 0, dp(40), dp(44))
-    root.addView(nowPlayingCard, lp)
-
-    // Text first, art second: the cover sits at the right edge and the title/artist
-    // hug it (right-aligned), so there's no dead horizontal space on a bottom-right card.
-    val npCol = LinearLayout(context)
-    npCol.orientation = LinearLayout.VERTICAL
-    npCol.gravity = Gravity.END
-    nowPlayingCard.addView(npCol, LinearLayout.LayoutParams(WRAP, WRAP))
-
-    // Explicit WRAP params: a vertical LinearLayout otherwise defaults children to
-    // MATCH_PARENT width, which pins the column to its first width and re-truncates
-    // longer titles when the track changes.
-    npTitle = text(26f, Color.WHITE, false)
-    npTitle.typeface = Typeface.DEFAULT_BOLD
-    npTitle.maxLines = 1
-    npTitle.ellipsize = TextUtils.TruncateAt.END
-    npTitle.gravity = Gravity.END
-    npTitle.maxWidth = dp(560)
-    npCol.addView(npTitle, LinearLayout.LayoutParams(WRAP, WRAP))
-
-    npArtist = text(18f, 0xCCFFFFFF.toInt(), false)
-    npArtist.maxLines = 1
-    npArtist.ellipsize = TextUtils.TruncateAt.END
-    npArtist.gravity = Gravity.END
-    npArtist.maxWidth = dp(560)
-    npCol.addView(npArtist, LinearLayout.LayoutParams(WRAP, WRAP))
-
-    npArt = ImageView(context)
-    npArt.scaleType = ImageView.ScaleType.CENTER_CROP
-    npArt.clipToOutline = true
-    npArt.outlineProvider =
-        object : ViewOutlineProvider() {
-          override fun getOutline(v: View, o: Outline) {
-            o.setRoundRect(0, 0, v.width, v.height, dp(10).toFloat())
-          }
-        }
-    val artLp = LinearLayout.LayoutParams(dp(72), dp(72))
-    artLp.setMarginStart(dp(16))
-    nowPlayingCard.addView(npArt, artLp)
-  }
-
-  /** Reflect the latest now-playing state (called on the main thread). */
-  private fun updateNowPlaying(s: NowPlayingState?) {
-    if (s == null || !s.active || !settings.showNowPlaying) {
-      nowPlayingCard.visibility = View.GONE
-      lastArtUrl = ""
-      lastArtBitmap = null
-      return
-    }
-    nowPlayingCard.visibility = View.VISIBLE
-    npTitle.text = s.title
-    npArtist.text = s.artist
-    npArtist.visibility = if (s.artist.isBlank()) View.GONE else View.VISIBLE
-    val bitmap = s.artBitmap
-    if (bitmap != null) {
-      // Native art is a ready, downscaled bitmap — set it directly (no decode/network).
-      if (bitmap !== lastArtBitmap) {
-        lastArtBitmap = bitmap
-        lastArtUrl = ""
-        npArt.visibility = View.VISIBLE
-        npArt.setImageBitmap(bitmap)
-      }
-    } else if (s.artUrl != lastArtUrl) {
-      // Fallback for URI-only metadata (no embedded bitmap): download/decode off-thread.
-      lastArtBitmap = null
-      lastArtUrl = s.artUrl
-      npArt.setImageBitmap(null)
-      val want = s.artUrl
-      npArt.visibility = if (want.isNotBlank()) View.VISIBLE else View.GONE
-      if (want.isNotBlank())
-          io.execute {
-            val bmp = runCatching { downloadBitmap(want) }.getOrNull()
-            ui.post { if (lastArtUrl == want) npArt.setImageBitmap(bmp) }
-          }
-    }
-  }
-
-  private fun applyFit() {
-    // Video letterboxes either way (VideoView limitation); images honour the choice.
-    photo.scaleType =
-        if (settings.fit == ScreensaverConfig.FIT_FIT) ImageView.ScaleType.FIT_CENTER
-        else ImageView.ScaleType.CENTER_CROP
-  }
-
-  private fun text(sizeSp: Float, color: Int, light: Boolean): TextView {
-    val t = TextView(context)
-    t.textSize = sizeSp
-    t.setTextColor(color)
-    if (light) t.typeface = Typeface.create("sans-serif-light", Typeface.NORMAL)
-    t.setShadowLayer(8f, 0f, 2f, 0x99000000.toInt())
-    return t
-  }
-
-  private fun divider(): View {
-    val v = TextView(context)
-    v.text = "   •   "
-    v.textSize = 22f
-    v.setTextColor(0x88FFFFFF.toInt())
-    return v
-  }
-
-  private fun intervalMs(): Long = settings.intervalSec * 1000L
-
-  // --- periodic loops ---------------------------------------------------------
-  private val tick =
-      object : Runnable {
-        override fun run() {
-          val now = Date()
-          val clockPattern = if (ImmortalSettings.use24HourClock(context)) "H:mm" else "h:mm"
-          clock.text = SimpleDateFormat(clockPattern, Locale.getDefault()).format(now)
-          date.text = SimpleDateFormat("EEE, MMM d", Locale.getDefault()).format(now)
-          val pct = batteryPct()
-          val hasBattery = pct >= 0
-          battery.text = if (hasBattery) "$pct%" else ""
-          battery.visibility = if (hasBattery) View.VISIBLE else View.GONE
-          batteryDot.visibility = if (hasBattery) View.VISIBLE else View.GONE
-          val hasWeather = weatherText.isNotBlank()
-          weather.text = weatherText
-          weather.visibility = if (hasWeather) View.VISIBLE else View.GONE
-          weatherDot.visibility = if (hasWeather) View.VISIBLE else View.GONE
-          ui.postDelayed(this, 1_000L)
-        }
-      }
-
-  // --- ambient dashboard ------------------------------------------------------
+  // --- ambient dashboard (fork) -----------------------------------------------
 
   private fun buildDashboardPanel(): View {
     val panel = FrameLayout(context)
@@ -670,7 +778,7 @@ class PhotoFrameController(
       }.getOrNull()
       ui.post {
         if (ev != null) {
-          val cal = java.util.Calendar.getInstance().apply { timeInMillis = ev.begin }
+          val cal = Calendar.getInstance().apply { timeInMillis = ev.begin }
           val whenStr =
               if (ev.allDay) SimpleDateFormat("MMM d", Locale.getDefault()).format(cal.time)
               else SimpleDateFormat(if (ImmortalSettings.use24HourClock(context)) "HH:mm" else "h:mm a",
@@ -692,14 +800,6 @@ class PhotoFrameController(
     dashboardVisible = false
   }
 
-  private val rotate =
-      object : Runnable {
-        override fun run() {
-          webNext()
-          ui.postDelayed(this, intervalMs())
-        }
-      }
-
   private val refreshWeather =
       object : Runnable {
         override fun run() {
@@ -708,6 +808,77 @@ class PhotoFrameController(
         }
       }
 
+  private fun fetchWeather() {
+    io.execute {
+      // Shared resilient fetch: cached location + multi-provider geolocation.
+      val w = Weather.fetch(context)
+      if (w.isNotBlank()) weatherText = w
+    }
+  }
+
+  private fun text(sizeSp: Float, color: Int, light: Boolean): TextView {
+    val t = TextView(context)
+    t.textSize = sizeSp
+    t.setTextColor(color)
+    if (light) t.typeface = Typeface.create("sans-serif-light", Typeface.NORMAL)
+    t.setShadowLayer(8f, 0f, 2f, 0x99000000.toInt())
+    return t
+  }
+
+  private fun intervalMs(): Long = settings.intervalSec * 1000L
+
+  // --- periodic loops ---------------------------------------------------------
+  private val calendarTick =
+      object : Runnable {
+        override fun run() {
+          // Re-window the calendar once per minute (cheap, no network): drops events
+          // as they pass and rolls the Today/Tomorrow labels over at midnight.
+          val now = Date()
+          val minute = now.time / 60_000L
+          if (minute != lastCalMinute) {
+            lastCalMinute = minute
+            renderCalendar()
+          }
+          ui.postDelayed(this, 1_000L)
+        }
+      }
+
+  private val rotate =
+      object : Runnable {
+        override fun run() {
+          webNext()
+          ui.postDelayed(this, intervalMs())
+        }
+      }
+
+  private val refreshCalendar =
+      object : Runnable {
+        override fun run() {
+          // Pick up calendar changes pushed over the fleet API (or via in-app
+          // settings) without restarting the dream: reload just the calendar fields,
+          // leaving the live slideshow state untouched.
+          val fresh = ScreensaverConfig.load(context)
+          if (fresh.calendarUrl != settings.calendarUrl ||
+              fresh.calendarRange != settings.calendarRange) {
+            settings = settings.copy(calendarUrl = fresh.calendarUrl, calendarRange = fresh.calendarRange)
+            renderCalendar()
+          }
+          val url = settings.calendarUrl
+          if (settings.usesCalendar && !url.isNullOrBlank()) {
+            io.execute {
+              val events = CalendarFeed.fetch(url)
+              ui.post {
+                calendarEvents = events
+                renderCalendar()
+              }
+            }
+          } else {
+            calendarEvents = emptyList()
+            renderCalendar()
+          }
+          ui.postDelayed(this, calendarRefreshMs)
+        }
+      }
   // --- navigation (branches on the active source) -----------------------------
   fun next() {
     when {
@@ -774,16 +945,7 @@ class PhotoFrameController(
    * being skipped.
    */
   private fun decodeCorrected(path: String): Bitmap? {
-    // Downsample large camera files (12–48 MP) so the decode + the rotated copy below
-    // both fit in the Portal's heap. Target the screen's ~2× so quality is unaffected.
-    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-    BitmapFactory.decodeFile(path, bounds)
-    val longest = maxOf(bounds.outWidth, bounds.outHeight)
-    if (longest <= 0) return null
-    var sample = 1
-    while (longest / sample > 2560) sample *= 2
-    val opts = BitmapFactory.Options().apply { inSampleSize = sample }
-    val bmp = BitmapFactory.decodeFile(path, opts) ?: return null
+    val bmp = BitmapFactory.decodeFile(path) ?: return null
     val orientation =
         runCatching {
               ExifInterface(path)
@@ -901,7 +1063,9 @@ class PhotoFrameController(
     val g = gen
     stopVideo()
     io.execute {
-      val bmp = runCatching { downloadBitmap(url) }.getOrNull()
+      val fetch = remoteFetch
+      val bmp =
+          runCatching { fetch?.invoke(url) ?: downloadBitmap(url, remoteHeaders) }.getOrNull()
       ui.post {
         if (g != gen) return@post // superseded by a newer advance
         if (!remoteMode) return@post // raced with startWeb() flipping us off
@@ -922,6 +1086,10 @@ class PhotoFrameController(
   private fun startWeb() {
     localMode = false
     remoteMode = false
+    remoteHeaders = emptyMap()
+    remoteFetch = null
+    smbSource?.let { s -> io.execute { runCatching { s.close() } } }
+    smbSource = null
     ui.removeCallbacks(remoteTick)
     ui.removeCallbacks(remoteRefresh)
     stopVideo()
@@ -971,35 +1139,15 @@ class PhotoFrameController(
         .start()
   }
 
-  /** Resolve the next image URL based on the configured online feed. Each branch
-   *  falls back to Picsum if its API hiccups, so the frame is never blank. Runs on
-   *  the io thread (httpGet blocks). */
-  private fun directImageUrl(): String =
-      runCatching {
-        when (settings.feed) {
-          ScreensaverConfig.FEED_MET -> metImageUrl()
-          ScreensaverConfig.FEED_ARTIC -> articImageUrl()
-          ScreensaverConfig.FEED_WIKIMEDIA -> wikimediaImageUrl()
-          ScreensaverConfig.FEED_APOD -> apodImageUrl()
-          else -> defaultPhotoUrl()
-        }
-      }.getOrDefault(picsumUrl())
-
-  // Request photos at the device's actual screen size/orientation so they fill the
-  // panel crisply instead of being upscaled from a fixed 1280×800 (Portal Mini is
-  // 800×1280 portrait, Portal+ gen-2 is 2160×1440, etc.).
-  private fun picsumUrl(): String {
+  private fun directImageUrl(): String {
     val m = context.resources.displayMetrics
-    return "https://picsum.photos/${m.widthPixels}/${m.heightPixels}?random=${System.currentTimeMillis()}"
-  }
-
-  /** Picsum, or Unsplash if a key was supplied (the original built-in feed). */
-  private fun defaultPhotoUrl(): String {
-    if (unsplashKey.isBlank()) return picsumUrl()
-    val m = context.resources.displayMetrics
-    // Match the Unsplash crop to the screen aspect so portrait panels don't get a
-    // letterboxed/upscaled landscape shot.
-    val orientation = if (m.heightPixels > m.widthPixels) "portrait" else "landscape"
+    val w = m.widthPixels
+    val h = m.heightPixels
+    if (unsplashKey.isBlank())
+        return "https://picsum.photos/$w/$h?random=${System.currentTimeMillis()}"
+    // Match Unsplash crop to the screen aspect so portrait panels (e.g. Portal
+    // Mini at 800x1280) don't get a letterboxed/upscaled landscape shot.
+    val orientation = if (h > w) "portrait" else "landscape"
     val json =
         httpGet(
             "https://api.unsplash.com/photos/random?orientation=$orientation" +
@@ -1007,123 +1155,7 @@ class PhotoFrameController(
     return JSONObject(json).getJSONObject("urls").getString("regular")
   }
 
-  // The Met search returns a big list of object IDs once; we then pick random ones and
-  // fetch each object's primaryImage. The ID list is cached for the session.
-  private var metIds: List<Int>? = null
-  private fun metImageUrl(): String {
-    val ids =
-        metIds
-            ?: run {
-              val q =
-                  listOf(
-                          "landscape", "impressionism", "painting", "portrait", "seascape",
-                          "river", "mountains", "flowers", "still life", "garden")
-                      .random()
-              val arr =
-                  JSONObject(
-                          httpGet(
-                              "https://collectionapi.metmuseum.org/public/collection/v1/" +
-                                  "search?hasImages=true&q=$q"))
-                      .optJSONArray("objectIDs")
-              val list =
-                  if (arr != null) (0 until arr.length()).map { arr.getInt(it) } else emptyList()
-              metIds = list
-              list
-            }
-    if (ids.isEmpty()) return picsumUrl()
-    repeat(5) {
-      val id = ids.random()
-      val img =
-          runCatching {
-                JSONObject(
-                        httpGet(
-                            "https://collectionapi.metmuseum.org/public/collection/v1/objects/$id"))
-                    .optString("primaryImage")
-              }
-              .getOrDefault("")
-      if (img.isNotBlank()) return img
-    }
-    return picsumUrl()
-  }
-
-  private fun articImageUrl(): String {
-    val page = (1..100).random()
-    val data =
-        JSONObject(
-                httpGet(
-                    "https://api.artic.edu/api/v1/artworks?fields=id,image_id&limit=100&page=$page"))
-            .optJSONArray("data") ?: return picsumUrl()
-    val imageIds =
-        (0 until data.length()).mapNotNull {
-          data.getJSONObject(it).optString("image_id").takeIf { s -> s.isNotBlank() && s != "null" }
-        }
-    if (imageIds.isEmpty()) return picsumUrl()
-    // IIIF image API: 1200px wide, auto height.
-    return "https://www.artic.edu/iiif/2/${imageIds.random()}/full/1200,/0/default.jpg"
-  }
-
-  private fun wikimediaImageUrl(): String {
-    // Picture of the Day is one per day, so sample a random recent date for variety.
-    val cal = java.util.Calendar.getInstance()
-    cal.add(java.util.Calendar.DAY_OF_YEAR, -(0..120).random())
-    val date =
-        String.format(
-            "%04d/%02d/%02d",
-            cal.get(java.util.Calendar.YEAR),
-            cal.get(java.util.Calendar.MONTH) + 1,
-            cal.get(java.util.Calendar.DAY_OF_MONTH))
-    val image =
-        JSONObject(httpGet("https://api.wikimedia.org/feed/v1/wikipedia/en/featured/$date"))
-            .optJSONObject("image") ?: return picsumUrl()
-    val thumb = image.optJSONObject("thumbnail")?.optString("source").orEmpty()
-    val full = image.optJSONObject("image")?.optString("source").orEmpty()
-    return thumb.ifBlank { full }.ifBlank { picsumUrl() }
-  }
-
-  private fun apodImageUrl(): String {
-    for (attempt in 0 until 3) {
-      val obj =
-          runCatching {
-                org.json.JSONArray(
-                        httpGet(
-                            "https://api.nasa.gov/planetary/apod?api_key=DEMO_KEY&count=1&thumbs=true"))
-                    .optJSONObject(0)
-              }
-              .getOrNull() ?: continue
-      if (obj.optString("media_type") == "image") {
-        // Prefer the display-sized "url" over "hdurl": the HD master is often a
-        // 5000–10000px, many-MB image that's slow to fetch and overkill for the panel.
-        val u = obj.optString("url").ifBlank { obj.optString("hdurl") }
-        if (u.isNotBlank()) return u
-      } else {
-        val t = obj.optString("thumbnail_url")
-        if (t.isNotBlank()) return t
-      }
-    }
-    return picsumUrl()
-  }
-
   // --- data -------------------------------------------------------------------
-  private fun batteryPct(): Int {
-    val i =
-        context.registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED)) ?: return -1
-    // Only Portal Go has a battery; the mains-powered Portals (Portal+, Mini,
-    // gen-2, TV) report no battery present but still publish a bogus level=0, so
-    // gate on EXTRA_PRESENT to avoid showing a permanent "0%". -1 hides the field.
-    if (!i.getBooleanExtra(BatteryManager.EXTRA_PRESENT, false)) return -1
-    val level = i.getIntExtra(BatteryManager.EXTRA_LEVEL, -1)
-    val scale = i.getIntExtra(BatteryManager.EXTRA_SCALE, -1)
-    return if (level >= 0 && scale > 0) level * 100 / scale else -1
-  }
-
-  private fun fetchWeather() {
-    io.execute {
-      // Shared resilient fetch: cached location + multi-provider geolocation.
-      val w = Weather.fetch(context)
-      if (w.isNotBlank()) weatherText = w
-    }
-  }
-
   private fun httpGet(spec: String): String {
     val c = URL(spec).openConnection() as HttpURLConnection
     c.connectTimeout = 8000
@@ -1132,30 +1164,14 @@ class PhotoFrameController(
     return c.inputStream.use { it.readBytes().toString(Charsets.UTF_8) }
   }
 
-  private fun downloadBitmap(spec: String): Bitmap? {
+  private fun downloadBitmap(spec: String, headers: Map<String, String> = emptyMap()): Bitmap? {
     val c = URL(spec).openConnection() as HttpURLConnection
     c.connectTimeout = 8000
     c.readTimeout = 12000
     c.instanceFollowRedirects = true
     c.setRequestProperty("User-Agent", "PortalPhotoFrame/1.0")
-    // Buffer the whole image so we can measure it, then decode downsampled. Art-feed
-    // sources (the Met especially) return 4000–6000px masters; decoding those at full
-    // size is ~50–100 MB of ARGB and OOMs the Portal's small heap — the frame would
-    // go blank or take the dream down with it. Capping at the screen's ~2× kills that.
-    val bytes = c.inputStream.use { it.readBytes() }
-    return decodeSampled(bytes, 2560)
-  }
-
-  /** Decode [bytes] downsampled so the longer edge is ≤ [maxEdge] px. Guards OOM. */
-  private fun decodeSampled(bytes: ByteArray, maxEdge: Int): Bitmap? {
-    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-    BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
-    val longest = maxOf(bounds.outWidth, bounds.outHeight)
-    if (longest <= 0) return null
-    var sample = 1
-    while (longest / sample > maxEdge) sample *= 2
-    val opts = BitmapFactory.Options().apply { inSampleSize = sample }
-    return runCatching { BitmapFactory.decodeByteArray(bytes, 0, bytes.size, opts) }.getOrNull()
+    headers.forEach { (k, v) -> c.setRequestProperty(k, v) }
+    return c.inputStream.use { BitmapFactory.decodeStream(it) }
   }
 
   private val MATCH = FrameLayout.LayoutParams.MATCH_PARENT
