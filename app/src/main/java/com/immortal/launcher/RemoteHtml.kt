@@ -57,6 +57,21 @@ object RemoteHtml {
   .tabbar button{flex:1;padding:10px 0;background:none;color:#777;font-size:12px}
   .tabbar button.on{color:#fff;box-shadow:inset 0 2px 0 #2e6be6}
 
+  .np{display:flex;flex-direction:column;align-items:center;text-align:center;padding:6px 4px}
+  .npart{width:240px;max-width:72vw;height:240px;max-height:72vw;border-radius:16px;background:#1c1c1e;object-fit:cover}
+  .nptitle{font-size:18px;font-weight:600;margin-top:18px;max-width:92%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .npsub{font-size:14px;color:#9a9a9a;margin-top:4px;max-width:92%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .npbar{width:100%;max-width:340px;margin:20px 0 2px}
+  .npbar input{width:100%;accent-color:#2e6be6}
+  .nptimes{display:flex;justify-content:space-between;width:100%;max-width:340px;font-size:12px;color:#7c7c7c}
+  .npctrl{display:flex;align-items:center;gap:22px;margin-top:20px}
+  .npctrl button{background:#1c1c1e;color:#fff;border-radius:50%;width:60px;height:60px;display:flex;align-items:center;justify-content:center}
+  .npctrl button.play{width:76px;height:76px;background:#2e6be6}
+  .npctrl button:active{background:#2a2a2c}
+  .npctrl button svg{width:26px;height:26px;display:block}
+  .npctrl button.play svg{width:32px;height:32px}
+  .npempty{color:#7c7c7c;font-size:15px;text-align:center;padding:56px 16px}
+
   .toprow{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
   .botrow{display:grid;grid-template-columns:1fr 1fr;gap:8px}
   .toprow button,.botrow button{padding:14px 4px;font-size:14px;background:#1c1c1e;color:#fff;border-radius:13px}
@@ -215,9 +230,26 @@ object RemoteHtml {
       </div>
     </div>
 
+    <div id=tabMedia class="panel scroll hide">
+      <div id=npEmpty class=npempty>Nothing playing right now.</div>
+      <div id=npCard class="np hide">
+        <img id=npArt class=npart alt="">
+        <div id=npTitle class=nptitle></div>
+        <div id=npSub class=npsub></div>
+        <div class=npbar><input id=npSeek type=range min=0 max=1000 value=0 oninput="npScrubInput()" onchange="npScrubCommit()"></div>
+        <div class=nptimes><span id=npPos>0:00</span><span id=npDur></span></div>
+        <div class=npctrl>
+          <button onclick="media('prev')" aria-label="Previous"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M7 6h2v12H7zM18 6v12l-9-6z"/></svg></button>
+          <button id=npPlay class=play onclick="media('playpause')" aria-label="Play or pause"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg></button>
+          <button onclick="media('next')" aria-label="Next"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 6v12l9-6zM15 6h2v12h-2z"/></svg></button>
+        </div>
+      </div>
+    </div>
+
     <div class=tabbar>
       <button id=tb_remote class=on onclick="showTab('remote')">Remote</button>
       <button id=tb_apps onclick="showTab('apps')">Apps</button>
+      <button id=tb_media onclick="showTab('media')">Media</button>
       <button id=tb_setup onclick="showTab('setup')">Setup</button>
     </div>
   </div>
@@ -233,7 +265,13 @@ object RemoteHtml {
   function show(view){
     document.getElementById('pairView').classList.toggle('hide',view!=='pair');
     document.getElementById('remoteView').classList.toggle('hide',view!=='remote');
+    if(view!=='remote'&&typeof stopNowPlaying==='function')stopNowPlaying();
   }
+  // Pause media polling while the phone screen/tab is backgrounded; resume if Media is open.
+  document.addEventListener('visibilitychange',function(){
+    if(document.hidden)stopNowPlaying();
+    else if(document.getElementById('tb_media').classList.contains('on'))startNowPlaying();
+  });
   function api(path,opts){
     opts=opts||{};opts.headers=opts.headers||{};
     var a=active();
@@ -299,12 +337,63 @@ object RemoteHtml {
       .catch(function(){document.getElementById('addErr').textContent='Couldn\'t reach that device.';});
   }
   function showTab(name){
-    ['remote','apps','setup'].forEach(function(t){
+    ['remote','apps','media','setup'].forEach(function(t){
       document.getElementById('tab'+t.charAt(0).toUpperCase()+t.slice(1)).classList.toggle('hide',t!==name);
       document.getElementById('tb_'+t).classList.toggle('on',t===name);
     });
     if(name==='apps'){loadApps();loadPresets();}
     if(name==='setup'){loadSources();}
+    if(name==='media')startNowPlaying();else stopNowPlaying();
+  }
+  // --- now playing (media controls) ---
+  // Inline SVG (not Unicode ▶/⏸) so the controls render as crisp monochrome glyphs everywhere —
+  // iOS renders the media-symbol codepoints as colour emoji.
+  var SVG_PLAY='<svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>';
+  var SVG_PAUSE='<svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 5h4v14H6zM14 5h4v14h-4z"/></svg>';
+  var npTimer=null,npTick=null,npData=null,npFetchedAt=0,npArtVer=null,npSeeking=false;
+  function fmt(ms){if(!ms||ms<0)ms=0;var s=Math.floor(ms/1000),m=Math.floor(s/60);s=s%60;return m+':'+(s<10?'0':'')+s;}
+  function curPos(){ // interpolate between polls so the bar moves smoothly without hammering
+    if(!npData||!npData.active)return 0;
+    var p=npData.positionMs||0;if(npData.playing)p+=Date.now()-npFetchedAt;
+    var d=npData.durationMs||0;return d>0?Math.min(p,d):p;
+  }
+  function startNowPlaying(){stopNowPlaying();loadNowPlaying();npTimer=setInterval(loadNowPlaying,1500);npTick=setInterval(npRender,500);}
+  function stopNowPlaying(){if(npTimer)clearInterval(npTimer);if(npTick)clearInterval(npTick);npTimer=npTick=null;}
+  function loadNowPlaying(){api('/remote/nowplaying').then(function(d){npData=(d&&d.np)||{active:false};npFetchedAt=Date.now();npApply();}).catch(function(){});}
+  function npApply(){
+    var card=document.getElementById('npCard'),empty=document.getElementById('npEmpty');
+    if(!npData||!npData.active){card.classList.add('hide');empty.classList.remove('hide');npArtVer=null;return;}
+    card.classList.remove('hide');empty.classList.add('hide');
+    document.getElementById('npTitle').textContent=npData.title||'';
+    document.getElementById('npSub').textContent=[npData.artist,npData.album].filter(Boolean).join(' — ');
+    document.getElementById('npPlay').innerHTML=npData.playing?SVG_PAUSE:SVG_PLAY;
+    var img=document.getElementById('npArt');
+    if(npData.hasArt){
+      if(npArtVer!==npData.artVersion){npArtVer=npData.artVersion;var a=active();img.src=(a?a.base:'')+'/remote/art?v='+npData.artVersion;}
+      img.style.visibility='visible';
+    } else {img.removeAttribute('src');img.style.visibility='hidden';npArtVer=null;}
+    var hasDur=(npData.durationMs||0)>0;
+    document.getElementById('npSeek').style.visibility=hasDur?'visible':'hidden';
+    document.getElementById('npDur').textContent=hasDur?fmt(npData.durationMs):'';
+    npRender();
+  }
+  function npRender(){
+    if(!npData||!npData.active)return;
+    var d=npData.durationMs||0,p=curPos();
+    document.getElementById('npPos').textContent=fmt(p);
+    if(d>0&&!npSeeking)document.getElementById('npSeek').value=Math.round(p/d*1000);
+  }
+  function npScrubInput(){npSeeking=true;var d=npData&&npData.durationMs||0;if(d>0)document.getElementById('npPos').textContent=fmt(document.getElementById('npSeek').value/1000*d);}
+  function npScrubCommit(){
+    var d=npData&&npData.durationMs||0;if(d<=0){npSeeking=false;return;}
+    var pos=Math.round(document.getElementById('npSeek').value/1000*d);
+    api('/remote/media',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'seek',positionMs:pos})}).catch(function(){});
+    if(npData){npData.positionMs=pos;npFetchedAt=Date.now();} // optimistic: keep interpolating from the new spot
+    npSeeking=false;
+  }
+  function media(action){
+    api('/remote/media',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:action})})
+      .then(function(){setTimeout(loadNowPlaying,250);}).catch(function(){});
   }
   function key(action){
     api('/remote/key',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:action})}).catch(function(){});
