@@ -1,5 +1,5 @@
 <#
-  Copyright (c) Meta Platforms, Inc. and affiliates.
+  Copyright (c) 2026 Starbright Lab.
   Licensed under the MIT license found in the LICENSE file in the repo root.
 
   Windows Portal provisioner. Finds (or downloads) ADB, waits for a connected
