@@ -97,6 +97,11 @@ class FaceRenderer(
   private var lastArtBitmap: Bitmap? = null
   private var npListener: NowPlayingHub.Listener? = null
 
+  // Photo caption (place / date). A grid element like the rest, fed per-photo via [setCaption].
+  private var captionPanel: LinearLayout? = null
+  private var captionPlace: TextView? = null
+  private var captionDate: TextView? = null
+
   fun start(face: Face) {
     this.face = face
     buildOverlay()
@@ -122,9 +127,21 @@ class FaceRenderer(
   private fun buildOverlay() {
     view.removeAllViews()
     buckets.clear()
+    // Caption views are rebuilt below (or not, on a full-bleed face) — drop stale refs so a
+    // late setCaption() can't poke a detached view from the previous face.
+    captionPanel = null
+    captionPlace = null
+    captionDate = null
 
     buildClockCluster(face.clock)
     val fullBleed = clockFace?.fullBleed == true
+
+    // Now-playing shows on EVERY face — including the full-bleed flip clock — whenever the user has
+    // the setting on (it's high-value enough to be its own switch, not tied to face selection). It's
+    // built BEFORE the caption so that when they share a cell (both default bottom-right) the
+    // now-playing card sits on top and the smaller photo caption tucks beneath it. Self-hides until
+    // music is playing.
+    if (ScreensaverConfig.load(context).showNowPlaying) buildNowPlaying(face.nowPlaying)
 
     // A full-bleed clock (e.g. the Fliqlo flip clock) owns the whole frame on its own near-black
     // background, so skip the scrim and the date/battery/weather widgets — none should overlay it.
@@ -138,12 +155,9 @@ class FaceRenderer(
           )
       view.addView(scrim, 0, FrameLayout.LayoutParams(MATCH, dp(320), Gravity.BOTTOM))
       buildStandaloneWidgets(face)
+      // Photo caption is photo metadata, so (like the widgets) it's skipped on a full-bleed clock.
+      if (face.caption.enabled) buildCaption(face.caption)
     }
-
-    // Now-playing is independent of the face: it shows on EVERY face — including the full-bleed
-    // flip clock — whenever the user has the now-playing setting on (it's high-value enough to be
-    // its own switch, not tied to face selection). The card self-hides until music is playing.
-    if (ScreensaverConfig.load(context).showNowPlaying) buildNowPlaying(face.nowPlaying)
   }
 
   /**
@@ -255,7 +269,10 @@ class FaceRenderer(
     artLp.setMarginStart(dp(16))
     if (spec.showArt) card.addView(art, artLp)
 
-    bucket(spec.position).addView(card)
+    // Explicit WRAP width: a vertical LinearLayout (the bucket) otherwise hands children
+    // MATCH_PARENT by default, which would squeeze the card to a narrower cell-mate's width
+    // (e.g. the photo caption now sharing this cell) and truncate the track title.
+    bucket(spec.position).addView(card, LinearLayout.LayoutParams(WRAP, WRAP))
     nowPlayingCard = card
     npTitle = title
     npArtist = artist
@@ -296,6 +313,60 @@ class FaceRenderer(
             ui.post { if (lastArtUrl == want) art.setImageBitmap(bmp) }
           }
     }
+  }
+
+  /**
+   * The photo caption ("place" bold over a lighter "date") as a grid element, so it stacks with
+   * whatever else lands in the same cell (notably the now-playing card — both default to
+   * bottom-right) instead of overlapping it. Hidden until [setCaption] gets real metadata.
+   */
+  private fun buildCaption(spec: CaptionSpec) {
+    val align = horizontalGravity(spec.position)
+    val col = LinearLayout(context)
+    col.orientation = LinearLayout.VERTICAL
+    col.gravity = align
+    col.visibility = View.GONE
+    val place = text(19f, Color.WHITE, false)
+    place.typeface = Typeface.DEFAULT_BOLD
+    place.maxLines = 1
+    place.ellipsize = TextUtils.TruncateAt.END
+    place.gravity = align
+    val date = text(14f, 0xCCFFFFFF.toInt(), true)
+    date.maxLines = 1
+    date.gravity = align
+    col.addView(place, LinearLayout.LayoutParams(WRAP, WRAP))
+    col.addView(date, LinearLayout.LayoutParams(WRAP, WRAP))
+    // Top margin gives breathing room from whatever sits above in the same cell (the now-playing
+    // card). A GONE sibling contributes no space, so a lone caption isn't pushed off the bottom.
+    bucket(spec.position)
+        .addView(col, LinearLayout.LayoutParams(WRAP, WRAP).apply { topMargin = dp(18) })
+    captionPanel = col
+    captionPlace = place
+    captionDate = date
+  }
+
+  /**
+   * Push the latest photo caption (main thread). A blank/absent place AND date hides it; otherwise
+   * each line shows only when it has content. No-op when the caption isn't built (disabled, or a
+   * full-bleed face).
+   */
+  fun setCaption(place: String?, date: String?) {
+    val col = captionPanel ?: return
+    val p = place?.takeIf { it.isNotBlank() }
+    val d = date?.takeIf { it.isNotBlank() }
+    if (p == null && d == null) {
+      col.visibility = View.GONE
+      return
+    }
+    captionPlace?.apply {
+      visibility = if (p == null) View.GONE else View.VISIBLE
+      text = p ?: ""
+    }
+    captionDate?.apply {
+      visibility = if (d == null) View.GONE else View.VISIBLE
+      text = d ?: ""
+    }
+    col.visibility = View.VISIBLE
   }
 
   // --- periodic loops ---------------------------------------------------------
