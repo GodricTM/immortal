@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Meta Platforms, Inc. and affiliates.
+ * Copyright (c) 2026 Starbright Lab.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -7,6 +7,8 @@
 
 package com.immortal.launcher
 
+import android.animation.AnimatorSet
+import android.animation.ObjectAnimator
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
@@ -18,9 +20,11 @@ import android.os.Handler
 import android.os.Looper
 import android.speech.tts.TextToSpeech
 import android.text.TextUtils
+import android.util.Log
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
+import android.view.animation.AccelerateDecelerateInterpolator
 import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
@@ -47,10 +51,12 @@ private const val SHERPA_VOICE_PARAM = "sherpa_voice_name"
  * weather cluster bottom-left.
  *
  * Source is configurable via [ScreensaverConfig]:
- *  - **default** — the built-in keyless photo feed (Lorem Picsum, or Unsplash if a
- *    key is supplied). This is also the fallback whenever any other source is unset,
- *    empty, or unreachable (e.g. a USB drive was unplugged, a shared album was
- *    unshared), so the frame is never blank.
+ *  - **default** — the built-in keyless photo feed. This is also the fallback whenever
+ *    any other source is unset, empty, or unreachable (e.g. a USB drive was unplugged,
+ *    a shared album was unshared). It walks an ordered chain — Unsplash (if a key is
+ *    supplied) → Lorem Picsum → Wikimedia Commons featured landscapes → CC0 photos
+ *    bundled in the APK — showing the first image it can fetch, so the frame is never
+ *    blank even with no network or a third-party outage. See [fetchWebPhoto].
  *  - **folder** — photos and videos from a folder the user picked (internal, SD, or
  *    a USB-C drive), read through the Storage Access Framework.
  *  - **url** — a public share link to an iCloud Shared Album or a Google Photos
@@ -70,10 +76,24 @@ class PhotoFrameController(
     private val calendarRefreshMs: Long = 30 * 60_000L,
 ) {
   private val io = Executors.newSingleThreadExecutor()
+  // A separate single-thread executor for caption work (EXIF read + the reverse-geocode
+  // network call), so an 8s geocode lookup can never stall the image-decode pipeline on [io].
+  private val metaIo = Executors.newSingleThreadExecutor()
   private val ui = Handler(Looper.getMainLooper())
 
   private lateinit var photo: ImageView
   private lateinit var videoView: VideoView
+
+  // tvOS-style slow zoom/pan ("Ken Burns") on the photo layer. Runs over the dwell time and is
+  // cancelled/restarted on each advance; only in fill mode (fit/letterbox is "show the whole
+  // image", which zooming would crop into). [kenBurnsStyle] cycles the motion so consecutive
+  // photos don't all move the same way.
+  private var kenBurns: AnimatorSet? = null
+  private var kenBurnsStyle = 0
+
+  // The "place · date" caption is now a FaceRenderer grid element (so it stacks with the
+  // now-playing card instead of overlapping it). This controller still reads the EXIF here
+  // (own photos only — local folder / SMB) and pushes it via [FaceRenderer.setCaption].
 
   // The overlay (clock / date / weather / battery / now-playing) is built and driven by the
   // FaceRenderer from a Face descriptor; this controller owns only the photo/video layer.
@@ -132,6 +152,13 @@ class PhotoFrameController(
   private var remoteUrls: List<String> = emptyList()
   private var remoteIndex = -1
   private var remoteFailStreak = 0
+  // Shared-album signed image URLs (iCloud/Google) expire over time. When a whole loop of
+  // downloads fails we re-mint fresh URLs and keep playing instead of dropping to the built-in
+  // feed; [remoteReresolveStreak] caps consecutive re-resolves so a genuine outage still settles
+  // on the fallback rather than re-fetching forever. [remoteReresolving] guards against
+  // overlapping re-fetches.
+  private var remoteReresolveStreak = 0
+  private var remoteReresolving = false
   // Auth headers sent with each remote image download — empty for public shares, the
   // x-api-key for Immich. Applied in [advanceRemote]/[downloadBitmap].
   private var remoteHeaders: Map<String, String> = emptyMap()
@@ -147,6 +174,17 @@ class PhotoFrameController(
   private val history = ArrayList<Bitmap>()
   private var index = -1
 
+  // Default-feed source-chain state (see [fetchWebPhoto]).
+  // Wikimedia Commons featured-landscape image list: fetched once per session, then cycled.
+  private var wikimediaUrls: List<String> = emptyList()
+  private var wikimediaIdx = 0
+  // Bundled offline photos (assets/[FALLBACK_DIR]): shuffled once, then cycled.
+  private var bundledNames: List<String> = emptyList()
+  private var bundledIdx = 0
+  // Per-source failure backoff so a dead remote (e.g. a Picsum outage) isn't retried
+  // every tick; the entry expires after [SOURCE_COOLDOWN_MS] so recovery self-heals.
+  private val sourceCooldownUntil = HashMap<String, Long>()
+
   /** Host (dream / preview activity) sets this to dismiss the frame on tap. */
   var onExit: (() -> Unit)? = null
 
@@ -160,6 +198,8 @@ class PhotoFrameController(
 
   /** Hosts forward their touch events here. */
   fun onTouch(ev: MotionEvent) {
+    // While the timer alarm is showing, the slide-to-stop owns the touch stream.
+    if (faceRenderer.handleAlarmTouch(ev)) return
     when (ev.actionMasked) {
       MotionEvent.ACTION_DOWN -> {
         downX = ev.x
@@ -187,11 +227,7 @@ class PhotoFrameController(
 
   fun start() {
     settings = ScreensaverConfig.load(context)
-    // Web-page source takes over the whole frame — no photo feed, no Immortal overlay.
-    if (faceOverride == null && settings.usesWebUrl) {
-      startWebPage(settings.webUrl!!)
-      return
-    }
+    val source = PhotoFrameSource.from(settings, allowWebPage = faceOverride == null)
     applyFit()
     refreshCalendar.run()
     calendarTick.run()
@@ -249,20 +285,19 @@ class PhotoFrameController(
     if (settings.ambientDashboard) ui.postDelayed(dashboardCycle, 45_000L)
 
     if (showWelcome && settings.welcomeEnabled) showWelcomeOverlay()
-    when {
-      settings.usesFolder -> {
-        val path = settings.folderPath
-        if (path.isNullOrBlank()) {
-          startWeb()
-          return
-        }
+    when (source) {
+      is PhotoFrameSource.WebPage -> {
+        // Web-page source takes over the whole frame — no photo feed, no Immortal overlay.
+        startWebPage(source.url)
+      }
+      is PhotoFrameSource.Folder -> {
         io.execute {
           val list =
-              if (LocalMedia.isAccessible(path)) LocalMedia.enumerate(path, settings.includeVideo)
+              if (LocalMedia.isAccessible(source.path)) LocalMedia.enumerate(source.path, source.includeVideo)
               else emptyList()
           ui.post {
             if (list.isNotEmpty()) {
-              playlist = if (settings.shuffle) list.shuffled() else list
+              playlist = if (source.shuffle) list.shuffled() else list
               localMode = true
               localIndex = -1
               advanceLocal(+1)
@@ -273,19 +308,14 @@ class PhotoFrameController(
           }
         }
       }
-      settings.usesUrl -> {
-        val shareUrl = settings.albumUrl
-        if (shareUrl.isNullOrBlank()) {
-          startWeb()
-          return
-        }
+      is PhotoFrameSource.SharedAlbum -> {
         val m = context.resources.displayMetrics
         io.execute {
-          val album = RemoteAlbum.fetch(shareUrl, m.widthPixels, m.heightPixels)
+          val album = RemoteAlbum.fetch(source.url, m.widthPixels, m.heightPixels)
           val urls = album?.photoUrls.orEmpty()
           ui.post {
             if (urls.isNotEmpty()) {
-              remoteUrls = if (settings.shuffle) urls.shuffled() else urls
+              remoteUrls = if (source.shuffle) urls.shuffled() else urls
               remoteHeaders = emptyMap()
               remoteMode = true
               remoteIndex = -1
@@ -299,19 +329,13 @@ class PhotoFrameController(
           }
         }
       }
-      settings.usesImmich -> {
-        val base = settings.immichUrl
-        val key = settings.immichKey
-        if (base.isNullOrBlank() || key.isNullOrBlank()) {
-          startWeb()
-          return
-        }
+      is PhotoFrameSource.Immich -> {
         io.execute {
-          val urls = ImmichSource.listImageUrls(base, key, settings.immichAlbumId).orEmpty()
+          val urls = ImmichSource.listImageUrls(source.url, source.key, source.albumId).orEmpty()
           ui.post {
             if (urls.isNotEmpty()) {
-              remoteUrls = if (settings.shuffle) urls.shuffled() else urls
-              remoteHeaders = ImmichSource.authHeaders(key)
+              remoteUrls = if (source.shuffle) urls.shuffled() else urls
+              remoteHeaders = ImmichSource.authHeaders(source.key)
               remoteMode = true
               remoteIndex = -1
               remoteFailStreak = 0
@@ -323,18 +347,13 @@ class PhotoFrameController(
           }
         }
       }
-      settings.usesDav -> {
-        val url = settings.davUrl
-        if (url.isNullOrBlank()) {
-          startWeb()
-          return
-        }
+      is PhotoFrameSource.WebDav -> {
         io.execute {
-          val urls = DavSource.listImageUrls(url, settings.davUser, settings.davPass).orEmpty()
+          val urls = DavSource.listImageUrls(source.url, source.user, source.pass).orEmpty()
           ui.post {
             if (urls.isNotEmpty()) {
-              remoteUrls = if (settings.shuffle) urls.shuffled() else urls
-              remoteHeaders = DavSource.authHeaders(settings.davUser, settings.davPass)
+              remoteUrls = if (source.shuffle) urls.shuffled() else urls
+              remoteHeaders = DavSource.authHeaders(source.user, source.pass)
               remoteMode = true
               remoteIndex = -1
               remoteFailStreak = 0
@@ -345,22 +364,22 @@ class PhotoFrameController(
           }
         }
       }
-      settings.usesSmb -> {
+      is PhotoFrameSource.Smb -> {
         val src =
             SmbSource(
-                host = settings.smbHost.orEmpty(),
-                shareName = settings.smbShare.orEmpty(),
-                basePath = settings.smbPath.orEmpty(),
-                user = settings.smbUser.orEmpty(),
-                password = settings.smbPass.orEmpty(),
+                host = source.host,
+                shareName = source.share,
+                basePath = source.path,
+                user = source.user,
+                password = source.pass,
             )
         io.execute {
           val paths = if (src.connect()) src.listImages() else emptyList()
           ui.post {
             if (paths.isNotEmpty()) {
               smbSource = src
-              remoteUrls = if (settings.shuffle) paths.shuffled() else paths
-              remoteFetch = { p -> src.openStream(p)?.use { BitmapFactory.decodeStream(it) } }
+              remoteUrls = if (source.shuffle) paths.shuffled() else paths
+              remoteFetch = { p -> src.openStream(p)?.use { decodeBoundedStream(it) } }
               remoteMode = true
               remoteIndex = -1
               remoteFailStreak = 0
@@ -373,7 +392,7 @@ class PhotoFrameController(
           }
         }
       }
-      else -> startWeb()
+      PhotoFrameSource.DefaultFeed -> startWeb()
     }
   }
 
@@ -381,12 +400,17 @@ class PhotoFrameController(
    *  whole frame; the host's touch handling still gives tap-to-exit. */
   @android.annotation.SuppressLint("SetJavaScriptEnabled")
   private fun startWebPage(url: String) {
-    val wv = android.webkit.WebView(context)
+    // Override onTouchEvent/performClick (not just setOnTouchListener, which WebView ignores in its
+    // own onTouchEvent) so the page never eats touch — the host needs it for tap-to-exit / swipe.
+    val wv =
+        object : android.webkit.WebView(context) {
+          override fun onTouchEvent(event: MotionEvent): Boolean = false
+          override fun performClick(): Boolean = false
+        }
     wv.setBackgroundColor(Color.BLACK)
     wv.isVerticalScrollBarEnabled = false
     wv.isHorizontalScrollBarEnabled = false
     wv.overScrollMode = View.OVER_SCROLL_NEVER
-    wv.setOnTouchListener { _, _ -> false } // host consumes touch for tap-to-exit
     wv.settings.apply {
       javaScriptEnabled = true
       domStorageEnabled = true
@@ -411,6 +435,7 @@ class PhotoFrameController(
     tts = null
     ttsReady = false
     pendingSpeech = null
+    cancelKenBurns()
     faceRenderer.stop()
     if (this::videoView.isInitialized) runCatching { videoView.stopPlayback() }
     webView?.let { runCatching { it.stopLoading(); it.destroy() } }
@@ -419,6 +444,7 @@ class PhotoFrameController(
     smbSource?.let { s -> Thread { runCatching { s.close() } }.start() }
     smbSource = null
     io.shutdownNow()
+    metaIo.shutdownNow()
   }
 
   // --- UI ---------------------------------------------------------------------
@@ -450,6 +476,37 @@ class PhotoFrameController(
     welcomeOverlay.visibility = View.GONE
     root.addView(welcomeOverlay, FrameLayout.LayoutParams(MATCH, MATCH))
     return root
+  }
+
+  /** Read EXIF date/GPS for a local file off [metaIo], reverse-geocode the place, then publish
+   *  the caption — guarded by [gen] so a slow lookup for a superseded photo is dropped. */
+  private fun loadCaptionForLocal(path: String, g: Int) {
+    metaIo.execute {
+      val meta = runCatching { PhotoCaption.read(ExifInterface(path)) }.getOrNull()
+      publishCaption(meta, g)
+    }
+  }
+
+  /** Same as [loadCaptionForLocal] but for an SMB file: a fresh read stream feeds EXIF. */
+  private fun loadCaptionForSmb(path: String, g: Int) {
+    val src = smbSource ?: return
+    metaIo.execute {
+      val meta =
+          runCatching { src.openStream(path)?.use { PhotoCaption.read(ExifInterface(it)) } }
+              .getOrNull()
+      publishCaption(meta, g)
+    }
+  }
+
+  private fun publishCaption(meta: PhotoCaption.Meta?, g: Int) {
+    if (meta == null || meta.isEmpty) {
+      ui.post { if (g == gen) faceRenderer.setCaption(null, null) }
+      return
+    }
+    // Resolve the place name on this background thread (network) before touching the UI.
+    val place = if (meta.hasLocation) PhotoCaption.placeName(meta.lat!!, meta.lng!!) else null
+    val date = PhotoCaption.formatDate(meta.dateMillis)
+    ui.post { if (g == gen) faceRenderer.setCaption(place, date) }
   }
 
   /** A clean upcoming-events panel top-right, over the photo. Its own translucent
@@ -938,9 +995,47 @@ class PhotoFrameController(
         }
         photo.visibility = View.VISIBLE
         show(bmp)
+        loadCaptionForLocal(path, g)
         ui.postDelayed(localTick, intervalMs())
       }
     }
+  }
+
+  /**
+   * Downsample any photo to a safe size before it ever reaches the [ImageView].
+   *
+   * A full-resolution camera original is enormous once decoded: a ~39MP shot becomes a ~157MB
+   * ARGB_8888 bitmap, which is larger than the hardware Canvas can draw (~100MB). The draw then
+   * throws "trying to draw too large bitmap" on the main thread and crashes the whole launcher —
+   * and because Android responds to a *home app* crashing by clearing its preferred-activity (HOME)
+   * association, the very next Home press pops the "Select Home app" chooser. Bounding the longest
+   * edge to [MAX_EDGE] here (the same two-pass trick used by [Thumbnails]/[MediaArt]) keeps every
+   * source — folder, SMB, Immich, WebDAV, bundled — well under the cap, so it can't happen.
+   *
+   * The bound never upscales (small images decode untouched) and uses a power-of-two
+   * [BitmapFactory.Options.inSampleSize], the only value the decoder honours efficiently.
+   */
+  private fun sampleSizeFor(w: Int, h: Int): Int {
+    val longest = maxOf(w, h)
+    return if (longest > MAX_EDGE) Integer.highestOneBit(longest / MAX_EDGE) else 1
+  }
+
+  private fun decodeBoundedFile(path: String): Bitmap? {
+    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+    BitmapFactory.decodeFile(path, bounds)
+    val opts =
+        BitmapFactory.Options().apply { inSampleSize = sampleSizeFor(bounds.outWidth, bounds.outHeight) }
+    return BitmapFactory.decodeFile(path, opts)
+  }
+
+  /** Stream variant: buffers to bytes so the bounds pass can run before the real decode. */
+  private fun decodeBoundedStream(input: java.io.InputStream): Bitmap? {
+    val bytes = input.readBytes()
+    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+    BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+    val opts =
+        BitmapFactory.Options().apply { inSampleSize = sampleSizeFor(bounds.outWidth, bounds.outHeight) }
+    return BitmapFactory.decodeByteArray(bytes, 0, bytes.size, opts)
   }
 
   /**
@@ -955,7 +1050,7 @@ class PhotoFrameController(
    * being skipped.
    */
   private fun decodeCorrected(path: String): Bitmap? {
-    val bmp = BitmapFactory.decodeFile(path) ?: return null
+    val bmp = decodeBoundedFile(path) ?: return null
     val orientation =
         runCatching {
               ExifInterface(path)
@@ -988,6 +1083,8 @@ class PhotoFrameController(
   }
 
   private fun showVideo(path: String, g: Int) {
+    cancelKenBurns()
+    faceRenderer.setCaption(null, null)
     photo.setImageDrawable(null)
     photo.visibility = View.GONE
     videoView.visibility = View.VISIBLE
@@ -1061,10 +1158,11 @@ class PhotoFrameController(
       startWeb()
       return
     }
-    // One failure per URL = the whole album is unreachable; bail to the web feed
-    // so a dead share doesn't spin 8-12s timeouts indefinitely.
+    // One failure per URL = the whole album is unreachable. For a public-album share this
+    // usually means its signed image URLs have simply expired, so try to re-mint fresh ones
+    // before giving up to the built-in feed (see [reresolveOrFallback]).
     if (remoteFailStreak >= remoteUrls.size) {
-      startWeb()
+      reresolveOrFallback()
       return
     }
     gen++
@@ -1085,9 +1183,53 @@ class PhotoFrameController(
           return@post
         }
         remoteFailStreak = 0
+        remoteReresolveStreak = 0
         photo.visibility = View.VISIBLE
         show(bmp)
+        // EXIF caption only for SMB here — it reads the user's own files. The HTTP remote sources
+        // (iCloud/Google/Immich/DAV) serve EXIF-stripped images, so they carry no caption.
+        if (smbSource != null) loadCaptionForSmb(url, g) else faceRenderer.setCaption(null, null)
         ui.postDelayed(remoteTick, intervalMs())
+      }
+    }
+  }
+
+  /**
+   * A full loop of failed downloads on a public-album share almost always means its signed image
+   * URLs have expired (iCloud/Google hand out short-lived links), not that the album is gone. So
+   * re-fetch fresh URLs and keep playing rather than reverting to the built-in feed — the bug
+   * where a "refresh" silently dropped a working shared album back to the stock screensaver.
+   *
+   * Only the public-album URL source mints expiring links; the others (Immich/DAV/SMB) use stable
+   * endpoints, so a full failure loop there is a genuine outage and falls back as before.
+   * [remoteReresolveStreak] caps consecutive re-resolves (reset on any successful photo) so a real,
+   * sustained outage still settles on the fallback instead of re-fetching forever.
+   */
+  private fun reresolveOrFallback() {
+    if (remoteReresolving) return
+    val shareUrl = settings.albumUrl
+    if (!settings.usesUrl || shareUrl.isNullOrBlank() || remoteReresolveStreak >= MAX_RERESOLVE) {
+      startWeb()
+      return
+    }
+    remoteReresolving = true
+    remoteReresolveStreak++
+    val m = context.resources.displayMetrics
+    io.execute {
+      val fresh = RemoteAlbum.fetch(shareUrl, m.widthPixels, m.heightPixels)
+      val urls = fresh?.photoUrls.orEmpty()
+      ui.post {
+        remoteReresolving = false
+        if (!remoteMode) return@post // raced with a source change / startWeb()
+        if (urls.isNotEmpty()) {
+          remoteUrls = if (settings.shuffle) urls.shuffled() else urls
+          remoteIndex = -1
+          remoteFailStreak = 0
+          advanceRemote(+1)
+        } else {
+          // Album genuinely unreachable / unshared → don't leave the frame spinning.
+          startWeb()
+        }
       }
     }
   }
@@ -1126,7 +1268,7 @@ class PhotoFrameController(
 
   private fun loadFresh() {
     io.execute {
-      val bmp = runCatching { downloadBitmap(directImageUrl()) }.getOrNull() ?: return@execute
+      val bmp = fetchWebPhoto() ?: return@execute
       ui.post {
         photo.visibility = View.VISIBLE
         if (history.size >= 6) history.removeAt(0) // cap memory; GC reclaims
@@ -1137,32 +1279,187 @@ class PhotoFrameController(
     }
   }
 
+  // The default feed (and the universal fallback for any other source that's unset,
+  // empty, or unreachable) walks an ordered chain of keyless sources and returns the
+  // first image it can fetch:
+  //   1. Unsplash  — only when an API key was supplied (richest, but rate-limited)
+  //   2. Picsum    — keyless; the historical default
+  //   3. Wikimedia — Commons "Featured pictures of landscapes"; keyless, and on
+  //                  infrastructure independent of Picsum (the point of having it)
+  //   4. Bundled   — CC0/public-domain photos shipped in the APK; can't fail, so a
+  //                  fresh device with no network yet — or a day every web source is
+  //                  down (e.g. the Picsum outage that prompted this) — is never blank.
+  private val webSources: List<Pair<String, () -> Bitmap?>> by lazy {
+    buildList {
+      if (unsplashKey.isNotBlank()) add("unsplash" to ::unsplashBitmap)
+      add("picsum" to ::picsumBitmap)
+      add("wikimedia" to ::wikimediaBitmap)
+      add("bundled" to ::bundledBitmap)
+    }
+  }
+
+  private fun fetchWebPhoto(): Bitmap? {
+    val now = System.currentTimeMillis()
+    for ((name, fetch) in webSources) {
+      if ((sourceCooldownUntil[name] ?: 0L) > now) continue // dead recently; skip until cooldown
+      val bmp = runCatching { fetch() }.getOrNull()
+      if (bmp != null) return bmp
+      Log.w(TAG, "screensaver photo source '$name' unavailable; backing off")
+      sourceCooldownUntil[name] = now + SOURCE_COOLDOWN_MS
+    }
+    // Everything failed or is cooling down (e.g. all remotes down *and* the bundled
+    // assets are unreadable). Retry the whole chain ignoring cooldowns rather than
+    // leave the frame blank.
+    for ((_, fetch) in webSources) {
+      runCatching { fetch() }.getOrNull()?.let { return it }
+    }
+    Log.w(TAG, "screensaver: no photo source available")
+    return null
+  }
+
   private fun show(bmp: Bitmap) {
+    // The caption belongs to whichever photo is incoming; hide it now and let the per-source
+    // metadata load re-show it (web/CDN photos never re-show it — they carry no EXIF).
+    faceRenderer.setCaption(null, null)
     photo
         .animate()
         .alpha(0.15f)
         .setDuration(220)
         .withEndAction {
           photo.setImageBitmap(bmp)
+          startKenBurns()
           photo.animate().alpha(1f).setDuration(420).start()
         }
         .start()
   }
 
-  private fun directImageUrl(): String {
+  /**
+   * Apply a slow tvOS-style zoom/pan to the current photo over the dwell time. Cancelled and
+   * restarted on each advance. Only in fill mode: in fit/letterbox mode the user asked to see the
+   * whole frame, so cropping into it with a zoom would defeat that. A little overscan (scale
+   * [BIG]) gives pan styles room to move without ever exposing the black background.
+   */
+  private fun startKenBurns() {
+    kenBurns?.cancel()
+    // Reset to identity first so a cancelled mid-animation transform never lingers on the new shot.
+    photo.scaleX = 1f
+    photo.scaleY = 1f
+    photo.translationX = 0f
+    photo.translationY = 0f
+    if (settings.fit != ScreensaverConfig.FIT_FILL) return
+    val w = (if (photo.width > 0) photo.width else context.resources.displayMetrics.widthPixels)
+    val h = (if (photo.height > 0) photo.height else context.resources.displayMetrics.heightPixels)
+    photo.pivotX = w / 2f
+    photo.pivotY = h / 2f
+    val pan = (BIG - 1f) / 2f // max translation fraction that stays within the overscan at scale BIG
+    val set = AnimatorSet()
+    when ((kenBurnsStyle++ % 4 + 4) % 4) {
+      0 -> // slow zoom in
+      set.playTogether(
+          ObjectAnimator.ofFloat(photo, View.SCALE_X, 1f, BIG),
+          ObjectAnimator.ofFloat(photo, View.SCALE_Y, 1f, BIG))
+      1 -> // slow zoom out
+      set.playTogether(
+          ObjectAnimator.ofFloat(photo, View.SCALE_X, BIG, 1f),
+          ObjectAnimator.ofFloat(photo, View.SCALE_Y, BIG, 1f))
+      2 -> { // pan down (hold the zoom so the edges stay covered)
+        photo.scaleX = BIG
+        photo.scaleY = BIG
+        set.playTogether(ObjectAnimator.ofFloat(photo, View.TRANSLATION_Y, pan * h, -pan * h))
+      }
+      else -> { // pan up
+        photo.scaleX = BIG
+        photo.scaleY = BIG
+        set.playTogether(ObjectAnimator.ofFloat(photo, View.TRANSLATION_Y, -pan * h, pan * h))
+      }
+    }
+    set.duration = intervalMs() + 1200L // outlast the dwell so the motion never visibly stalls
+    set.interpolator = AccelerateDecelerateInterpolator()
+    set.start()
+    kenBurns = set
+  }
+
+  private fun cancelKenBurns() {
+    kenBurns?.cancel()
+    kenBurns = null
+    if (this::photo.isInitialized) {
+      photo.scaleX = 1f
+      photo.scaleY = 1f
+      photo.translationX = 0f
+      photo.translationY = 0f
+    }
+  }
+
+  // --- default-feed sources (tried in turn by [fetchWebPhoto]) ----------------
+  private fun picsumBitmap(): Bitmap? {
     val m = context.resources.displayMetrics
-    val w = m.widthPixels
-    val h = m.heightPixels
-    if (unsplashKey.isBlank())
-        return "https://picsum.photos/$w/$h?random=${System.currentTimeMillis()}"
-    // Match Unsplash crop to the screen aspect so portrait panels (e.g. Portal
+    return downloadBitmap(
+        "https://picsum.photos/${m.widthPixels}/${m.heightPixels}?random=${System.currentTimeMillis()}")
+  }
+
+  private fun unsplashBitmap(): Bitmap? {
+    val m = context.resources.displayMetrics
+    // Match the Unsplash crop to the screen aspect so portrait panels (e.g. Portal
     // Mini at 800x1280) don't get a letterboxed/upscaled landscape shot.
-    val orientation = if (h > w) "portrait" else "landscape"
+    val orientation = if (m.heightPixels > m.widthPixels) "portrait" else "landscape"
     val json =
         httpGet(
             "https://api.unsplash.com/photos/random?orientation=$orientation" +
                 "&query=$unsplashQuery&client_id=$unsplashKey")
-    return JSONObject(json).getJSONObject("urls").getString("regular")
+    return downloadBitmap(JSONObject(json).getJSONObject("urls").getString("regular"))
+  }
+
+  /**
+   * Keyless Wikimedia Commons feed: the curated "Featured pictures of landscapes"
+   * category. The file list is fetched once per session (then shuffled and cycled),
+   * so steady state is just a thumbnail download from Wikimedia's upload CDN.
+   */
+  private fun wikimediaBitmap(): Bitmap? {
+    if (wikimediaUrls.isEmpty()) wikimediaUrls = fetchWikimediaUrls()
+    if (wikimediaUrls.isEmpty()) return null
+    val url = wikimediaUrls[wikimediaIdx % wikimediaUrls.size]
+    wikimediaIdx++
+    return downloadBitmap(url)
+  }
+
+  private fun fetchWikimediaUrls(): List<String> {
+    val width = context.resources.displayMetrics.widthPixels.coerceIn(640, 1920)
+    val json =
+        httpGet(
+            "https://commons.wikimedia.org/w/api.php?action=query&format=json" +
+                "&generator=categorymembers&gcmtype=file&gcmlimit=200" +
+                "&gcmtitle=Category:Featured_pictures_of_landscapes" +
+                "&prop=imageinfo&iiprop=url&iiurlwidth=$width")
+    val pages =
+        JSONObject(json).optJSONObject("query")?.optJSONObject("pages") ?: return emptyList()
+    val urls = ArrayList<String>()
+    for (key in pages.keys()) {
+      val info = pages.getJSONObject(key).optJSONArray("imageinfo")?.optJSONObject(0) ?: continue
+      val url = info.optString("thumburl").ifBlank { info.optString("url") }
+      if (url.isNotBlank()) urls.add(url)
+    }
+    urls.shuffle()
+    return urls
+  }
+
+  /** Terminal fallback: CC0/public-domain photos bundled in the APK — never fails. */
+  private fun bundledBitmap(): Bitmap? {
+    if (bundledNames.isEmpty()) {
+      bundledNames =
+          runCatching {
+                context.assets.list(FALLBACK_DIR)?.filter { it.endsWith(".jpg", ignoreCase = true) }
+              }
+              .getOrNull()
+              .orEmpty()
+              .shuffled()
+    }
+    if (bundledNames.isEmpty()) return null
+    val name = bundledNames[bundledIdx % bundledNames.size]
+    bundledIdx++
+    return runCatching {
+          context.assets.open("$FALLBACK_DIR/$name").use { decodeBoundedStream(it) }
+        }
+        .getOrNull()
   }
 
   // --- data -------------------------------------------------------------------
@@ -1170,7 +1467,7 @@ class PhotoFrameController(
     val c = URL(spec).openConnection() as HttpURLConnection
     c.connectTimeout = 8000
     c.readTimeout = 8000
-    c.setRequestProperty("User-Agent", "PortalPhotoFrame/1.0")
+    c.setRequestProperty("User-Agent", USER_AGENT)
     return c.inputStream.use { it.readBytes().toString(Charsets.UTF_8) }
   }
 
@@ -1179,12 +1476,35 @@ class PhotoFrameController(
     c.connectTimeout = 8000
     c.readTimeout = 12000
     c.instanceFollowRedirects = true
-    c.setRequestProperty("User-Agent", "PortalPhotoFrame/1.0")
+    c.setRequestProperty("User-Agent", USER_AGENT)
     headers.forEach { (k, v) -> c.setRequestProperty(k, v) }
-    return c.inputStream.use { BitmapFactory.decodeStream(it) }
+    return c.inputStream.use { decodeBoundedStream(it) }
   }
 
   private val MATCH = FrameLayout.LayoutParams.MATCH_PARENT
   private val WRAP = FrameLayout.LayoutParams.WRAP_CONTENT
+  // Ken Burns overscan: the photo is scaled to this at the zoomed end / throughout a pan, giving
+  // pan styles room to travel without exposing the black background behind the image.
+  private val BIG = 1.12f
+  // Cap on consecutive shared-album re-resolves before yielding to the built-in feed (a real
+  // sustained outage), reset on any successful photo. See [reresolveOrFallback].
+  private val MAX_RERESOLVE = 3
   private fun dp(v: Int): Int = (v * context.resources.displayMetrics.density).toInt()
+
+  private companion object {
+    const val TAG = "ImmortalPhotoFrame"
+    // Cap on the longest edge of any decoded photo. Full-res camera originals (tens of MP) decode
+    // to bitmaps larger than the hardware Canvas can draw (~100MB), which crashes the launcher and
+    // makes Android drop its default-home role. The largest Portal panel is 1920px; 2560 leaves
+    // Ken-Burns overscan headroom (2560²·4 ≈ 26MB) while staying far under the cap. See
+    // [decodeBoundedFile]/[decodeBoundedStream].
+    const val MAX_EDGE = 2560
+    // Bundled fallback photos live under app/src/main/assets/<FALLBACK_DIR>/.
+    const val FALLBACK_DIR = "photoframe_fallback"
+    // How long to skip a web source after it fails, so a dead host (e.g. a Picsum
+    // outage) isn't re-hammered every tick. Expires on its own so recovery self-heals.
+    const val SOURCE_COOLDOWN_MS = 5 * 60_000L
+    // Descriptive UA — Wikimedia's API policy asks for an identifiable agent + contact.
+    const val USER_AGENT = "Immortal/1.0 (+https://github.com/starbrightlab/immortal)"
+  }
 }

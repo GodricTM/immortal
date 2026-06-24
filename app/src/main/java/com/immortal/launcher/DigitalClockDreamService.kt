@@ -67,8 +67,9 @@ class DigitalClockDreamService : DreamService() {
         // Anti-burn-in: drift the whole clock along a slow, invisible path so the lit
         // pixels of an always-on screen don't ghost in over time.
         val now = System.currentTimeMillis()
-        it.root.translationX = AntiBurnIn.offsetX(now, 14f)
-        it.root.translationY = AntiBurnIn.offsetY(now, 14f)
+        val shift = AntiBurnIn.shift(now, 14f)
+        it.root.translationX = shift.x
+        it.root.translationY = shift.y
       }
       handler.postDelayed(this, if (settings.showSeconds) 500L else 1_000L)
     }

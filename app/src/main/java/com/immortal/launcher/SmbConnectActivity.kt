@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Meta Platforms, Inc. and affiliates.
+ * Copyright (c) 2026 Starbright Lab.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -69,6 +69,7 @@ private fun SmbConnectScreen(onDone: () -> Unit) {
   var testing by remember { mutableStateOf(false) }
   var status by remember { mutableStateOf<String?>(null) }
   var connectedCount by remember { mutableStateOf<Int?>(null) }
+  val (_, initialFocus) = rememberInitialFocus()
 
   BackHandler { onDone() }
 
@@ -130,7 +131,7 @@ private fun SmbConnectScreen(onDone: () -> Unit) {
       )
       Spacer(Modifier.heightIn(min = 22.dp))
 
-      Field(host, { host = it }, "Server (e.g. 192.168.1.50)")
+      Field(host, { host = it }, "Server (e.g. 192.168.1.50)", modifier = initialFocus)
       Spacer(Modifier.heightIn(min = 12.dp))
       Field(share, { share = it }, "Share name (e.g. media)")
       Spacer(Modifier.heightIn(min = 12.dp))
@@ -180,6 +181,7 @@ private fun Field(
     onChange: (String) -> Unit,
     placeholder: String,
     password: Boolean = false,
+    modifier: Modifier = Modifier,
 ) {
   OutlinedTextField(
       value = value,
@@ -188,7 +190,7 @@ private fun Field(
       singleLine = true,
       visualTransformation =
           if (password) PasswordVisualTransformation() else androidx.compose.ui.text.input.VisualTransformation.None,
-      modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp),
+      modifier = modifier.fillMaxWidth().heightIn(min = 56.dp),
       shape = RoundedCornerShape(14.dp),
   )
 }

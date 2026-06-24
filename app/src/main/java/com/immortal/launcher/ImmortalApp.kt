@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Meta Platforms, Inc. and affiliates.
+ * Copyright (c) 2026 Starbright Lab.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -22,6 +22,10 @@ import android.content.IntentFilter
 class ImmortalApp : Application() {
   override fun onCreate() {
     super.onCreate()
+    // Arm first, before any other init: as the home app, an uncaught crash makes Android drop our
+    // default-home role (→ "Select Home app" chooser). This relaunches us straight back so the
+    // user never sees it. Installed up front so a crash during the rest of onCreate is covered too.
+    CrashGuard.install(this)
     // The shared presence source of truth: owns DREAMING_STARTED / SCREEN_OFF / POWER and
     // exposes one PresenceState for the screensaver (in-process) and the Snapcast companion
     // (broadcast). DREAMING_STOPPED stays here because it also drives the frame relaunch, and
@@ -44,6 +48,11 @@ class ImmortalApp : Application() {
 
     // Apply the user's status-bar choice (default hidden — the wall-frame look).
     SettingsGuard.applyStatusBar(this)
+
+    // Keep our accessibility service enabled — baseline launcher infrastructure now (it backs
+    // the Calls→stock-home bridge, the phone remote, and the quick-button cluster). No-op
+    // without WRITE_SECURE_SETTINGS, so it effectively turns on only once provisioned.
+    SettingsGuard.reconcileBarWatch(this)
 
     // Arm the overnight screen-off window (and apply it if we're inside it now).
     SleepScheduler.applyOvernightNow(this)

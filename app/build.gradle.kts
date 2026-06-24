@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Meta Platforms, Inc. and affiliates.
+ * Copyright (c) 2026 Starbright Lab.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -32,8 +32,8 @@ android {
     applicationId = "com.immortal.launcher"
     minSdk = 24
     targetSdk = 36
-    versionCode = 44
-    versionName = "1.43"
+    versionCode = 51
+    versionName = "1.50"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
@@ -76,6 +76,18 @@ android {
     }
     debug {
     }
+    // Release-faithful iteration build. Same applicationId + same signing key + minify off
+    // (inherited from release via initWith), so it provisions identically — home role, device
+    // admin, and self-update signature checks all behave exactly as on a release build. The ONLY
+    // difference is `debuggable = true`, which lets `adb install -r -d` freely replace or downgrade
+    // it. That sidesteps the two walls a pure release build hits on a dev device: version-code
+    // downgrades (a feature branch is always a lower code) and the device admin blocking uninstall.
+    // Use for on-device iteration; validate the true `release` artifact before shipping.
+    create("dev") {
+      initWith(getByName("release"))
+      isDebuggable = true
+      matchingFallbacks += "release"
+    }
   }
   compileOptions {
     sourceCompatibility = JavaVersion.VERSION_11
@@ -111,4 +123,8 @@ dependencies {
   // stub used in unit tests otherwise throws "not mocked").
   testImplementation(libs.junit)
   testImplementation("org.json:json:20240303")
+  // Pure-JVM mock of Context so the registry's apply/onApplied path is unit-testable without
+  // Robolectric (no instrumented android-all for compileSdk 36 / AGP 9 yet). The Context is only
+  // passed through to setters, so a mock that's never dereferenced is enough.
+  testImplementation("org.mockito:mockito-core:5.11.0")
 }

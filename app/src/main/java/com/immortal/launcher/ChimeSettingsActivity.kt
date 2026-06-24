@@ -172,17 +172,6 @@ private fun ChimeSettingsScreen() {
 }
 
 @Composable
-private fun Card(content: @Composable () -> Unit) {
-  Surface(
-      color = MaterialTheme.colorScheme.surface.copy(alpha = 0.92f),
-      shape = RoundedCornerShape(22.dp),
-      modifier = Modifier.fillMaxWidth(),
-  ) {
-    Column(modifier = Modifier.padding(vertical = 6.dp)) { content() }
-  }
-}
-
-@Composable
 private fun ChimeToggleRow(title: String, subtitle: String, checked: Boolean, onChange: (Boolean) -> Unit) {
   Row(
       modifier =

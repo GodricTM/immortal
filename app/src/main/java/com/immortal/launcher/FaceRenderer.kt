@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Meta Platforms, Inc. and affiliates.
+ * Copyright (c) 2026 Starbright Lab.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -20,6 +20,7 @@ import android.os.Handler
 import android.os.Looper
 import android.text.TextUtils
 import android.view.Gravity
+import android.view.MotionEvent
 import android.view.View
 import android.view.ViewOutlineProvider
 import android.widget.FrameLayout
@@ -32,6 +33,7 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import java.util.concurrent.Executors
+import kotlin.math.abs
 
 /**
  * Builds and drives the screensaver **overlay** from a [Face] — clock, date, weather,
@@ -53,10 +55,26 @@ class FaceRenderer(
 
   private var face: Face = Face("immortal-classic")
 
+  // Anti-burn-in drift radius (px). The always-on overlay is nudged within ±this by
+  // [tick] so no pixel stays lit in one spot for long; the overlay is oversized by the
+  // same amount (negative margins below) so the drift never bares a strip of the layer
+  // beneath at a screen edge — matters most for the full-bleed flip clock.
+  // Small radius: a few px is enough to spread the bright content over time, and keeps the slow
+  // drift well below what the eye catches. (dp(6) earlier was large enough to read as motion.)
+  private val burnInMaxPx: Int by lazy { dp(3) }
+  // Whether the pixel-shift runs at all (user setting); read once per [start].
+  private var antiBurnInOn: Boolean = true
+
   /** The overlay container, added above the photo layer by the host. */
   val view: FrameLayout by lazy {
     FrameLayout(context).apply {
-      layoutParams = FrameLayout.LayoutParams(MATCH, MATCH)
+      // MATCH_PARENT plus a negative margin on every edge makes the overlay slightly
+      // larger than the screen, so the burn-in drift (±[burnInMaxPx]) always keeps it
+      // fully covering the display.
+      layoutParams =
+          FrameLayout.LayoutParams(MATCH, MATCH).apply {
+            setMargins(-burnInMaxPx, -burnInMaxPx, -burnInMaxPx, -burnInMaxPx)
+          }
       // Let text shadows overflow their tight boxes instead of being clipped into hard rectangles.
       clipChildren = false
       clipToPadding = false
@@ -76,6 +94,17 @@ class FaceRenderer(
   private var weatherText: String = ""
   private var blinkOn = true
 
+  // A running countdown timer (started from the home-screen Timers widget), shown top-center so it
+  // stays visible on every face; hidden whenever no timer is active.
+  private var timerView: TextView? = null
+  // Fullscreen "time's up" alarm overlay (swipe to stop), shown while the timer is ringing.
+  private var timerAlarmOverlay: View? = null
+  private var timerThumb: View? = null
+  private var timerSlideText: View? = null
+  private var alarmMaxX = 0f
+  private var alarmTouchDownX = 0f
+  private var alarmThumbStart = 0f
+
   // Now-playing card.
   private var nowPlayingCard: LinearLayout? = null
   private var npArt: ImageView? = null
@@ -85,8 +114,14 @@ class FaceRenderer(
   private var lastArtBitmap: Bitmap? = null
   private var npListener: NowPlayingHub.Listener? = null
 
+  // Photo caption (place / date). A grid element like the rest, fed per-photo via [setCaption].
+  private var captionPanel: LinearLayout? = null
+  private var captionPlace: TextView? = null
+  private var captionDate: TextView? = null
+
   fun start(face: Face) {
     this.face = face
+    antiBurnInOn = ScreensaverConfig.load(context).antiBurnIn
     buildOverlay()
     tick.run()
     refreshWeather.run()
@@ -110,9 +145,21 @@ class FaceRenderer(
   private fun buildOverlay() {
     view.removeAllViews()
     buckets.clear()
+    // Caption views are rebuilt below (or not, on a full-bleed face) — drop stale refs so a
+    // late setCaption() can't poke a detached view from the previous face.
+    captionPanel = null
+    captionPlace = null
+    captionDate = null
 
     buildClockCluster(face.clock)
     val fullBleed = clockFace?.fullBleed == true
+
+    // Now-playing shows on EVERY face — including the full-bleed flip clock — whenever the user has
+    // the setting on (it's high-value enough to be its own switch, not tied to face selection). It's
+    // built BEFORE the caption so that when they share a cell (both default bottom-right) the
+    // now-playing card sits on top and the smaller photo caption tucks beneath it. Self-hides until
+    // music is playing.
+    if (ScreensaverConfig.load(context).showNowPlaying) buildNowPlaying(face.nowPlaying)
 
     // A full-bleed clock (e.g. the Fliqlo flip clock) owns the whole frame on its own near-black
     // background, so skip the scrim and the date/battery/weather widgets — none should overlay it.
@@ -126,12 +173,140 @@ class FaceRenderer(
           )
       view.addView(scrim, 0, FrameLayout.LayoutParams(MATCH, dp(320), Gravity.BOTTOM))
       buildStandaloneWidgets(face)
+      // Photo caption is photo metadata, so (like the widgets) it's skipped on a full-bleed clock.
+      if (face.caption.enabled) buildCaption(face.caption)
     }
+    // A running countdown timer is face-independent: it surfaces top-center on every face and
+    // self-hides when no timer is active (see [tick]).
+    buildTimer()
+  }
 
-    // Now-playing is independent of the face: it shows on EVERY face — including the full-bleed
-    // flip clock — whenever the user has the now-playing setting on (it's high-value enough to be
-    // its own switch, not tied to face selection). The card self-hides until music is playing.
-    if (ScreensaverConfig.load(context).showNowPlaying) buildNowPlaying(face.nowPlaying)
+  /** Top-center countdown readout, hidden until a timer is running (driven by [tick]). */
+  private fun buildTimer() {
+    val t = textView(baseSp = 30f, spec = face.clock, light = false)
+    t.visibility = View.GONE
+    bucket(GridPosition.TOP_CENTER).addView(t)
+    timerView = t
+
+    // Fullscreen "time's up" alarm with an iOS-style slide-to-stop, shown while ringing.
+    // It's intentionally NOT touch-consuming: on a DreamService the host owns the touch stream, so
+    // the slide is driven by [handleAlarmTouch] (called from PhotoFrameController.onTouch) instead
+    // of child touch listeners, which the dream's root listener would otherwise pre-empt.
+    val overlay =
+        FrameLayout(context).apply {
+          setBackgroundColor(0xF2000000.toInt())
+          visibility = View.GONE
+        }
+    val col =
+        LinearLayout(context).apply {
+          orientation = LinearLayout.VERTICAL
+          gravity = Gravity.CENTER_HORIZONTAL
+        }
+    col.addView(
+        TextView(context).apply {
+          text = "⏰  Timer"
+          setTextColor(0xFFDDDDDD.toInt())
+          textSize = 20f
+          gravity = Gravity.CENTER
+        })
+    col.addView(
+        TextView(context).apply {
+          text = "Time's up"
+          setTextColor(Color.WHITE)
+          textSize = 48f
+          typeface = Typeface.DEFAULT_BOLD
+          gravity = Gravity.CENTER
+          setPadding(0, dp(10), 0, 0)
+        })
+    overlay.addView(
+        col,
+        FrameLayout.LayoutParams(WRAP, WRAP, Gravity.CENTER_HORIZONTAL).apply { topMargin = dp(120) })
+
+    // Slide-to-stop pill: a draggable thumb you slide to the right end to silence (iOS-style).
+    val trackW = dp(520)
+    val trackH = dp(72)
+    val thumbSize = dp(64)
+    val inset = dp(4)
+    val maxX = (trackW - thumbSize - inset * 2).toFloat()
+    val track =
+        FrameLayout(context).apply {
+          background =
+              GradientDrawable().apply {
+                cornerRadius = trackH / 2f
+                setColor(0x33FFFFFF)
+              }
+        }
+    val slideText =
+        TextView(context).apply {
+          text = "slide to stop"
+          setTextColor(0xFFCFCFCF.toInt())
+          textSize = 18f
+          gravity = Gravity.CENTER
+        }
+    track.addView(slideText, FrameLayout.LayoutParams(MATCH, MATCH))
+    val thumb =
+        TextView(context).apply {
+          text = "■"
+          setTextColor(0xFF111111.toInt())
+          textSize = 18f
+          gravity = Gravity.CENTER
+          background =
+              GradientDrawable().apply {
+                cornerRadius = dp(16).toFloat()
+                setColor(Color.WHITE)
+              }
+        }
+    track.addView(
+        thumb,
+        FrameLayout.LayoutParams(thumbSize, thumbSize, Gravity.START or Gravity.CENTER_VERTICAL).apply {
+          marginStart = inset
+        })
+    overlay.addView(
+        track,
+        FrameLayout.LayoutParams(trackW, trackH, Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL).apply {
+          bottomMargin = dp(80)
+        })
+    view.addView(overlay, FrameLayout.LayoutParams(MATCH, MATCH))
+    timerAlarmOverlay = overlay
+    timerThumb = thumb
+    timerSlideText = slideText
+    alarmMaxX = maxX
+  }
+
+  /**
+   * Drives the screensaver slide-to-stop from the host's touch stream (the dream/preview forwards
+   * every event to [PhotoFrameController.onTouch], which calls this first). Returns true while the
+   * alarm is showing so the host doesn't also treat the gesture as a tap-to-exit / swipe-photo.
+   * Forgiving by design: a horizontal drag anywhere moves the thumb, and sliding ~80% silences it.
+   */
+  fun handleAlarmTouch(ev: MotionEvent): Boolean {
+    val overlay = timerAlarmOverlay ?: return false
+    if (overlay.visibility != View.VISIBLE) return false
+    val thumb = timerThumb ?: return true
+    when (ev.actionMasked) {
+      MotionEvent.ACTION_DOWN -> {
+        alarmTouchDownX = ev.rawX
+        alarmThumbStart = thumb.translationX
+      }
+      MotionEvent.ACTION_MOVE -> {
+        val x = (alarmThumbStart + (ev.rawX - alarmTouchDownX)).coerceIn(0f, alarmMaxX)
+        thumb.translationX = x
+        timerSlideText?.alpha = 1f - (if (alarmMaxX > 0f) x / alarmMaxX else 0f)
+      }
+      MotionEvent.ACTION_UP,
+      MotionEvent.ACTION_CANCEL -> {
+        if (alarmMaxX > 0f && thumb.translationX >= alarmMaxX * 0.8f) {
+          TimerAlarm.stop(context)
+          overlay.visibility = View.GONE
+          thumb.translationX = 0f
+          timerSlideText?.alpha = 1f
+        } else {
+          thumb.animate().translationX(0f).setDuration(160).start()
+          timerSlideText?.alpha = 1f
+        }
+      }
+    }
+    return true
   }
 
   /**
@@ -243,7 +418,10 @@ class FaceRenderer(
     artLp.setMarginStart(dp(16))
     if (spec.showArt) card.addView(art, artLp)
 
-    bucket(spec.position).addView(card)
+    // Explicit WRAP width: a vertical LinearLayout (the bucket) otherwise hands children
+    // MATCH_PARENT by default, which would squeeze the card to a narrower cell-mate's width
+    // (e.g. the photo caption now sharing this cell) and truncate the track title.
+    bucket(spec.position).addView(card, LinearLayout.LayoutParams(WRAP, WRAP))
     nowPlayingCard = card
     npTitle = title
     npArtist = artist
@@ -286,6 +464,60 @@ class FaceRenderer(
     }
   }
 
+  /**
+   * The photo caption ("place" bold over a lighter "date") as a grid element, so it stacks with
+   * whatever else lands in the same cell (notably the now-playing card — both default to
+   * bottom-right) instead of overlapping it. Hidden until [setCaption] gets real metadata.
+   */
+  private fun buildCaption(spec: CaptionSpec) {
+    val align = horizontalGravity(spec.position)
+    val col = LinearLayout(context)
+    col.orientation = LinearLayout.VERTICAL
+    col.gravity = align
+    col.visibility = View.GONE
+    val place = text(19f, Color.WHITE, false)
+    place.typeface = Typeface.DEFAULT_BOLD
+    place.maxLines = 1
+    place.ellipsize = TextUtils.TruncateAt.END
+    place.gravity = align
+    val date = text(14f, 0xCCFFFFFF.toInt(), true)
+    date.maxLines = 1
+    date.gravity = align
+    col.addView(place, LinearLayout.LayoutParams(WRAP, WRAP))
+    col.addView(date, LinearLayout.LayoutParams(WRAP, WRAP))
+    // Top margin gives breathing room from whatever sits above in the same cell (the now-playing
+    // card). A GONE sibling contributes no space, so a lone caption isn't pushed off the bottom.
+    bucket(spec.position)
+        .addView(col, LinearLayout.LayoutParams(WRAP, WRAP).apply { topMargin = dp(18) })
+    captionPanel = col
+    captionPlace = place
+    captionDate = date
+  }
+
+  /**
+   * Push the latest photo caption (main thread). A blank/absent place AND date hides it; otherwise
+   * each line shows only when it has content. No-op when the caption isn't built (disabled, or a
+   * full-bleed face).
+   */
+  fun setCaption(place: String?, date: String?) {
+    val col = captionPanel ?: return
+    val p = place?.takeIf { it.isNotBlank() }
+    val d = date?.takeIf { it.isNotBlank() }
+    if (p == null && d == null) {
+      col.visibility = View.GONE
+      return
+    }
+    captionPlace?.apply {
+      visibility = if (p == null) View.GONE else View.VISIBLE
+      text = p ?: ""
+    }
+    captionDate?.apply {
+      visibility = if (d == null) View.GONE else View.VISIBLE
+      text = d ?: ""
+    }
+    col.visibility = View.VISIBLE
+  }
+
   // --- periodic loops ---------------------------------------------------------
   private val tick =
       object : Runnable {
@@ -305,6 +537,33 @@ class FaceRenderer(
           weatherView?.text = weatherText
           weatherView?.visibility = if (hasWeather) View.VISIBLE else View.GONE
           weatherDivider?.visibility = if (hasWeather) View.VISIBLE else View.GONE
+          // Shared countdown timer: show "M:SS" while running, the alarm banner while ringing.
+          val timerState = TimerStore.load(context)
+          val timerRemaining = timerState.remaining(now.time)
+          if (timerRemaining > 0L && !timerState.ringing) {
+            val tm = (timerRemaining / 60_000).toInt()
+            val ts = ((timerRemaining / 1000) % 60).toInt()
+            timerView?.text = "⏱ %d:%02d".format(tm, ts)
+            timerView?.visibility = View.VISIBLE
+          } else {
+            timerView?.visibility = View.GONE
+          }
+          if (timerState.ringing) {
+            if (timerAlarmOverlay?.visibility != View.VISIBLE) {
+              timerThumb?.translationX = 0f
+              timerSlideText?.alpha = 1f
+            }
+            timerAlarmOverlay?.visibility = View.VISIBLE
+          } else {
+            timerAlarmOverlay?.visibility = View.GONE
+          }
+          // Burn-in: drift the whole overlay a few px so no pixel stays lit in place. Skipped
+          // (overlay held still) when the user turns the pixel-shift off.
+          val drift =
+              if (antiBurnInOn) AntiBurnIn.shift(now.time, burnInMaxPx.toFloat())
+              else AntiBurnIn.Shift(0f, 0f)
+          view.translationX = drift.x
+          view.translationY = drift.y
           ui.postDelayed(this, 1_000L)
         }
       }

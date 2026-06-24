@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Meta Platforms, Inc. and affiliates.
+ * Copyright (c) 2026 Starbright Lab.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -7,6 +7,10 @@
 
 package com.immortal.launcher
 
+import android.app.Activity
+import android.appwidget.AppWidgetHost
+import android.appwidget.AppWidgetManager
+import android.appwidget.AppWidgetProviderInfo
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
@@ -14,14 +18,21 @@ import android.graphics.Bitmap
 import android.net.Uri
 import android.os.BatteryManager
 import android.os.Bundle
-import android.os.StatFs
+import android.util.TypedValue
 import android.view.MotionEvent
-import android.view.View
+import android.view.ViewGroup
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import android.content.pm.PackageInstaller
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.StartOffset
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -36,40 +47,38 @@ import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
+import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
-import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
-import androidx.compose.foundation.horizontalScroll
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.gestures.drag
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.wrapContentSize
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
-import androidx.compose.foundation.lazy.grid.itemsIndexed
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -80,10 +89,8 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
-import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
-import androidx.compose.runtime.key
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -96,19 +103,20 @@ import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
-import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.StrokeCap
-import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.scale
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.vector.PathParser
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.text.TextStyle
@@ -120,8 +128,10 @@ import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
+import kotlin.math.abs
 import kotlin.math.roundToInt
 import androidx.core.graphics.drawable.toBitmap
 import androidx.core.view.WindowCompat
@@ -133,20 +143,12 @@ import java.net.URL
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import java.util.TimeZone
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONObject
-import android.app.ActivityManager
-import android.media.AudioManager
-import android.net.TrafficStats
-import android.net.wifi.WifiManager
-import android.view.KeyEvent
-import android.view.SoundEffectConstants
-import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.ui.res.painterResource
-import java.io.File
-import kotlinx.coroutines.launch
 
 private data class AppEntry(
     val label: String,
@@ -154,6 +156,27 @@ private data class AppEntry(
     val icon: ImageBitmap,
     val folder: String? = null,
 )
+
+private data class WidgetProviderEntry(
+    val label: String,
+    val packageLabel: String,
+    val icon: ImageBitmap?,
+    val info: AppWidgetProviderInfo?,
+    val spanX: Int,
+    val spanY: Int,
+    val customKind: String? = null,
+)
+
+private data class PendingWidgetAdd(
+    val appWidgetId: Int,
+    val provider: WidgetProviderEntry,
+)
+
+/** Calls→stock-home bridge: how many system Back presses reach Meta's launcher, and the gap
+ *  between them (verified on the Portal TV — 5 presses lands on the stock launcher's Apps tab). */
+private const val STOCK_HOME_BACK_PRESSES = 5
+private const val STOCK_HOME_BACK_INTERVAL_MS = 300L
+private const val HOME_APP_WIDGET_HOST_ID = 0x4611
 
 /**
  * The custom Portal home launcher. Replaces the stock Aloha home (selected via
@@ -163,21 +186,9 @@ private data class AppEntry(
  * touch targets, landscape.
  */
 class HomeActivity : ComponentActivity() {
-  override fun dispatchKeyEvent(event: KeyEvent): Boolean {
-    if (event.action == KeyEvent.ACTION_DOWN &&
-        event.repeatCount == 0 &&
-        (event.keyCode == KeyEvent.KEYCODE_VOLUME_UP ||
-            event.keyCode == KeyEvent.KEYCODE_VOLUME_DOWN ||
-            event.keyCode == KeyEvent.KEYCODE_VOLUME_MUTE)) {
-      window.decorView.playSoundEffect(SoundEffectConstants.CLICK)
-    }
-    return super.dispatchKeyEvent(event)
-  }
-
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
     enterImmersive()
-    if (intent?.action == "com.immortal.launcher.CLOSE_CURRENT_APP") moveTaskToBack(true)
     // First launch: show the friendly tour once so new users aren't dropped in cold.
     if (!HelpActivity.hasSeen(this)) {
       window.decorView.post {
@@ -188,15 +199,12 @@ class HomeActivity : ComponentActivity() {
       SampleAppTheme(darkTheme = true) {
         LauncherScreen(
             onLaunch = { cn ->
-              UserLayout.recordLaunch(this, cn.packageName)
               runCatching {
-                val customAction = Curation.customLaunchAction[cn.packageName]
-                val intent = if (customAction != null)
-                  Intent(customAction).setComponent(cn).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                else
-                  Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
-                      .setComponent(cn).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                startActivity(intent)
+                startActivity(
+                    Intent(Intent.ACTION_MAIN)
+                        .addCategory(Intent.CATEGORY_LAUNCHER)
+                        .setComponent(cn)
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
               }
             },
             onOpenStore = {
@@ -209,9 +217,6 @@ class HomeActivity : ComponentActivity() {
               runCatching {
                 startActivity(Intent(this, PhotoFramePreviewActivity::class.java))
               }
-            },
-            onOpenCamera = {
-              runCatching { startActivity(Intent(this, CameraPreviewActivity::class.java)) }
             },
             onExitHome = { launchStockHome() },
             onUninstall = { pkg ->
@@ -238,14 +243,8 @@ class HomeActivity : ComponentActivity() {
 
   // Self-heal: if anything (e.g. the stock launcher) reset our screensaver
   // settings, put them back every time Immortal comes to the foreground.
-  override fun onNewIntent(intent: Intent) {
-    super.onNewIntent(intent)
-    if (intent.action == "com.immortal.launcher.CLOSE_CURRENT_APP") moveTaskToBack(true)
-  }
-
   override fun onResume() {
     super.onResume()
-    if (intent?.action == "com.immortal.launcher.CLOSE_CURRENT_APP") moveTaskToBack(true)
     // The user is back on Immortal, so any stock-launcher call handoff is over:
     // allow the photo frame to resume its normal screensaver behaviour.
     DreamPolicy.inStockHandoff = false
@@ -299,6 +298,15 @@ class HomeActivity : ComponentActivity() {
     DreamPolicy.bridgeAt = System.currentTimeMillis()
     DreamPolicy.inStockHandoff = true
 
+    // Preferred path: a short burst of system Back presses reliably surfaces Meta's stock
+    // launcher (verified on the Portal TV) — unlike the portal:// deep link or a HOME launch,
+    // which cold-start ripleyhome's idle dream and bounce the user. Needs our accessibility
+    // service (baseline-enabled on provisioned devices); falls back to the deep link otherwise.
+    if (RemoteInput.available()) {
+      RemoteInput.backRepeat(STOCK_HOME_BACK_PRESSES, STOCK_HOME_BACK_INTERVAL_MS)
+      return
+    }
+
     fun fire(intent: Intent): Boolean =
         runCatching {
               startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
@@ -341,7 +349,6 @@ private fun LauncherScreen(
     onOpenStore: () -> Unit,
     onOpenHelp: () -> Unit,
     onStartScreensaver: () -> Unit,
-    onOpenCamera: () -> Unit,
     onExitHome: () -> Unit,
     onUninstall: (String) -> Unit,
 ) {
@@ -374,6 +381,16 @@ private fun LauncherScreen(
       }
   var editMode by remember { mutableStateOf(false) }
   var openFolder by remember { mutableStateOf<String?>(null) }
+  var showWidgetPicker by remember { mutableStateOf(false) }
+  var widgetStatus by remember { mutableStateOf<String?>(null) }
+  var widgets by remember { mutableStateOf(HomeWidgetStore.load(context)) }
+  // Whether the shared timer is currently ringing — drives the swipe-to-stop alarm overlay.
+  var timerRinging by remember { mutableStateOf(TimerStore.load(context).ringing) }
+  DisposableEffect(Unit) {
+    val l: () -> Unit = { timerRinging = TimerStore.load(context).ringing }
+    TimerStore.addListener(l)
+    onDispose { TimerStore.removeListener(l) }
+  }
 
   // Immortal Settings the home screen reflects (tile size, and the optional weather
   // widget's mode/unit), re-read on resume so a change applies the moment the user
@@ -381,20 +398,15 @@ private fun LauncherScreen(
   var tileSize by remember { mutableStateOf(ImmortalSettings.load(context).tileSize) }
   var weatherWidget by remember { mutableStateOf(ImmortalSettings.load(context).weatherWidget) }
   var weatherFahrenheit by remember { mutableStateOf(ImmortalSettings.useFahrenheit(context)) }
-  var backgroundType by remember { mutableStateOf(ImmortalSettings.load(context).backgroundType) }
-  var backgroundImagePath by remember { mutableStateOf(ImmortalSettings.load(context).backgroundImagePath) }
-  var backgroundGradient by remember { mutableStateOf(ImmortalSettings.load(context).backgroundGradient) }
-  var showDayProgress by remember { mutableStateOf(ImmortalSettings.load(context).showDayProgress) }
-  var calendarWidget by remember { mutableStateOf(ImmortalSettings.load(context).calendarWidget) }
-  var statsMode by remember { mutableStateOf(ImmortalSettings.load(context).statsMode) }
-  var dailyTileMode by remember { mutableStateOf(ImmortalSettings.load(context).dailyTileMode) }
-  var sortMode by remember { mutableStateOf(ImmortalSettings.load(context).sortMode) }
-  var showTabs by remember { mutableStateOf(ImmortalSettings.load(context).showTabs) }
-  var dashboardPage by remember { mutableStateOf(ImmortalSettings.load(context).dashboardPage) }
-  // Selected category tab (null = "All"); only meaningful when showTabs is on.
-  var selectedTab by remember { mutableStateOf<String?>(null) }
-  var heyPkg by remember { mutableStateOf(heyPackage(context)) }
   val lifecycleOwner = LocalLifecycleOwner.current
+  val appWidgetManager = remember(context) { AppWidgetManager.getInstance(context) }
+  val appWidgetHost = remember(context) { AppWidgetHost(context, HOME_APP_WIDGET_HOST_ID) }
+  fun loadLiveWidgets(): List<HomeWidgetStore.HomeWidget> {
+    val loaded = HomeWidgetStore.load(context)
+    val live = loaded.filterLiveWidgets(appWidgetManager, appWidgetHost)
+    if (live.size != loaded.size) HomeWidgetStore.save(context, live)
+    return live
+  }
   DisposableEffect(lifecycleOwner) {
     val obs = LifecycleEventObserver { _, e ->
       if (e == Lifecycle.Event.ON_RESUME) {
@@ -402,21 +414,159 @@ private fun LauncherScreen(
         tileSize = s.tileSize
         weatherWidget = s.weatherWidget
         weatherFahrenheit = ImmortalSettings.useFahrenheit(context)
-        backgroundType = s.backgroundType
-        backgroundImagePath = s.backgroundImagePath
-        backgroundGradient = s.backgroundGradient
-        showDayProgress = s.showDayProgress
-        calendarWidget = s.calendarWidget
-        statsMode = s.statsMode
-        dailyTileMode = s.dailyTileMode
-        sortMode = s.sortMode
-        showTabs = s.showTabs
-        dashboardPage = s.dashboardPage
-        heyPkg = heyPackage(context)
+        widgets = loadLiveWidgets()
       }
     }
     lifecycleOwner.lifecycle.addObserver(obs)
     onDispose { lifecycleOwner.lifecycle.removeObserver(obs) }
+  }
+  DisposableEffect(lifecycleOwner, appWidgetHost) {
+    val obs = LifecycleEventObserver { _, e ->
+      when (e) {
+        Lifecycle.Event.ON_START -> runCatching { appWidgetHost.startListening() }
+        Lifecycle.Event.ON_STOP -> runCatching { appWidgetHost.stopListening() }
+        else -> Unit
+      }
+    }
+    lifecycleOwner.lifecycle.addObserver(obs)
+    runCatching { appWidgetHost.startListening() }
+    val live = widgets.filterLiveWidgets(appWidgetManager, appWidgetHost)
+    if (live.size != widgets.size) HomeWidgetStore.save(context, live)
+    widgets = live
+    onDispose {
+      lifecycleOwner.lifecycle.removeObserver(obs)
+      runCatching { appWidgetHost.stopListening() }
+    }
+  }
+
+  fun saveWidgets(next: List<HomeWidgetStore.HomeWidget>) {
+    widgets = next
+    HomeWidgetStore.save(context, next)
+  }
+
+  fun removeWidget(widget: HomeWidgetStore.HomeWidget) {
+    if (widget.isAppWidget) runCatching { appWidgetHost.deleteAppWidgetId(widget.appWidgetId) }
+    saveWidgets(HomeWidgetStore.without(widgets, widget.key))
+    widgetStatus = "Widget removed"
+  }
+
+  fun addCustomWidget(kind: String) {
+    val widget =
+        when (kind) {
+          HomeWidgetStore.KIND_TIMERS -> HomeWidgetStore.custom(kind, spanX = 2, spanY = 2)
+          else -> HomeWidgetStore.custom(kind, spanX = 2, spanY = 2)
+        }
+    saveWidgets(HomeWidgetStore.withAdded(widgets, widget))
+    showWidgetPicker = false
+    widgetStatus = "Added ${customWidgetLabel(kind)}"
+  }
+
+  fun commitWidget(pending: PendingWidgetAdd) {
+    val provider = pending.provider
+    val info = provider.info ?: return
+    val record =
+        HomeWidgetStore.HomeWidget(
+            appWidgetId = pending.appWidgetId,
+            providerPackage = info.provider.packageName,
+            providerClass = info.provider.className,
+            spanX = provider.spanX,
+            spanY = provider.spanY,
+        )
+    updateWidgetSizeOptions(appWidgetManager, record, tileDpFor(tileSize))
+    saveWidgets(HomeWidgetStore.withAdded(widgets, record))
+    showWidgetPicker = false
+    widgetStatus = "Added ${provider.label}"
+  }
+
+  var pendingBind by remember { mutableStateOf<PendingWidgetAdd?>(null) }
+  var pendingConfig by remember { mutableStateOf<PendingWidgetAdd?>(null) }
+  val configLauncher =
+      rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        val pending = pendingConfig ?: return@rememberLauncherForActivityResult
+        pendingConfig = null
+        if (result.resultCode == Activity.RESULT_OK) {
+          commitWidget(pending)
+        } else {
+          runCatching { appWidgetHost.deleteAppWidgetId(pending.appWidgetId) }
+          widgetStatus = "Widget setup was cancelled"
+        }
+      }
+
+  fun configureOrCommit(pending: PendingWidgetAdd) {
+    val info = pending.provider.info ?: return
+    val configure = info.configure
+    if (configure != null) {
+      pendingConfig = pending
+      val launched =
+          runCatching {
+                configLauncher.launch(
+                    Intent(AppWidgetManager.ACTION_APPWIDGET_CONFIGURE)
+                        .setComponent(configure)
+                        .putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, pending.appWidgetId))
+                true
+              }
+              .getOrDefault(false)
+      if (!launched) {
+        pendingConfig = null
+        runCatching { appWidgetHost.deleteAppWidgetId(pending.appWidgetId) }
+        widgetStatus = "Widget setup could not open"
+      }
+    } else {
+      commitWidget(pending)
+    }
+  }
+
+  val bindLauncher =
+      rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        val pending = pendingBind ?: return@rememberLauncherForActivityResult
+        pendingBind = null
+        if (result.resultCode == Activity.RESULT_OK) {
+          configureOrCommit(pending)
+        } else {
+          runCatching { appWidgetHost.deleteAppWidgetId(pending.appWidgetId) }
+          widgetStatus = "Widget permission was cancelled"
+        }
+      }
+
+  fun addWidget(provider: WidgetProviderEntry) {
+    provider.customKind?.let {
+      addCustomWidget(it)
+      return
+    }
+    val info = provider.info ?: return
+    val appWidgetId =
+        runCatching { appWidgetHost.allocateAppWidgetId() }
+            .getOrElse {
+              widgetStatus = "Widget host could not allocate an ID"
+              return
+            }
+    val pending = PendingWidgetAdd(appWidgetId, provider)
+    val bound =
+        runCatching {
+              appWidgetManager.bindAppWidgetIdIfAllowed(appWidgetId, info.provider)
+            }
+            .getOrDefault(false)
+    if (bound) {
+      configureOrCommit(pending)
+      return
+    }
+
+    pendingBind = pending
+    widgetStatus = "Allow Immortal to add widgets in the system dialog."
+    val launched =
+        runCatching {
+              bindLauncher.launch(
+                  Intent(AppWidgetManager.ACTION_APPWIDGET_BIND)
+                      .putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, appWidgetId)
+                      .putExtra(AppWidgetManager.EXTRA_APPWIDGET_PROVIDER, info.provider))
+              true
+            }
+            .getOrDefault(false)
+    if (!launched) {
+      pendingBind = null
+      runCatching { appWidgetHost.deleteAppWidgetId(appWidgetId) }
+      widgetStatus = "Android's widget permission dialog could not open"
+    }
   }
 
   // Remote support: land focus on the grid at startup so the D-pad works on the TV.
@@ -428,173 +578,180 @@ private fun LauncherScreen(
   // string is an explicit "ungrouped" override (used when dragging out of a
   // folder), so it beats a curated default too.
   val assignments = remember { mutableStateMapOf<String, String>() }
-  val emptyFolders = remember { mutableStateOf<Set<String>>(emptySet()) }
-  LaunchedEffect(Unit) {
-    assignments.putAll(UserLayout.load(context))
-    emptyFolders.value = UserLayout.loadEmptyFolders(context)
-  }
+  LaunchedEffect(Unit) { assignments.putAll(UserLayout.load(context)) }
   val appsEff =
       remember(apps, assignments.toMap()) {
-        apps.map { a ->
-          val pkg = a.component.packageName
-          val eff = if (assignments.containsKey(pkg)) assignments[pkg]!!.ifEmpty { null } else a.folder
-          a.copy(folder = eff)
+        val effective = HomeLayoutModel.effectiveApps(apps.toLayoutRefs(), assignments)
+        val foldersByPackage = effective.associate { it.packageName to it.folder }
+        apps.map { it.copy(folder = foldersByPackage[it.component.packageName]) }
+      }
+  val ungrouped = remember(appsEff) { appsEff.filter { it.folder == null } }
+  val folderNames = remember(appsEff) { HomeLayoutModel.folderNames(appsEff.toLayoutRefs()) }
+
+  // --- unified, fully-reorderable home grid -----------------------------------
+  // Every top-level tile — built-ins, widgets, folders, and ungrouped apps — has a stable key and
+  // lives in one ordered list, so ALL of them can be dragged (not just apps).
+  val allTileKeys =
+      remember(widgets, folderNames, ungrouped) {
+        buildList {
+          add(BUILTIN_CALLS)
+          add(BUILTIN_STORE)
+          widgets.forEach { add(WIDGET_KEY + it.key) }
+          folderNames.forEach { add(FOLDER_KEY + it) }
+          ungrouped.forEach { add(APP_KEY + it.component.packageName) }
+          add(BUILTIN_UPDATES)
         }
       }
-  var hiddenPkgs by remember { mutableStateOf(UserLayout.loadHiddenPackages(context)) }
-  // Re-read hidden packages on resume so "Restore all" in settings takes effect immediately.
-  DisposableEffect(lifecycleOwner) {
-    val obs = LifecycleEventObserver { _, e ->
-      if (e == Lifecycle.Event.ON_RESUME) hiddenPkgs = UserLayout.loadHiddenPackages(context)
-    }
-    lifecycleOwner.lifecycle.addObserver(obs)
-    onDispose { lifecycleOwner.lifecycle.removeObserver(obs) }
-  }
-  fun hideApp(pkg: String) {
-    UserLayout.hidePackage(context, pkg)
-    hiddenPkgs = hiddenPkgs + pkg
-  }
-  fun unhideApp(pkg: String) {
-    UserLayout.unhidePackage(context, pkg)
-    hiddenPkgs = hiddenPkgs - pkg
-  }
-
-  // Sort inputs for the non-manual modes (loaded only when the relevant mode is on).
-  val launchCounts = remember(sortMode) {
-    if (sortMode == ImmortalSettings.SORT_USED) UserLayout.loadLaunchCounts(context) else emptyMap()
-  }
-  val installTimes = remember(sortMode, appsEff) {
-    if (sortMode == ImmortalSettings.SORT_RECENT) {
-      val pm = context.packageManager
-      appsEff.associate { app ->
-        app.component.packageName to
-            runCatching { pm.getPackageInfo(app.component.packageName, 0).firstInstallTime }
-                .getOrDefault(0L)
-      }
-    } else emptyMap()
-  }
-  val ungrouped = remember(appsEff, hiddenPkgs, sortMode, launchCounts, installTimes) {
-    val base = appsEff.filter { it.folder == null && it.component.packageName !in hiddenPkgs }
-    when (sortMode) {
-      ImmortalSettings.SORT_AZ -> base.sortedBy { it.label.lowercase(java.util.Locale.getDefault()) }
-      ImmortalSettings.SORT_USED ->
-          base.sortedByDescending { launchCounts[it.component.packageName] ?: 0 }
-      ImmortalSettings.SORT_RECENT ->
-          base.sortedByDescending { installTimes[it.component.packageName] ?: 0L }
-      else -> base
+  var gridSlots by remember { mutableStateOf(UserLayout.loadGridSlots(context)) }
+  val gridColumns = gridColumnsFor(tileSize)
+  // Keep the saved slot list in step with what's actually present, preserving the user's blanks.
+  LaunchedEffect(allTileKeys, gridColumns) {
+    val normalized = HomeGrid.normalizeSlots(gridSlots, allTileKeys, gridColumns)
+    if (normalized != gridSlots) {
+      gridSlots = normalized
+      UserLayout.saveGridSlots(context, normalized)
     }
   }
-  val hiddenAppsEff = remember(appsEff, hiddenPkgs) { appsEff.filter { it.component.packageName in hiddenPkgs } }
-  val folderNames = remember(appsEff, emptyFolders.value) {
-    (appsEff.mapNotNull { it.folder } + emptyFolders.value).distinct().sorted()
-  }
+  val widgetByKey = remember(widgets) { widgets.associateBy { WIDGET_KEY + it.key } }
+  val appByKey = remember(ungrouped) { ungrouped.associateBy { APP_KEY + it.component.packageName } }
+  // A tile's column footprint: widgets span their width, everything else is 1.
+  fun widthOf(key: String?): Int =
+      if (key != null && key.startsWith(WIDGET_KEY))
+          (widgetByKey[key]?.spanX ?: 1).coerceIn(1, gridColumns)
+      else 1
 
-  var showHiddenPanel by remember { mutableStateOf(false) }
-  var showSpeedTest by remember { mutableStateOf(false) }
-  var showDaily by remember { mutableStateOf(false) }
-  var showNote by remember { mutableStateOf(false) }
-  var showTimerAdd by remember { mutableStateOf(false) }
-  var timerVersion by remember { mutableStateOf(0) }
-  var showTransit by remember { mutableStateOf(false) }
-  var showIss by remember { mutableStateOf(false) }
-  var showAurora by remember { mutableStateOf(false) }
-  var showStopwatch by remember { mutableStateOf(false) }
-  var showConverter by remember { mutableStateOf(false) }
-  var showWhatChanged by remember { mutableStateOf(false) }
-  var showNowPlaying by remember { mutableStateOf(false) }
-  // Which tool category folder is open (null = none); tools live in these folders now.
-  var openToolCat by remember { mutableStateOf<String?>(null) }
-  // Tool -> category overrides (user moved a tool between folders), + folder edit mode.
-  val toolAssign = remember { mutableStateMapOf<String, String>() }
-  LaunchedEffect(Unit) { toolAssign.putAll(UserLayout.loadToolCategories(context)) }
-  var toolEdit by remember { mutableStateOf(false) }
-  // Bumped whenever a note changes so the home sticky card re-reads it.
-  var noteVersion by remember { mutableStateOf(0) }
-  // Bumped on every resume so home widgets that read SharedPrefs/files directly
-  // (countdown chips, sticky note) refresh after returning from a settings screen.
-  var homeResumeVersion by remember { mutableStateOf(0) }
-  DisposableEffect(lifecycleOwner) {
-    val obs = LifecycleEventObserver { _, e ->
-      if (e == Lifecycle.Event.ON_RESUME) { homeResumeVersion++; noteVersion++ }
-    }
-    lifecycleOwner.lifecycle.addObserver(obs)
-    onDispose { lifecycleOwner.lifecycle.removeObserver(obs) }
-  }
-
-  // Portrait layout: the bottom widget stack (weather / calendar / stats) spans
-  // nearly the full width, so the corner action buttons (Alexa, hide, edit) would
-  // sit on top of it. Measure the stack height and lift the buttons above it. In
-  // landscape the capped 1264dp content column leaves the corners clear, so no
-  // offset is applied.
-  val isPortrait =
-      androidx.compose.ui.platform.LocalConfiguration.current.orientation ==
-          android.content.res.Configuration.ORIENTATION_PORTRAIT
-  val widgetDensity = androidx.compose.ui.platform.LocalDensity.current
-  var bottomWidgetsHeight by remember { mutableStateOf(0.dp) }
-  val bottomButtonLift = if (isPortrait) bottomWidgetsHeight else 0.dp
-
-  // --- drag-and-drop folder management (Manage mode) --------------------------
-  val tileBounds = remember { mutableStateMapOf<String, Rect>() }
-  var containerOrigin by remember { mutableStateOf(Offset.Zero) }
-  var dragPkg by remember { mutableStateOf<String?>(null) }
+  // --- drag-and-drop (Manage mode): free placement over a fixed slot grid ------
+  val slotBounds = remember { mutableStateMapOf<Int, Rect>() }
+  var dragKey by remember { mutableStateOf<String?>(null) }
   var dragPos by remember { mutableStateOf(Offset.Zero) }
+  var dragOriginalSlots by remember { mutableStateOf<List<String?>?>(null) }
+  // The drag gesture lives on a stable container that wraps the pager (not on the tile), so it
+  // survives page flips — that's what lets a tile be dragged onto a different page.
+  var containerOrigin by remember { mutableStateOf(Offset.Zero) }
+  var containerDragging by remember { mutableStateOf(false) }
   // Pending folder creation awaiting a name (source+target packages).
   var pendingPair by remember { mutableStateOf<Pair<String, String>?>(null) }
   // Folder currently being renamed.
   var renaming by remember { mutableStateOf<String?>(null) }
-  // Creating a new empty folder
-  var creatingFolder by remember { mutableStateOf(false) }
 
   fun persist() = UserLayout.save(context, assignments.toMap())
+  fun replaceAssignments(next: Map<String, String>) {
+    assignments.clear()
+    assignments.putAll(next)
+    persist()
+  }
   fun assign(pkg: String, folder: String) {
     assignments[pkg] = folder
     persist()
   }
   fun createFolder(a: String, b: String, name: String) {
-    val n = name.trim().ifEmpty { "Folder" }
-    assignments[a] = n
-    assignments[b] = n
-    persist()
-    openFolder = n
-  }
-  fun createEmptyFolder(name: String) {
-    val n = name.trim().ifEmpty { "Folder" }
-    val existing = folderNames.toSet()
-    var finalName = n
-    var counter = 1
-    while (existing.contains(finalName)) {
-      finalName = "$n $counter"
-      counter++
-    }
-    UserLayout.saveEmptyFolder(context, finalName)
-    emptyFolders.value = emptyFolders.value + finalName
-    openFolder = finalName
+    val result = HomeLayoutModel.createFolder(assignments, a, b, name)
+    replaceAssignments(result.assignments)
+    openFolder = result.folderName
   }
   fun renameFolder(old: String, raw: String) {
-    val new = raw.trim()
-    if (new.isEmpty() || new == old) return
-    appsEff.filter { it.folder == old }.forEach { assignments[it.component.packageName] = new }
-    persist()
-    openFolder = new
+    val result = HomeLayoutModel.renameFolder(appsEff.toLayoutRefs(), assignments, old, raw) ?: return
+    replaceAssignments(result.assignments)
+    openFolder = result.folderName
   }
   fun moveOut(pkg: String) {
-    val folder = appsEff.firstOrNull { it.component.packageName == pkg }?.folder ?: return
-    assignments[pkg] = "" // explicit ungroup
-    // No single-app folders: if only one remains, pop it out too.
-    val remaining = appsEff.filter { it.folder == folder && it.component.packageName != pkg }
-    if (remaining.size == 1) assignments[remaining[0].component.packageName] = ""
-    persist()
-    if (remaining.size <= 1) openFolder = null
+    val result = HomeLayoutModel.moveOut(appsEff.toLayoutRefs(), assignments, pkg) ?: return
+    replaceAssignments(result.assignments)
+    if (result.closeFolder) openFolder = null
   }
-  fun onDrop(sourcePkg: String, targetKey: String?) {
-    if (targetKey == null) return
-    when {
-      targetKey.startsWith(FOLDER_KEY) -> assign(sourcePkg, targetKey.removePrefix(FOLDER_KEY))
-      targetKey.startsWith(APP_KEY) -> {
-        val targetPkg = targetKey.removePrefix(APP_KEY)
-        if (targetPkg == sourcePkg) return
-        pendingPair = sourcePkg to targetPkg // ask for a name first
+  fun targetSlotAt(pos: Offset): Int? =
+      slotBounds.entries.firstOrNull { it.value.contains(pos) }?.key
+
+  // --- horizontal paging (iOS-style swipeable app pages) ----------------------
+  var pageCapacity by remember { mutableStateOf(1) }
+  val pageCount = ((gridSlots.size + pageCapacity - 1) / pageCapacity).coerceAtLeast(1)
+  val pagerState = rememberPagerState { pageCount }
+  // While dragging, drift toward the screen edge auto-advances to the next/previous page.
+  var edgeDir by remember { mutableStateOf(0) }
+
+  fun startTileDrag(key: String, win: Offset) {
+    // Long-pressing a tile enters Manage mode AND begins dragging it in the same gesture, so the
+    // user doesn't have to lift and press again.
+    if (!editMode) editMode = true
+    dragKey = key
+    dragPos = win
+    dragOriginalSlots = gridSlots
+  }
+  fun moveTileDrag(amount: Offset) {
+    val dm = context.resources.displayMetrics
+    val screenW = dm.widthPixels.toFloat()
+    val screenH = dm.heightPixels.toFloat()
+    // Clamp to the screen so a finger riding the very edge (or briefly off it) still maps to the
+    // edge column instead of drifting into nowhere — keeps target detection and edge-flip working.
+    dragPos =
+        Offset(
+            (dragPos.x + amount.x).coerceIn(0f, screenW),
+            (dragPos.y + amount.y).coerceIn(0f, screenH),
+        )
+    edgeDir =
+        when {
+          dragPos.x > screenW * 0.86f -> 1
+          dragPos.x < screenW * 0.14f -> -1
+          else -> 0
+        }
+    val src = dragKey ?: return
+    val srcIdx = gridSlots.indexOf(src)
+    if (srcIdx < 0) return
+    val tgtIdx = targetSlotAt(dragPos) ?: return
+    if (tgtIdx == srcIdx) return
+    // Hovering an app over a folder files it in (handled on drop) — don't live-swap into it.
+    val tgt = gridSlots.getOrNull(tgtIdx)
+    if (src.startsWith(APP_KEY) && tgt != null && tgt.startsWith(FOLDER_KEY)) return
+    val next = HomeGrid.swap(gridSlots, srcIdx, tgtIdx)
+    if (next != gridSlots) gridSlots = next
+  }
+  fun endTileDrag() {
+    edgeDir = 0
+    val src = dragKey
+    if (src != null) {
+      val tgtIdx = targetSlotAt(dragPos)
+      val tgt = tgtIdx?.let { gridSlots.getOrNull(it) }
+      if (src.startsWith(APP_KEY) && tgt != null && tgt.startsWith(FOLDER_KEY)) {
+        // File the app into the folder; undo any live swaps so the folder stays put.
+        dragOriginalSlots?.let { gridSlots = it }
+        assignments[src.removePrefix(APP_KEY)] = tgt.removePrefix(FOLDER_KEY)
+        persist()
       }
+      UserLayout.saveGridSlots(context, gridSlots)
+    }
+    dragKey = null
+    dragOriginalSlots = null
+  }
+  fun cancelTileDrag() {
+    // Don't revert — commit the tiles where they were last dragged, so a brief finger-off-screen
+    // (which the OS reports as a cancel) never snaps everything back to where it started.
+    edgeDir = 0
+    if (dragKey != null) UserLayout.saveGridSlots(context, gridSlots)
+    dragKey = null
+    dragOriginalSlots = null
+  }
+  // Debounced page flip while a drag rests against a screen edge.
+  LaunchedEffect(edgeDir) {
+    if (edgeDir != 0 && dragKey != null) {
+      delay(450)
+      if (dragKey != null && edgeDir != 0) {
+        val target = (pagerState.currentPage + edgeDir).coerceIn(0, (pageCount - 1).coerceAtLeast(0))
+        if (target != pagerState.currentPage) pagerState.animateScrollToPage(target)
+      }
+      edgeDir = 0
+    }
+  }
+  // Auto-arrange: pack every tile into the clean default order (built-ins, widgets, folders, then
+  // apps alphabetically), removing blanks and empty pages.
+  fun tidyGrid() {
+    val packed = HomeGrid.normalizeToPages(allTileKeys, allTileKeys, pageCapacity, keepSpare = false)
+    gridSlots = packed
+    UserLayout.saveGridSlots(context, packed)
+  }
+  // If pages were removed (e.g. auto-deleted empties), don't leave the pager stranded past the end.
+  LaunchedEffect(pageCount) {
+    if (pagerState.currentPage >= pageCount) {
+      pagerState.scrollToPage((pageCount - 1).coerceAtLeast(0))
     }
   }
 
@@ -645,52 +802,7 @@ private fun LauncherScreen(
 
   CompositionLocalProvider(LocalTileDp provides tileDpFor(tileSize)) {
   Box(modifier = Modifier.fillMaxSize()) {
-      // Background layer
-      when {
-          (backgroundType == ImmortalSettings.BG_IMAGE ||
-              backgroundType == ImmortalSettings.BG_BLUR) && backgroundImagePath != null ->
-              BackgroundImage(
-                  uriString = backgroundImagePath!!,
-                  blur = backgroundType == ImmortalSettings.BG_BLUR,
-              )
-          backgroundType == ImmortalSettings.BG_GRADIENT -> GradientBackground(backgroundGradient)
-          backgroundType == ImmortalSettings.BG_SKY -> SkyBackground()
-          backgroundType == ImmortalSettings.BG_STARS -> StarFieldBackground()
-          else -> Box(modifier = Modifier.fillMaxSize().background(Color(0xFF1A1A1A)))
-      }
-      // Day-progress bar: a thin line at the very top tracking how far through the day
-      // we are, tinted with the live sky colour. Only with the Sky background.
-      if (backgroundType == ImmortalSettings.BG_SKY && showDayProgress) {
-        DayProgressBar(modifier = Modifier.align(Alignment.TopCenter))
-      }
-      Box(modifier = Modifier.fillMaxSize()
-      .pointerInput(Unit) {
-          // Right-edge back gesture: swipe from the last 64dp of the screen
-          // leftward to go back (close any open folder/overlay).
-          val edgeWidth = 64.dp.toPx()
-          var startX = 0f
-          var startY = 0f
-          awaitEachGesture {
-            val down = awaitFirstDown()
-            if (down.position.x > size.width - edgeWidth) {
-              startX = down.position.x
-              startY = down.position.y
-              var event: androidx.compose.ui.input.pointer.PointerEvent
-              do {
-                event = awaitPointerEvent()
-                if (event.changes.all { !it.pressed }) {
-                  val dx = event.changes.first().position.x - startX
-                  val dy = kotlin.math.abs(event.changes.first().position.y - startY)
-                  if (dx < -120f && dy < 80f && openFolder != null) {
-                    openFolder = null
-                  }
-                  break
-                }
-              } while (event.changes.any { it.pressed })
-            }
-          }
-      }
-  ) {
+    HomeBackground(Modifier.fillMaxSize())
     Column(
         modifier =
             Modifier.fillMaxHeight()
@@ -708,320 +820,241 @@ private fun LauncherScreen(
                 // so header action buttons stay tappable.
                 .padding(start = 32.dp, end = 32.dp, top = 40.dp, bottom = 24.dp)
     ) {
-      HeaderBar(
-          onScreensaver = onStartScreensaver,
-          onSleep = { ScreenControl.sleep(context) },
-          onClock = {
-            // Enable digital clock and reassert screensaver settings
-            DigitalClockConfig.setEnabled(context, true)
-            SettingsGuard.reaffirmScreensaver(context)
-            // Open the full-screen preview so the user can see the clock
-            // immediately; the system Dream will use this clock on the next idle.
-            val previewIntent = Intent(context, DigitalClockPreviewActivity::class.java)
-                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            runCatching { context.startActivity(previewIntent) }
-          },
-      )
-      Spacer(Modifier.size(16.dp))
-      // One consolidated strip: category tabs + countdown chips + kitchen timers,
-      // all on a single horizontally-scrolling line so they don't stack up and eat
-      // the app grid's vertical space.
-      HomeControlStrip(
-          showTabs = showTabs,
-          tabs = folderNames,
-          selectedTab = selectedTab,
-          onSelectTab = { selectedTab = it },
-          countdownVersion = homeResumeVersion,
-          timerVersion = timerVersion + homeResumeVersion,
-          onTimerChanged = { timerVersion++ },
-      )
-      HomeNoteCard(version = noteVersion, onEdit = { showNote = true })
-      DidYouKnowCard(version = homeResumeVersion)
-      // The scrolling app grid, parameterized by its area modifier so it can be
-      // hosted either directly (single page) or inside a HorizontalPager page.
-      @Composable
-      fun appGridArea(areaModifier: Modifier) {
-        Box(
-            modifier =
-                areaModifier
-                    .onGloballyPositioned { containerOrigin = it.boundsInWindow().topLeft }
-                    .pointerInput(editMode) {
-                      if (!editMode) return@pointerInput
-                      detectDragGesturesAfterLongPress(
-                          onDragStart = { local ->
-                            val win = local + containerOrigin
-                            dragPkg =
-                                tileBounds.entries
-                                    .firstOrNull {
-                                      it.key.startsWith(APP_KEY) && it.value.contains(win)
-                                    }
-                                    ?.key
-                                    ?.removePrefix(APP_KEY)
-                            dragPos = win
-                          },
-                          onDrag = { change, delta ->
-                            change.consume()
-                            dragPos += delta
-                          },
-                          onDragEnd = {
-                            dragPkg?.let { src ->
-                              val target =
-                                  tileBounds.entries
-                                      .firstOrNull {
-                                        it.key != APP_KEY + src && it.value.contains(dragPos)
-                                      }
-                                      ?.key
-                              onDrop(src, target)
+      HeaderBar(onScreensaver = onStartScreensaver)
+      Spacer(Modifier.size(20.dp))
+      Box(
+          modifier =
+              Modifier.fillMaxWidth()
+                  .weight(1f)
+                  .onGloballyPositioned { containerOrigin = it.boundsInWindow().topLeft }
+                  // One stable, page-flip-proof drag detector for EVERY tile (apps, folders,
+                  // built-ins AND widgets). It watches for a long-press in the pointer Initial pass,
+                  // so it grabs the tile under the finger before a hosted widget's AndroidView can
+                  // swallow the touch — without consuming anything until the long-press actually
+                  // fires, so normal taps / widget interaction / page swipes still work.
+                  .pointerInput(Unit) {
+                    awaitEachGesture {
+                      val down =
+                          awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+                      val slop = viewConfiguration.touchSlop
+                      // Wait for the long-press without consuming. Returns non-null if the gesture
+                      // was a tap/move/swipe instead (let children handle it); null on timeout = a
+                      // genuine long-press.
+                      val aborted =
+                          withTimeoutOrNull(viewConfiguration.longPressTimeoutMillis) {
+                            var done = false
+                            while (!done) {
+                              val e = awaitPointerEvent(PointerEventPass.Initial)
+                              val c = e.changes.firstOrNull { it.id == down.id }
+                              if (c == null ||
+                                  !c.pressed ||
+                                  (c.position - down.position).getDistance() > slop) {
+                                done = true
+                              }
                             }
-                            dragPkg = null
-                          },
-                          onDragCancel = { dragPkg = null },
+                            true
+                          }
+                      if (aborted != null) return@awaitEachGesture
+                      val win = down.position + containerOrigin
+                      val hitIdx =
+                          slotBounds.entries.firstOrNull { it.value.contains(win) }?.key
+                      val hitKey = hitIdx?.let { gridSlots.getOrNull(it) }
+                      if (hitKey == null) return@awaitEachGesture
+                      containerDragging = true
+                      startTileDrag(hitKey, win)
+                      val endedNormally =
+                          drag(down.id) { change ->
+                            change.consume()
+                            moveTileDrag(change.position - change.previousPosition)
+                          }
+                      if (endedNormally) endTileDrag() else cancelTileDrag()
+                      containerDragging = false
+                    }
+                  },
+      ) {
+        val tileDp = LocalTileDp.current
+        BoxWithConstraints(Modifier.fillMaxSize()) {
+          // Fit whole rows per page from the available height, then page horizontally (iOS-style).
+          // Use a safe row height (icon + spacer + label + padding) and reserve the page-dots strip
+          // below the pager, so the bottom row is never clipped in half.
+          val rowH = tileDp + 42.dp
+          val dotsReserve = 30.dp
+          val avail = (maxHeight - dotsReserve).coerceAtLeast(rowH)
+          val rows = ((avail.value + 20f) / (rowH.value + 20f)).toInt().coerceAtLeast(1)
+          val cap = (gridColumns * rows).coerceAtLeast(1)
+          LaunchedEffect(cap) { pageCapacity = cap }
+          LaunchedEffect(allTileKeys, cap, dragKey != null) {
+            // Keep a spare empty page only while arranging; otherwise empty pages are removed.
+            val normalized =
+                HomeGrid.normalizeToPages(gridSlots, allTileKeys, cap, keepSpare = dragKey != null)
+            if (normalized != gridSlots) {
+              gridSlots = normalized
+              UserLayout.saveGridSlots(context, normalized)
+            }
+          }
+          Column(Modifier.fillMaxSize()) {
+            HorizontalPager(
+                state = pagerState,
+                // Disable horizontal page-swipe while a tile is being dragged (edge auto-advance
+                // takes over then); otherwise swiping flips between app pages.
+                userScrollEnabled = dragKey == null,
+                // Keep the neighbouring page composed so a drag survives a single edge page-flip
+                // (the dragged tile's gesture node isn't disposed when the page scrolls).
+                beyondViewportPageCount = 1,
+                modifier = Modifier.weight(1f).focusRequester(homeGridFocus).focusGroup(),
+            ) { page ->
+              LazyVerticalGrid(
+                  columns = GridCells.Fixed(gridColumns),
+                  horizontalArrangement = Arrangement.spacedBy(16.dp),
+                  verticalArrangement = Arrangement.spacedBy(20.dp),
+                  userScrollEnabled = false,
+                  modifier = Modifier.fillMaxSize(),
+              ) {
+                val pageStart = page * pageCapacity
+                val pageEnd = minOf(pageStart + pageCapacity, gridSlots.size)
+                val pageSize = (pageEnd - pageStart).coerceAtLeast(0)
+                // Free-placement grid: every cell is a slot — a tile or an intentional blank.
+                // Dragging a tile swaps slots, so blanks stay where the user left them. A long-press
+                // both enters Manage mode AND starts the drag in one gesture (see startTileDrag).
+                items(
+                    count = pageSize,
+                    key = { li -> gridSlots[pageStart + li] ?: "blank:${pageStart + li}" },
+                    span = { li -> GridItemSpan(widthOf(gridSlots[pageStart + li])) },
+                ) { li ->
+                  val i = pageStart + li
+                  val key = gridSlots[i]
+            val boundsMod = Modifier.onGloballyPositioned { slotBounds[i] = it.boundsInWindow() }
+            if (key == null) {
+              // Blank cell — an invisible drop target with the same footprint as a tile so the
+              // grid lines up perfectly whether a cell is filled or empty.
+              Column(
+                  horizontalAlignment = Alignment.CenterHorizontally,
+                  modifier = boundsMod.fillMaxWidth().padding(4.dp),
+              ) {
+                Box(Modifier.size(tileDp))
+                Spacer(Modifier.size(8.dp))
+                Text(" ", color = Color.Transparent, fontSize = 15.sp, maxLines = 1)
+              }
+            } else {
+              val isDragged = dragKey == key
+              when {
+                key == BUILTIN_CALLS ->
+                    HomeTileFrame(boundsMod, isDragged) { PortalHomeTile(onExitHome) }
+                key == BUILTIN_STORE ->
+                    HomeTileFrame(boundsMod, isDragged) { StoreTile(onOpenStore) }
+                key == BUILTIN_UPDATES ->
+                    HomeTileFrame(boundsMod, isDragged) {
+                      UpdatesTile(update = update, status = updateStatus) {
+                        val info = update
+                        if (info != null) {
+                          UpdateManager.installUpdate(context, info) { updateStatus = it }
+                        } else {
+                          updateStatus = "Checking…"
+                          UpdateManager.checkForUpdate(context) {
+                            update = it
+                            updateStatus = if (it == null) "Up to date" else null
+                          }
+                        }
+                      }
+                    }
+                key.startsWith(WIDGET_KEY) ->
+                    widgetByKey[key]?.let { w ->
+                      WidgetCell(
+                          widget = w,
+                          host = appWidgetHost,
+                          manager = appWidgetManager,
+                          editMode = editMode,
+                          tileDp = tileDp,
+                          dimmed = isDragged,
+                          modifier = boundsMod.alpha(if (isDragged) 0f else 1f),
+                          onRemove = { removeWidget(w) },
                       )
-                    },
-        ) {
-          LazyVerticalGrid(
-              columns = GridCells.Fixed(gridColumnsFor(tileSize)),
-              horizontalArrangement = Arrangement.spacedBy(16.dp),
-              verticalArrangement = Arrangement.spacedBy(20.dp),
-              modifier = Modifier.focusRequester(homeGridFocus).focusGroup(),
-          ) {
-            val activeTab = if (showTabs) selectedTab else null
-            // "Apps" tab: every installed app, flattened — no built-in tiles, no folders.
-            if (activeTab == TAB_APPS) {
-              val apps = appsEff.filter { it.component.packageName !in hiddenPkgs }
-              items(apps, key = { it.component.packageName }) { app ->
-                val pkg = app.component.packageName
-                AppTile(
-                    app = app,
-                    editMode = editMode,
-                    dimmed = dragPkg == pkg,
-                    modifier = Modifier.onGloballyPositioned { tileBounds[APP_KEY + pkg] = it.boundsInWindow() },
-                    onDelete = { onUninstall(pkg) },
-                    onHide = { hideApp(pkg) },
-                    onAppInfo = { openAppInfo(context, pkg) },
-                    onClick = { onLaunch(app.component) },
-                )
-              }
-              return@LazyVerticalGrid
-            }
-            // A real folder tab (e.g. Settings): just that folder's apps.
-            if (activeTab != null && activeTab != TAB_TOOLS) {
-              val tabApps = appsEff.filter { it.folder == activeTab && it.component.packageName !in hiddenPkgs }
-              items(tabApps, key = { it.component.packageName }) { app ->
-                val pkg = app.component.packageName
-                AppTile(
-                    app = app,
-                    editMode = editMode,
-                    dimmed = dragPkg == pkg,
-                    modifier = Modifier.onGloballyPositioned { tileBounds[APP_KEY + pkg] = it.boundsInWindow() },
-                    onDelete = { onUninstall(pkg) },
-                    onHide = { hideApp(pkg) },
-                    onAppInfo = { openAppInfo(context, pkg) },
-                    onClick = { onLaunch(app.component) },
-                )
-              }
-              return@LazyVerticalGrid
-            }
-            // Otherwise: "All" (activeTab == null) or "Tools" (TAB_TOOLS). Both show the
-            // built-in tiles below; "All" additionally shows folders + installed apps.
-            // Special + folder tiles persist in Manage mode (non-uninstallable);
-            // only regular apps get a delete badge and become draggable.
-            item { PortalHomeTile(onExitHome) }
-            item { PortalHomeShortcutTile(onExitHome) }
-            item { StoreTile(onOpenStore) }
-            // The built-in tools are grouped into a few category folders so the home
-            // grid stays uncluttered; tapping one opens a ToolCategoryOverlay of its
-            // tiles (the live tiles themselves, so Aurora/ISS still light up inside).
-            items(TOOL_CATEGORIES, key = { "toolcat:${it.id}" }) { cat ->
-              ToolFolderTile(label = cat.id, glyph = cat.glyph) { openToolCat = cat.id }
-            }
-            // Folders + loose installed apps belong to the "All" view only; the
-            // "Tools" tab stops at the built-in tiles above (+ Updates below).
-            if (activeTab == null) {
-              items(folderNames, key = { it }) { name ->
-                FolderTile(
-                    name = name,
-                    apps = appsEff.filter { it.folder == name },
-                    modifier =
-                        Modifier.onGloballyPositioned {
-                          tileBounds[FOLDER_KEY + name] = it.boundsInWindow()
-                        },
-                    onClick = { openFolder = name },
-                )
-              }
-              items(ungrouped, key = { it.component.packageName }) { app ->
-                val pkg = app.component.packageName
-                AppTile(
-                    app = app,
-                    editMode = editMode,
-                    dimmed = dragPkg == pkg,
-                    modifier =
-                        Modifier.onGloballyPositioned {
-                          tileBounds[APP_KEY + pkg] = it.boundsInWindow()
-                        },
-                    onDelete = { onUninstall(pkg) },
-                    onHide = { hideApp(pkg) },
-                    onAppInfo = { openAppInfo(context, pkg) },
-                    onClick = { onLaunch(app.component) },
-                )
-              }
-            }
-            // Always-present Updates tile, parked at the end of the grid. Tapping
-            // installs a ready update, or forces a fresh check when up to date.
-            item {
-              UpdatesTile(update = update, status = updateStatus) {
-                val info = update
-                if (info != null) {
-                  UpdateManager.installUpdate(context, info) { updateStatus = it }
-                } else {
-                  updateStatus = "Checking…"
-                  UpdateManager.checkForUpdate(context) {
-                    update = it
-                    updateStatus = if (it == null) "Up to date" else null
+                    }
+                key.startsWith(FOLDER_KEY) -> {
+                  val name = key.removePrefix(FOLDER_KEY)
+                  HomeTileFrame(boundsMod, isDragged) {
+                    FolderTile(
+                        name = name,
+                        apps = appsEff.filter { it.folder == name },
+                        editMode = editMode,
+                        onClick = { openFolder = name },
+                    )
+                  }
+                }
+                key.startsWith(APP_KEY) ->
+                    appByKey[key]?.let { app ->
+                      AppTile(
+                          app = app,
+                          editMode = editMode,
+                          dimmed = isDragged,
+                          modifier = boundsMod.alpha(if (isDragged) 0f else 1f),
+                          onClick = { onLaunch(app.component) },
+                      )
+                    }
                   }
                 }
               }
             }
           }
-        }
-      }
-
-      if (dashboardPage && !editMode) {
-        // Two swipeable pages: apps, then a glanceable info dashboard.
-        val pagerState = androidx.compose.foundation.pager.rememberPagerState(pageCount = { 2 })
-        Column(modifier = Modifier.fillMaxWidth().weight(1f)) {
-          androidx.compose.foundation.pager.HorizontalPager(
-              state = pagerState,
-              modifier = Modifier.fillMaxWidth().weight(1f),
-          ) { page ->
-            if (page == 0) appGridArea(Modifier.fillMaxSize())
-            else DashboardPage()
+          if (pageCount > 1) {
+            Spacer(Modifier.size(10.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.Center,
+            ) {
+              PageDots(selected = pagerState.currentPage, count = pageCount)
+            }
           }
-          PagerDots(pagerState.currentPage, 2)
-        }
-      } else {
-        appGridArea(Modifier.fillMaxWidth().weight(1f))
-      }
-      // Bottom widget stack (weather / calendar / system stats), pinned full-width
-      // below the scrolling grid. Measured so the floating corner buttons can be
-      // lifted clear of it in portrait. All off by default; an empty stack measures
-      // ~0dp so the buttons stay in the corners.
-      Column(
-          modifier =
-              Modifier.fillMaxWidth().onGloballyPositioned {
-                bottomWidgetsHeight = with(widgetDensity) { it.size.height.toDp() }
-              }
-      ) {
-        // Only the weather rides at the bottom of the main page. Calendar and system
-        // stats live on the dashboard (2nd) page so the home grid keeps its space.
-        if (weatherWidget != ImmortalSettings.WIDGET_OFF) {
-          Spacer(Modifier.size(16.dp))
-          WeatherWidget(mode = weatherWidget, fahrenheit = weatherFahrenheit)
-        }
-      }
-    }
-
-    // Floating ghost of the app being dragged.
-    dragPkg?.let { pkg ->
-      appsEff.firstOrNull { it.component.packageName == pkg }?.let { dragged ->
-        val ghostDp = LocalTileDp.current
-        val half = with(androidx.compose.ui.platform.LocalDensity.current) { (ghostDp / 2).toPx() }
-        Image(
-            bitmap = dragged.icon,
-            contentDescription = null,
-            modifier =
-                Modifier.offset {
-                      IntOffset(
-                          (dragPos.x - half).roundToInt(),
-                          (dragPos.y - half).roundToInt(),
-                      )
-                    }
-                    .size(ghostDp)
-                    .clip(RoundedCornerShape(20.dp)),
-        )
-      }
-    }
-
-    // Hidden apps restore button: appears beside ✎ when there are hidden apps.
-    if (hiddenPkgs.isNotEmpty()) {
-      Surface(
-          color = Color(0xCC2B2B2B),
-          shape = androidx.compose.foundation.shape.CircleShape,
-          modifier =
-              Modifier.align(Alignment.BottomEnd)
-                  .padding(end = 112.dp, bottom = 32.dp + bottomButtonLift)
-                  .size(60.dp)
-                  .tvFocusable(androidx.compose.foundation.shape.CircleShape) {
-                    showHiddenPanel = true
-                  },
-      ) {
-        Box(contentAlignment = Alignment.Center) {
-          // Eye icon to signal "show hidden apps"
-          Canvas(modifier = Modifier.size(28.dp)) {
-            val w = size.minDimension; val s = w * 0.09f
-            val stroke = Stroke(width = s, cap = StrokeCap.Round)
-            drawOval(Color.White, topLeft = Offset(w*0.04f, w*0.28f), size = Size(w*0.92f, w*0.44f), style = stroke)
-            drawCircle(Color.White, radius = w*0.14f, center = Offset(w*0.5f, w*0.5f), style = stroke)
-            // Badge: number of hidden apps
           }
         }
       }
-    }
-    // Alexa shortcut: bottom-left corner, always visible.
-    heyPkg?.let { pkg ->
-      Box(
-          contentAlignment = Alignment.Center,
-          modifier =
-              Modifier.align(Alignment.BottomStart)
-                  .padding(start = 36.dp, bottom = 28.dp + bottomButtonLift)
-                  .size(96.dp)
-                  .tvFocusable(
-                      shape = androidx.compose.foundation.shape.CircleShape,
-                      onLongClick = { openHeyPicker(context, pkg) },
-                  ) { fireHey(context, pkg) },
-      ) {
-        Image(
-            painter = painterResource(R.drawable.alexa_icon),
-            contentDescription = "Alexa",
-            contentScale = ContentScale.Fit,
-            modifier = Modifier.size(96.dp).clip(androidx.compose.foundation.shape.CircleShape),
-        )
+      // Optional weather forecast, pinned full-width at the bottom of the screen
+      // below the (scrolling) app grid. Off by default.
+      if (weatherWidget != ImmortalSettings.WIDGET_OFF) {
+        Spacer(Modifier.size(16.dp))
+        WeatherWidget(mode = weatherWidget, fahrenheit = weatherFahrenheit)
       }
     }
-    // Quick timer shortcut: bottom-left, stacked directly above the Alexa button.
-    Box(
-        contentAlignment = Alignment.Center,
-        modifier =
-            Modifier.align(Alignment.BottomStart)
-                .padding(start = 36.dp, bottom = 140.dp + bottomButtonLift)
-                .size(96.dp)
-                .tvFocusable(shape = androidx.compose.foundation.shape.CircleShape) {
-                  showTimerAdd = true
-                },
+
+    // Manage / Done toggle lives in the bottom-right corner. While managing, a
+    // sibling + button opens the widget picker so widgets are an edit action, not
+    // a permanent launcher tile.
+    Row(
+        horizontalArrangement = Arrangement.spacedBy(14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.align(Alignment.BottomEnd).padding(end = 36.dp, bottom = 32.dp),
     ) {
-      Image(
-          painter = painterResource(R.drawable.timer_icon),
-          contentDescription = "New timer",
-          contentScale = ContentScale.Fit,
-          modifier = Modifier.size(96.dp).clip(androidx.compose.foundation.shape.CircleShape),
-      )
+      if (editMode) TidyButton { tidyGrid() }
+      if (editMode) AddWidgetButton { showWidgetPicker = true }
+      EditButton(editMode = editMode, onClick = { editMode = !editMode })
     }
-    // Manage / Done toggle lives in the bottom-right corner.
-    EditButton(
-        editMode = editMode,
-        modifier =
-            Modifier.align(Alignment.BottomEnd)
-                .padding(end = 36.dp, bottom = 32.dp + bottomButtonLift),
-        onClick = { editMode = !editMode },
-    )
 
-    if (editMode) {
-      NewFolderButton(
-          modifier =
-              Modifier.align(Alignment.BottomEnd)
-                  .padding(end = 112.dp, bottom = 32.dp + bottomButtonLift),
-          onClick = { creatingFolder = true },
-      )
+    // Floating ghost of the tile being dragged — it follows the finger while the grid reflows
+    // beneath it (the source cell is hidden via alpha while dragging).
+    dragKey?.let { key ->
+      val ghostDp = LocalTileDp.current
+      val half = with(androidx.compose.ui.platform.LocalDensity.current) { (ghostDp / 2).toPx() }
+      val ghostMod =
+          Modifier.offset {
+                IntOffset((dragPos.x - half).roundToInt(), (dragPos.y - half).roundToInt())
+              }
+              .size(ghostDp)
+      val app = appByKey[key]
+      if (app != null) {
+        Image(
+            bitmap = app.icon,
+            contentDescription = null,
+            modifier = ghostMod.clip(RoundedCornerShape(20.dp)),
+        )
+      } else {
+        // Folders / built-ins / widgets: a simple lifted tile stand-in.
+        Box(
+            modifier =
+                ghostMod
+                    .clip(RoundedCornerShape(20.dp))
+                    .background(Color(0xF23A3A3C)),
+        )
+      }
     }
 
     openFolder?.let { name ->
@@ -1049,60 +1082,11 @@ private fun LauncherScreen(
                                 Intent(context, ImmortalSettingsActivity::class.java))
                           }
                         },
-                        FolderExtra("Clock", ICON_TIME) {
-                          openFolder = null
-                          runCatching {
-                            context.startActivity(
-                                Intent(context, ClockSettingsActivity::class.java))
-                          }
-                        },
                         FolderExtra("Screensaver", ICON_IMAGE) {
                           openFolder = null
                           runCatching {
                             context.startActivity(
                                 Intent(context, ScreensaverSettingsActivity::class.java))
-                          }
-                        },
-                        FolderExtra("Welcome", ICON_WAVING_HAND) {
-                          openFolder = null
-                          runCatching {
-                            context.startActivity(
-                                Intent(context, WelcomeSettingsActivity::class.java))
-                          }
-                        },
-                        FolderExtra("Sleep", ICON_TIME) {
-                          openFolder = null
-                          runCatching {
-                            context.startActivity(
-                                Intent(context, SleepSettingsActivity::class.java))
-                          }
-                        },
-                        FolderExtra("Sounds", ICON_BELL) {
-                          openFolder = null
-                          runCatching {
-                            context.startActivity(
-                                Intent(context, ChimeSettingsActivity::class.java))
-                          }
-                        },
-                        FolderExtra("Countdowns", ICON_HOURGLASS) {
-                          openFolder = null
-                          runCatching {
-                            context.startActivity(
-                                Intent(context, CountdownSettingsActivity::class.java))
-                          }
-                        },
-                        FolderExtra("Cameras", ICON_CAMERA) {
-                          openFolder = null
-                          runCatching {
-                            context.startActivity(
-                                Intent(context, CameraViewerActivity::class.java))
-                          }
-                        },
-                        FolderExtra("Intercom", ICON_CALL) {
-                          openFolder = null
-                          runCatching {
-                            context.startActivity(
-                                Intent(context, IntercomActivity::class.java))
                           }
                         },
                         FolderExtra("Help", ICON_HELP) {
@@ -1112,80 +1096,6 @@ private fun LauncherScreen(
                 else emptyList(),
         )
       }
-    }
-
-    // Back button: shown when the Settings folder is open (and any other
-    // folder). Lets the user close the folder without using the system
-    // back button or tapping outside.
-    if (openFolder != null) {
-      FolderBackButton(onClick = { openFolder = null })
-    }
-
-    // A tool category folder is open: show its tiles in an overlay grid. In normal mode
-    // the live tiles render (so Aurora/ISS still update); in edit mode each tool shows a
-    // "move to another folder" chip and an Add button pulls tools in from other folders.
-    openToolCat?.let { cat ->
-      // Render the real, live tile for a tool id; tapping closes the folder then acts.
-      val renderLiveTool: @Composable (String) -> Unit = { id ->
-        when (id) {
-          TOOL_ISS -> IssTile(onClick = { openToolCat = null; showIss = true })
-          TOOL_AURORA -> AuroraTile(onClick = { openToolCat = null; showAurora = true })
-          TOOL_TRANSIT -> TransitTile(onClick = { openToolCat = null; showTransit = true })
-          TOOL_STOPWATCH -> StopwatchTile(onClick = { openToolCat = null; showStopwatch = true })
-          TOOL_CONVERTER -> ConverterTile(onClick = { openToolCat = null; showConverter = true })
-          TOOL_SPEEDTEST -> SpeedTestTile(onClick = { openToolCat = null; showSpeedTest = true })
-          TOOL_LAMP -> LampTile()
-          TOOL_MYNOISE -> MyNoiseTile()
-          TOOL_BEDTIME -> BedtimeTile()
-          TOOL_SUNRISE -> SunriseTile()
-          TOOL_PING -> PingTile()
-          TOOL_NOTE -> NoteTile(onClick = { openToolCat = null; showNote = true })
-          TOOL_NOWPLAYING -> NowPlayingTile(onClick = { openToolCat = null; showNowPlaying = true })
-          TOOL_CAMERA -> CameraTile(onClick = { openToolCat = null; onOpenCamera() })
-          TOOL_DAILY -> DailyTile(mode = dailyTileMode, onClick = { openToolCat = null; showDaily = true })
-          TOOL_WHATSNEW -> WhatChangedTile(onClick = { openToolCat = null; showWhatChanged = true })
-          TOOL_REQUEST -> RequestAppTile()
-          TOOL_REPORTAL ->
-              ReportalTile(onClick = {
-                openToolCat = null
-                runCatching {
-                  context.startActivity(
-                      Intent(Intent.ACTION_VIEW, Uri.parse("https://reportal.dev/"))
-                          .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-                }
-              })
-        }
-      }
-      // Effective membership: a tool is in this category if its override (or default) matches.
-      // The Daily tile is suppressed unless its daily content mode is on.
-      fun catOf(t: ToolDef) = toolAssign[t.id] ?: t.defaultCat
-      val inThisCat =
-          ALL_TOOLS.filter {
-            catOf(it) == cat &&
-                (it.id != TOOL_DAILY || DailyContent.modeOf(dailyTileMode) != DailyContent.Mode.OFF)
-          }
-      val addable = ALL_TOOLS.filter { catOf(it) != cat }
-
-      ToolCategoryOverlay(
-          title = cat,
-          toolIds = inThisCat.map { it.id },
-          editMode = toolEdit,
-          onToggleEdit = { toolEdit = !toolEdit },
-          renderLive = renderLiveTool,
-          categories = TOOL_CATEGORIES.map { it.id },
-          addable = addable,
-          onMove = { id, target ->
-            toolAssign[id] = target
-            UserLayout.setToolCategory(context, id, target)
-          },
-          onDismiss = {
-            openToolCat = null
-            toolEdit = false
-          },
-      )
-    }
-    if (openToolCat != null) {
-      FolderBackButton(onClick = { openToolCat = null; toolEdit = false })
     }
 
     // Name a new folder (created by dropping one app on another).
@@ -1216,164 +1126,121 @@ private fun LauncherScreen(
       )
     }
 
-    // Create a new empty folder (from the + button in Manage mode).
-    if (creatingFolder) {
-      NameOverlay(
-          title = "New folder",
-          initial = UserLayout.nextFolderName(folderNames.toSet()),
-          confirmLabel = "Create",
-          onConfirm = {
-            createEmptyFolder(it)
-            creatingFolder = false
-          },
-          onCancel = { creatingFolder = false },
-      )
-    }
-
-    // Speed-test pop-out overlay (rendered at top level so it isn't clipped by the grid).
-    if (showSpeedTest) {
-      SpeedTestOverlay(onDismiss = { showSpeedTest = false })
-    }
-
-    // Daily quote / word / trivia pop-out overlay.
-    if (showDaily) {
-      DailyOverlay(mode = dailyTileMode, onDismiss = { showDaily = false })
-    }
-
-    // Leave-a-note overlay (typed sticky + voice memo).
-    if (showNote) {
-      NoteOverlay(onDismiss = { showNote = false; noteVersion++ })
-    }
-
-    // Add-a-kitchen-timer overlay.
-    if (showTimerAdd) {
-      AddTimerOverlay(
-          onDismiss = { showTimerAdd = false },
-          onAdd = { label, ms -> TimerConfig.add(context, label, ms); showTimerAdd = false; timerVersion++ },
-      )
-    }
-
-    // Dublin transit board overlay.
-    if (showTransit) {
-      TransitOverlay(onDismiss = { showTransit = false })
-    }
-
-    // ISS overhead pass predictor overlay.
-    if (showIss) {
-      IssOverlay(onDismiss = { showIss = false })
-    }
-
-    // Aurora (Kp-index) outlook overlay.
-    if (showAurora) {
-      AuroraOverlay(onDismiss = { showAurora = false })
-    }
-
-    if (showStopwatch) {
-      StopwatchOverlay(onDismiss = { showStopwatch = false })
-    }
-
-    if (showConverter) {
-      ConverterOverlay(onDismiss = { showConverter = false })
-    }
-
-    if (showWhatChanged) {
-      WhatChangedOverlay(onDismiss = { showWhatChanged = false })
-    }
-
-    if (showNowPlaying) {
-      NowPlayingOverlay(onDismiss = { showNowPlaying = false })
-    }
-
-    // Hidden apps panel: shows all hidden apps so users can restore them individually.
-    if (showHiddenPanel) {
-      BackHandler { showHiddenPanel = false }
-      Box(
-          contentAlignment = Alignment.Center,
-          modifier =
-              Modifier.fillMaxSize()
-                  .background(Color(0xCC000000))
-                  .clickable(
-                      interactionSource = remember { MutableInteractionSource() },
-                      indication = null,
-                  ) { showHiddenPanel = false },
-      ) {
-        Surface(
-            color = Color(0xFF1C1C1E),
-            shape = RoundedCornerShape(28.dp),
-            modifier = Modifier.widthIn(max = 600.dp).clickable(
-                interactionSource = remember { MutableInteractionSource() },
-                indication = null,
-            ) {},
-        ) {
-          Column(modifier = Modifier.padding(28.dp)) {
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-              Text("Hidden apps", color = Color.White, fontSize = 22.sp, modifier = Modifier.weight(1f))
-              if (hiddenAppsEff.isNotEmpty()) {
-                Surface(
-                    color = Color(0xFF1565C0),
-                    shape = RoundedCornerShape(10.dp),
-                    modifier = Modifier.tvFocusable(RoundedCornerShape(10.dp)) {
-                      UserLayout.unhideAllPackages(context)
-                      hiddenPkgs = emptySet()
-                      showHiddenPanel = false
-                    },
-                ) {
-                  Text("Restore all", color = Color.White, fontSize = 15.sp,
-                      modifier = Modifier.padding(horizontal = 18.dp, vertical = 8.dp))
-                }
-              }
-            }
-            Spacer(Modifier.size(20.dp))
-            if (hiddenAppsEff.isEmpty()) {
-              Text("No hidden apps.", color = Color(0xFF9A9A9A), fontSize = 16.sp)
-            } else {
-              LazyVerticalGrid(
-                  columns = GridCells.Fixed(4),
-                  horizontalArrangement = Arrangement.spacedBy(16.dp),
-                  verticalArrangement = Arrangement.spacedBy(16.dp),
-                  modifier = Modifier.heightIn(max = 400.dp),
-              ) {
-                items(hiddenAppsEff, key = { it.component.packageName }) { app ->
-                  Column(horizontalAlignment = Alignment.CenterHorizontally,
-                      modifier = Modifier.tvFocusable(RoundedCornerShape(16.dp)) {
-                        unhideApp(app.component.packageName)
-                      }) {
-                    Box {
-                      Image(bitmap = app.icon, contentDescription = app.label,
-                          modifier = Modifier.size(72.dp).clip(RoundedCornerShape(18.dp)).alpha(0.5f))
-                      Surface(color = Color(0xFF1565C0),
-                          shape = androidx.compose.foundation.shape.CircleShape,
-                          modifier = Modifier.size(24.dp).align(Alignment.TopEnd)) {
-                        Box(contentAlignment = Alignment.Center) {
-                          Text("+", color = Color.White, fontSize = 16.sp)
-                        }
-                      }
-                    }
-                    Spacer(Modifier.size(6.dp))
-                    Text(app.label, color = Color.White, fontSize = 13.sp, maxLines = 1,
-                        overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center)
-                  }
-                }
-              }
-            }
+    if (showWidgetPicker) {
+      val providers by
+          produceState(initialValue = emptyList<WidgetProviderEntry>(), reload, tileSize) {
+            value = withContext(Dispatchers.IO) { loadWidgetProviders(context, tileDpFor(tileSize)) }
           }
-        }
-      }
+      WidgetPickerOverlay(
+          providers = providers,
+          status = widgetStatus,
+          onPick = { addWidget(it) },
+          onDismiss = {
+            showWidgetPicker = false
+            widgetStatus = null
+          },
+      )
+    }
+
+    // Timer "time's up" alarm: a full-screen swipe-to-stop overlay while ringing.
+    if (timerRinging) {
+      TimerAlarmOverlay(onStop = { TimerAlarm.stop(context) })
     }
   }
-  } // outer background Box
   } // CompositionLocalProvider(LocalTileDp)
+}
+
+/**
+ * Full-screen "time's up" alarm overlay with an iOS-style slide-to-stop. Blocks touches from
+ * reaching the grid beneath, so the only way out is the slider (or the 60s auto-silence).
+ */
+@Composable
+private fun TimerAlarmOverlay(onStop: () -> Unit) {
+  val noRipple = remember { MutableInteractionSource() }
+  Box(
+      contentAlignment = Alignment.Center,
+      modifier =
+          Modifier.fillMaxSize()
+              .background(Color(0xE6000000))
+              // Swallow taps so nothing behind the alarm reacts.
+              .clickable(interactionSource = noRipple, indication = null) {},
+  ) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+      Text("⏰", fontSize = 68.sp)
+      Spacer(Modifier.size(18.dp))
+      Text("Timer", color = Color.White, fontSize = 34.sp, fontWeight = FontWeight.Bold)
+      Text(
+          "Time's up",
+          color = Color(0xFFBFBFBF),
+          fontSize = 18.sp,
+          modifier = Modifier.padding(top = 6.dp),
+      )
+      Spacer(Modifier.size(44.dp))
+      SlideToStop(onStop = onStop)
+    }
+  }
+}
+
+/** A draggable thumb on a track; sliding it to the far end fires [onStop] (else it snaps back). */
+@Composable
+private fun SlideToStop(onStop: () -> Unit) {
+  val density = androidx.compose.ui.platform.LocalDensity.current
+  val trackWidth = 320.dp
+  val thumbSize = 56.dp
+  val inset = 4.dp
+  val maxOffset =
+      with(density) { (trackWidth - thumbSize - inset * 2).toPx() }.coerceAtLeast(0f)
+  val insetPx = with(density) { inset.roundToPx() }
+  var offsetX by remember { mutableStateOf(0f) }
+  Box(
+      modifier =
+          Modifier.width(trackWidth)
+              .height(64.dp)
+              .clip(RoundedCornerShape(32.dp))
+              .background(Color(0x33FFFFFF)),
+      contentAlignment = Alignment.CenterStart,
+  ) {
+    Text(
+        "Slide to stop",
+        color = Color(0xFFE8E8E8),
+        fontSize = 16.sp,
+        fontWeight = FontWeight.Medium,
+        modifier = Modifier.align(Alignment.Center).alpha(1f - (offsetX / maxOffset).coerceIn(0f, 1f)),
+    )
+    Box(
+        modifier =
+            Modifier.offset { IntOffset(offsetX.roundToInt() + insetPx, 0) }
+                .size(thumbSize)
+                .clip(CircleShape)
+                .background(Color(0xFFE53935))
+                .pointerInput(Unit) {
+                  detectDragGestures(
+                      onDragEnd = { if (offsetX >= maxOffset * 0.9f) onStop() else offsetX = 0f },
+                      onDragCancel = { offsetX = 0f },
+                      onDrag = { change, dragAmount ->
+                        change.consume()
+                        offsetX = (offsetX + dragAmount.x).coerceIn(0f, maxOffset)
+                      },
+                  )
+                },
+        contentAlignment = Alignment.Center,
+    ) {
+      Text("›", color = Color.White, fontSize = 30.sp, fontWeight = FontWeight.Bold)
+    }
+  }
 }
 
 private const val APP_KEY = "app:"
 private const val FOLDER_KEY = "folder:"
-
-// Virtual category tabs (alongside "All" + real folder names). Sentinel-prefixed so
-// they can never collide with a user folder literally named "Apps" or "Tools".
-private const val TAB_APPS = "Apps"
-private const val TAB_TOOLS = "Tools"
+private const val WIDGET_KEY = "widget-tile:"
+private const val BUILTIN_CALLS = "builtin:calls"
+private const val BUILTIN_STORE = "builtin:store"
+private const val BUILTIN_UPDATES = "builtin:updates"
 
 private const val UPDATE_CHECK_INTERVAL_MS = 6L * 60 * 60 * 1000 // 6 hours
+
+private fun List<AppEntry>.toLayoutRefs(): List<HomeLayoutModel.AppRef> =
+    map { HomeLayoutModel.AppRef(it.component.packageName, it.folder) }
 
 // --- tile sizing ----------------------------------------------------------------
 // The grid's tile edge, provided once at the top of the tree so every tile
@@ -1396,8 +1263,22 @@ private fun gridColumnsFor(size: String): Int =
       else -> 6
     }
 
+private fun estimateWidgetSpan(minDp: Int, tileDp: Dp): Int {
+  if (minDp <= 0) return HomeWidgetStore.DEFAULT_SPAN_X
+  val tile = tileDp.value.coerceAtLeast(1f)
+  return HomeWidgetStore.normalizeSpan(((minDp + tile - 1f) / tile).toInt().coerceAtLeast(1))
+}
+
+private fun customWidgetLabel(kind: String): String =
+    when (kind) {
+      HomeWidgetStore.KIND_WEATHER -> "Weather"
+      HomeWidgetStore.KIND_WORLD_CLOCK -> "World Clock"
+      HomeWidgetStore.KIND_TIMERS -> "Timers"
+      else -> "Widget"
+    }
+
 @Composable
-private fun HeaderBar(onScreensaver: () -> Unit, onClock: () -> Unit, onSleep: () -> Unit) {
+private fun HeaderBar(onScreensaver: () -> Unit) {
   var now by remember { mutableStateOf(Date()) }
   androidx.compose.runtime.LaunchedEffect(Unit) {
     while (true) {
@@ -1412,10 +1293,6 @@ private fun HeaderBar(onScreensaver: () -> Unit, onClock: () -> Unit, onSleep: (
   // The clock format is likewise re-read on resume so flipping Auto/12h/24h in
   // Immortal Settings updates the header the moment the user returns home.
   var use24Hour by remember { mutableStateOf(ImmortalSettings.use24HourClock(context)) }
-  var showSunTimes by remember { mutableStateOf(ImmortalSettings.load(context).showSunTimes) }
-  var showNameDay by remember { mutableStateOf(ImmortalSettings.load(context).showNameDay) }
-  var showFeastDay by remember { mutableStateOf(ImmortalSettings.load(context).showFeastDay) }
-  var showNextEvent by remember { mutableStateOf(ImmortalSettings.load(context).showNextEvent) }
   // The "hey" button only appears when Millennium is installed; re-checked on
   // resume so it shows up the moment the user finishes provisioning without
   // needing to relaunch the launcher.
@@ -1438,28 +1315,12 @@ private fun HeaderBar(onScreensaver: () -> Unit, onClock: () -> Unit, onSleep: (
       if (e == Lifecycle.Event.ON_RESUME) {
         weatherUnit = ImmortalSettings.load(context).weatherUnit
         use24Hour = ImmortalSettings.use24HourClock(context)
-        showSunTimes = ImmortalSettings.load(context).showSunTimes
-        showNameDay = ImmortalSettings.load(context).showNameDay
-        showFeastDay = ImmortalSettings.load(context).showFeastDay
-        showNextEvent = ImmortalSettings.load(context).showNextEvent
         heyPkg = heyPackage(context)
         showMiniPlayer = ImmortalSettings.load(context).showMiniPlayer
       }
     }
     lifecycleOwner.lifecycle.addObserver(obs)
     onDispose { lifecycleOwner.lifecycle.removeObserver(obs) }
-  }
-  // Today's sunrise/sunset, refreshed every few hours (keyless Open-Meteo).
-  val sunTimes by produceState<Weather.SunTimes?>(initialValue = null) {
-    while (true) {
-      val s = withContext(Dispatchers.IO) { Weather.fetchSunTimes(context) }
-      if (s != null) {
-        value = s
-        delay(6L * 60 * 60 * 1000)
-      } else {
-        delay(5L * 60 * 1000)
-      }
-    }
   }
   val weather by produceState(initialValue = "", weatherUnit) {
     // Retry soon on failure (e.g. a transient geolocation rate-limit), then
@@ -1476,11 +1337,17 @@ private fun HeaderBar(onScreensaver: () -> Unit, onClock: () -> Unit, onSleep: (
   }
   val battery = batteryState()
 
+  // Quick-connect: the remote header button enables the remote and pops a QR/PIN modal.
+  var showPair by remember { mutableStateOf(false) }
+  var pairUrl by remember { mutableStateOf<String?>(null) }
+  var pairPin by remember { mutableStateOf<String?>(null) }
+
   // Layout: the big clock anchors the left; the weather and date stack on the
   // right, right-aligned, so the header reads as a balanced pair of blocks. The
   // clock and the right-hand stack are centred against each other.
   Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-    // Clock text.
+    // Clock anchors the top-left corner; the action buttons sit just to its right
+    // (now that there's a group of them, leading with the buttons looked off).
     Text(
         SimpleDateFormat(if (use24Hour) "H:mm" else "h:mm", Locale.getDefault()).format(now),
         color = Color.White,
@@ -1501,80 +1368,40 @@ private fun HeaderBar(onScreensaver: () -> Unit, onClock: () -> Unit, onSleep: (
     ) {
       Box(contentAlignment = Alignment.Center) { StackedPhotoIcon() }
     }
-    Spacer(Modifier.size(12.dp))
+    // Remote — one-tap "control from your phone": turn the remote on (if off) and show a
+    // QR/PIN modal, so a phone pairs without digging into Settings.
+    Spacer(Modifier.size(14.dp))
     Surface(
         color = Color(0x33FFFFFF),
         shape = androidx.compose.foundation.shape.CircleShape,
         modifier =
             Modifier.size(56.dp).tvFocusable(androidx.compose.foundation.shape.CircleShape) {
-              onClock()
+              val (u, p) = enableRemoteAndMintPin(context)
+              pairUrl = u
+              pairPin = p
+              showPair = true
             },
     ) {
-      Box(contentAlignment = Alignment.Center) { ClockIcon() }
+      Box(contentAlignment = Alignment.Center) { RemoteGlyph() }
     }
-    Spacer(Modifier.size(12.dp))
-    Surface(
-        color = Color(0x33FFFFFF),
-        shape = androidx.compose.foundation.shape.CircleShape,
-        modifier =
-            Modifier.size(56.dp).tvFocusable(androidx.compose.foundation.shape.CircleShape) {
-              onSleep()
-            },
-    ) {
-      Box(contentAlignment = Alignment.Center) { MoonIcon() }
-    }
-    // Brightness button: cycles dim → medium → full using window-level brightness
-    // (no WRITE_SETTINGS permission needed — affects this Activity's window only).
-    val activity = remember { context as? android.app.Activity }
-    var brightnessIdx by remember { mutableStateOf(2) }
-    Spacer(Modifier.size(12.dp))
-    Surface(
-        color = Color(0x33FFFFFF),
-        shape = androidx.compose.foundation.shape.CircleShape,
-        modifier =
-            Modifier.size(56.dp).tvFocusable(androidx.compose.foundation.shape.CircleShape) {
-              brightnessIdx = (brightnessIdx + 1) % 3
-              val bval = when (brightnessIdx) { 0 -> 0.12f; 1 -> 0.50f; else -> 1.0f }
-              activity?.window?.let { w -> val p = w.attributes; p.screenBrightness = bval; w.attributes = p }
-            },
-    ) {
-      Box(contentAlignment = Alignment.Center) { SunIcon() }
-    }
-    // Volume button: tap to show/hide +/– controls inline.
-    val audioMgr = remember { context.getSystemService(Context.AUDIO_SERVICE) as AudioManager }
-    var volLevel by remember { mutableStateOf(audioMgr.getStreamVolume(AudioManager.STREAM_MUSIC)) }
-    val maxVol = remember { audioMgr.getStreamMaxVolume(AudioManager.STREAM_MUSIC) }
-    var showVol by remember { mutableStateOf(false) }
-    Spacer(Modifier.size(12.dp))
-    Surface(
-        color = if (showVol) Color(0x88FFFFFF) else Color(0x33FFFFFF),
-        shape = androidx.compose.foundation.shape.CircleShape,
-        modifier =
-            Modifier.size(56.dp).tvFocusable(androidx.compose.foundation.shape.CircleShape) {
-              showVol = !showVol
-            },
-    ) {
-      Box(contentAlignment = Alignment.Center) { VolumeIcon() }
-    }
-    if (showVol) {
-      Spacer(Modifier.size(8.dp))
-      Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-        Surface(color = Color(0x33FFFFFF), shape = androidx.compose.foundation.shape.CircleShape,
-            modifier = Modifier.size(44.dp).clickable {
-              volLevel = (volLevel - 1).coerceAtLeast(0)
-              audioMgr.setStreamVolume(AudioManager.STREAM_MUSIC, volLevel, 0)
-            }) {
-          Box(contentAlignment = Alignment.Center) { Text("−", color = Color.White, fontSize = 22.sp) }
-        }
-        Text("$volLevel", color = Color.White, fontSize = 18.sp, textAlign = TextAlign.Center,
-            modifier = Modifier.widthIn(min = 28.dp))
-        Surface(color = Color(0x33FFFFFF), shape = androidx.compose.foundation.shape.CircleShape,
-            modifier = Modifier.size(44.dp).clickable {
-              volLevel = (volLevel + 1).coerceAtMost(maxVol)
-              audioMgr.setStreamVolume(AudioManager.STREAM_MUSIC, volLevel, 0)
-            }) {
-          Box(contentAlignment = Alignment.Center) { Text("+", color = Color.White, fontSize = 22.sp) }
-        }
+    // "Hey" button — push-to-talk for the active assistant. The launcher stays
+    // dumb: it just broadcasts the trigger; Millennium owns assistant selection,
+    // the premium gate and the falcon mic handoff. Only shown when Millennium is
+    // installed (so a bare launcher has no dead button).
+    heyPkg?.let { pkg ->
+      Spacer(Modifier.size(14.dp))
+      Surface(
+          color = Color(0x33FFFFFF),
+          shape = androidx.compose.foundation.shape.CircleShape,
+          modifier =
+              Modifier.size(56.dp).tvFocusable(
+                  shape = androidx.compose.foundation.shape.CircleShape,
+                  onLongClick = { openHeyPicker(context, pkg) },
+              ) {
+                fireHey(context, pkg)
+              },
+      ) {
+        Box(contentAlignment = Alignment.Center) { MicGlyph() }
       }
     }
     // Mini-player — sits in the left action cluster, only while something's playing.
@@ -1607,69 +1434,23 @@ private fun HeaderBar(onScreensaver: () -> Unit, onClock: () -> Unit, onSleep: (
           fontSize = 18.sp,
           modifier = Modifier.padding(top = 4.dp),
       )
-      if (showSunTimes) {
-        sunTimes?.let { st ->
-          val (sr, ss) = st.formatted(use24Hour)
-          SunArc(
-              sunriseMin = minuteOfDay(st.sunriseMillis),
-              sunsetMin = minuteOfDay(st.sunsetMillis),
-              riseLabel = sr,
-              setLabel = ss,
-              modifier = Modifier.padding(top = 6.dp),
-          )
-        }
-      }
-      if (showNameDay) {
-        val nameDay = remember(now) { NameDays.todayLabel() }
-        if (nameDay.isNotEmpty()) {
+    }
+  }
+
+  if (showPair) {
+    androidx.compose.ui.window.Dialog(onDismissRequest = { showPair = false }) {
+      Surface(color = Color(0xFF101012), shape = androidx.compose.foundation.shape.RoundedCornerShape(20.dp)) {
+        Column(modifier = Modifier.padding(20.dp)) {
+          Text("Control from your phone", color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.SemiBold)
           Text(
-              "🎉 $nameDay",
-              color = Color(0xFFB0B0B0),
-              fontSize = 14.sp,
-              modifier = Modifier.padding(top = 2.dp),
+              "Scan with a phone on the same Wi-Fi, or open the address and enter the code.",
+              color = Color(0xFF9A9A9A),
+              fontSize = 13.sp,
+              modifier = Modifier.padding(top = 4.dp, bottom = 14.dp),
           )
-        }
-      }
-      if (showFeastDay) {
-        val feast = remember(now) { FeastDays.forToday() }
-        if (feast.isNotEmpty()) {
-          Text(
-              "✝ $feast",
-              color = Color(0xFFB0B0B0),
-              fontSize = 14.sp,
-              modifier = Modifier.padding(top = 2.dp),
-          )
-        }
-      }
-      // Installable calendar packs (Irish holidays, prayer times) — added on top of the
-      // built-in Romanian/Orthodox lines above. Computed off the main thread: the prayer
-      // pack reads the cached location, which can fall through to a network lookup.
-      val packLines by produceState(initialValue = emptyList<String>(), now) {
-        value = withContext(Dispatchers.IO) { CalendarPacks.headerLines(context) }
-      }
-      packLines.forEach { line ->
-        Text(line, color = Color(0xFFB0B0B0), fontSize = 14.sp, modifier = Modifier.padding(top = 2.dp))
-      }
-      if (showNextEvent) {
-        val nextEvent by produceState<CalendarEvent?>(initialValue = null) {
-          if (CalendarHelper.hasPermission(context)) {
-            value = withContext(Dispatchers.IO) { CalendarHelper.upcoming(context).firstOrNull() }
-          }
-        }
-        nextEvent?.let { ev ->
-          val whenFmt = remember(ev.begin) {
-            val cal = java.util.Calendar.getInstance().apply { timeInMillis = ev.begin }
-            if (ev.allDay) SimpleDateFormat("MMM d", Locale.getDefault()).format(cal.time)
-            else SimpleDateFormat(if (use24Hour) "HH:mm" else "h:mm a", Locale.getDefault()).format(cal.time)
-          }
-          Text(
-              "📅 $whenFmt · ${ev.title}",
-              color = Color(0xFFB0B0B0),
-              fontSize = 14.sp,
-              maxLines = 1,
-              overflow = TextOverflow.Ellipsis,
-              modifier = Modifier.padding(top = 2.dp),
-          )
+          RemotePairCard(pairUrl, pairPin)
+          Spacer(Modifier.size(16.dp))
+          PairDoneButton { showPair = false }
         }
       }
     }
@@ -1685,6 +1466,18 @@ private fun HeaderBar(onScreensaver: () -> Unit, onClock: () -> Unit, onSleep: (
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun MiniPlayer(state: NowPlayingState, modifier: Modifier = Modifier) {
+  val context = androidx.compose.ui.platform.LocalContext.current
+  // Some media apps hand cover art as a URI rather than an embedded bitmap. Resolve it off the
+  // main thread (content:// or http) so the header shows the cover too — the screensaver and the
+  // phone remote already do this via [MediaArt]; the mini-player was the one place that didn't.
+  var urlArt by remember(state.artUrl, state.artBitmap) { mutableStateOf<android.graphics.Bitmap?>(null) }
+  androidx.compose.runtime.LaunchedEffect(state.artUrl, state.artBitmap) {
+    urlArt =
+        if (state.artBitmap == null && state.artUrl.isNotBlank())
+            withContext(Dispatchers.IO) { MediaArt.resolveUri(context, state.artUrl) }
+        else null
+  }
+  val cover = state.artBitmap ?: urlArt
   Row(modifier = modifier, verticalAlignment = Alignment.CenterVertically) {
     // The album art IS the play/pause button — same 56dp circle as the other header
     // buttons, just filled with the cover instead of a flat tint.
@@ -1692,7 +1485,7 @@ private fun MiniPlayer(state: NowPlayingState, modifier: Modifier = Modifier) {
         modifier = Modifier.size(56.dp).clip(CircleShape).tvFocusable(CircleShape) { NowPlayingHub.playPause() },
         contentAlignment = Alignment.Center,
     ) {
-      val bmp = state.artBitmap
+      val bmp = cover
       if (bmp != null) {
         Image(
             bitmap = bmp.asImageBitmap(),
@@ -1802,17 +1595,6 @@ private fun WeatherWidget(mode: String, fahrenheit: Boolean) {
           }
         }
       }
-  // Air quality / UV / pollen rides along under the forecast (keyless Open-Meteo,
-  // refreshed every ~30 min). Lives here, with the weather, rather than in System stats.
-  val air by
-      produceState<Weather.AirQuality?>(initialValue = null) {
-        while (true) {
-          val aq = withContext(Dispatchers.IO) { Weather.fetchAirQuality(context) }
-          if (aq != null) value = aq
-          delay(30L * 60 * 1000)
-        }
-      }
-
   if (state is ForecastState.Loading) return
 
   val startPage = if (mode == ImmortalSettings.WIDGET_DAILY) PAGE_DAILY else PAGE_HOURLY
@@ -1829,10 +1611,10 @@ private fun WeatherWidget(mode: String, fahrenheit: Boolean) {
       shape = RoundedCornerShape(20.dp),
       modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
   ) {
-    Column(modifier = Modifier.padding(horizontal = 20.dp, vertical = 10.dp)) {
+    Column(modifier = Modifier.padding(horizontal = 20.dp, vertical = 16.dp)) {
       // Header: the current page's title, plus a two-dot indicator hinting the swipe.
       Row(
-          modifier = Modifier.fillMaxWidth().padding(start = 4.dp, end = 4.dp, bottom = 8.dp),
+          modifier = Modifier.fillMaxWidth().padding(start = 4.dp, end = 4.dp, bottom = 12.dp),
           verticalAlignment = Alignment.CenterVertically,
       ) {
         Text(
@@ -1872,57 +1654,8 @@ private fun WeatherWidget(mode: String, fahrenheit: Boolean) {
             modifier = Modifier.padding(start = 4.dp, bottom = 4.dp),
         )
       }
-      // Compact air-quality strip beneath the forecast: "AQI 42 · Good   UV 3.2   Pollen Low".
-      air?.let { aq -> AirQualityStrip(aq) }
     }
   }
-}
-
-/** One-line air-quality / UV / pollen summary shown under the forecast pager, as
- *  colour-tinted emoji chips so it stands out from the muted forecast row. */
-@Composable
-private fun AirQualityStrip(aq: Weather.AirQuality) {
-  Row(
-      modifier = Modifier.fillMaxWidth().padding(start = 4.dp, end = 4.dp, top = 8.dp),
-      horizontalArrangement = Arrangement.spacedBy(10.dp),
-  ) {
-    AqChip("💨", "AQI ${aq.aqi} · ${aq.aqiLabel}", aqiColor(aq.aqi))
-    if (aq.uvIndex > 0.0) AqChip("☀️", "UV ${String.format("%.1f", aq.uvIndex)}", uvColor(aq.uvIndex))
-    if (aq.pollen.isNotEmpty()) AqChip("🌸", "Pollen ${aq.pollen}", Color(0xFFB388FF))
-  }
-}
-
-/** A small tinted chip: emoji + label, with a faint background of [accent]. */
-@Composable
-private fun AqChip(emoji: String, label: String, accent: Color) {
-  Surface(color = accent.copy(alpha = 0.18f), shape = RoundedCornerShape(10.dp)) {
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
-    ) {
-      Text(emoji, fontSize = 14.sp)
-      Text("  $label", color = accent, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
-    }
-  }
-}
-
-/** EU-AQI banding colour (green→good, climbing to red→very poor). */
-private fun aqiColor(aqi: Int): Color = when {
-  aqi <= 20 -> Color(0xFF66BB6A)
-  aqi <= 40 -> Color(0xFF9CCC65)
-  aqi <= 60 -> Color(0xFFFFD54F)
-  aqi <= 80 -> Color(0xFFFFB74D)
-  aqi <= 100 -> Color(0xFFFF8A65)
-  else -> Color(0xFFEF5350)
-}
-
-/** UV-index banding colour. */
-private fun uvColor(uv: Double): Color = when {
-  uv < 3 -> Color(0xFF66BB6A)
-  uv < 6 -> Color(0xFFFFD54F)
-  uv < 8 -> Color(0xFFFFB74D)
-  uv < 11 -> Color(0xFFFF8A65)
-  else -> Color(0xFFB388FF)
 }
 
 /** Small page-position dots, hinting the forecast can be swiped between its pages. */
@@ -1943,11 +1676,11 @@ private fun PageDots(selected: Int, count: Int) {
 private fun HourCell(h: Weather.HourForecast, modifier: Modifier = Modifier) {
   Column(
       horizontalAlignment = Alignment.CenterHorizontally,
-      modifier = modifier.padding(vertical = 2.dp),
+      modifier = modifier.padding(vertical = 4.dp),
   ) {
-    Text(h.label, color = Color(0xFFCFCFCF), fontSize = 12.sp, maxLines = 1)
-    Text(Weather.emoji(h.code), fontSize = 22.sp, modifier = Modifier.padding(vertical = 3.dp))
-    Text("${h.temp}°", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+    Text(h.label, color = Color(0xFFCFCFCF), fontSize = 13.sp, maxLines = 1)
+    Text(Weather.emoji(h.code), fontSize = 26.sp, modifier = Modifier.padding(vertical = 6.dp))
+    Text("${h.temp}°", color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
   }
 }
 
@@ -1955,13 +1688,13 @@ private fun HourCell(h: Weather.HourForecast, modifier: Modifier = Modifier) {
 private fun DayCell(d: Weather.DayForecast, modifier: Modifier = Modifier) {
   Column(
       horizontalAlignment = Alignment.CenterHorizontally,
-      modifier = modifier.padding(vertical = 2.dp),
+      modifier = modifier.padding(vertical = 4.dp),
   ) {
-    Text(d.label, color = Color(0xFFCFCFCF), fontSize = 12.sp, maxLines = 1)
-    Text(Weather.emoji(d.code), fontSize = 22.sp, modifier = Modifier.padding(vertical = 3.dp))
+    Text(d.label, color = Color(0xFFCFCFCF), fontSize = 13.sp, maxLines = 1)
+    Text(Weather.emoji(d.code), fontSize = 26.sp, modifier = Modifier.padding(vertical = 6.dp))
     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-      Text("${d.hi}°", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
-      Text("${d.lo}°", color = Color(0xFF9A9A9A), fontSize = 15.sp)
+      Text("${d.hi}°", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+      Text("${d.lo}°", color = Color(0xFF9A9A9A), fontSize = 16.sp)
     }
   }
 }
@@ -2041,6 +1774,32 @@ private fun MicGlyph() {
   }
 }
 
+/** White line-art phone glyph for the header "remote" (control from your phone) button. */
+@Composable
+private fun RemoteGlyph() {
+  Canvas(modifier = Modifier.size(28.dp)) {
+    val w = size.minDimension
+    val s = w * 0.08f
+    val stroke =
+        Stroke(
+            width = s,
+            cap = androidx.compose.ui.graphics.StrokeCap.Round,
+            join = androidx.compose.ui.graphics.StrokeJoin.Round,
+        )
+    // Phone body (portrait rounded rect).
+    drawRoundRect(
+        color = Color.White,
+        topLeft = Offset(w * 0.34f, w * 0.12f),
+        size = Size(w * 0.32f, w * 0.66f),
+        cornerRadius = CornerRadius(w * 0.10f, w * 0.10f),
+        style = stroke,
+    )
+    // Speaker slit near the top, home dot near the bottom.
+    drawLine(Color.White, Offset(w * 0.44f, w * 0.22f), Offset(w * 0.56f, w * 0.22f), strokeWidth = s)
+    drawCircle(color = Color.White, radius = w * 0.045f, center = Offset(w * 0.5f, w * 0.67f))
+  }
+}
+
 /** White line-art photo glyph (single frame), matching the stock screensaver. */
 @Composable
 private fun StackedPhotoIcon() {
@@ -2081,99 +1840,6 @@ private fun StackedPhotoIcon() {
   }
 }
 
-/** Simple white line-art clock icon for the digital clock entry point. */
-@Composable
-private fun ClockIcon() {
-  Canvas(modifier = Modifier.size(30.dp)) {
-    val w = size.minDimension
-    val s = w * 0.075f
-    val stroke =
-        Stroke(
-            width = s,
-            cap = androidx.compose.ui.graphics.StrokeCap.Round,
-            join = androidx.compose.ui.graphics.StrokeJoin.Round,
-        )
-    // Clock face
-    drawCircle(
-        color = Color.White,
-        radius = w * 0.42f,
-        center = Offset(w * 0.5f, w * 0.5f),
-        style = stroke,
-    )
-    // Hour hand (pointing to 12)
-    drawLine(
-        color = Color.White,
-        start = Offset(w * 0.5f, w * 0.5f),
-        end = Offset(w * 0.5f, w * 0.22f),
-        strokeWidth = s,
-        cap = androidx.compose.ui.graphics.StrokeCap.Round,
-    )
-    // Minute hand (pointing to 3)
-    drawLine(
-        color = Color.White,
-        start = Offset(w * 0.5f, w * 0.5f),
-        end = Offset(w * 0.72f, w * 0.5f),
-        strokeWidth = s,
-        cap = androidx.compose.ui.graphics.StrokeCap.Round,
-    )
-  }
-}
-
-/** White crescent moon glyph for the header sleep button. */
-@Composable
-private fun MoonIcon() {
-  val path = remember { PathParser().parsePathString(ICON_MOON).toPath() }
-  Canvas(modifier = Modifier.size(28.dp)) {
-    scale(size.minDimension / 24f) {
-      drawPath(path, color = Color.White)
-    }
-  }
-}
-
-/** White sun glyph for the header brightness button. */
-@Composable
-private fun SunIcon() {
-  Canvas(modifier = Modifier.size(28.dp)) {
-    val w = size.minDimension
-    val s = w * 0.08f
-    val stroke = Stroke(width = s, cap = StrokeCap.Round)
-    drawCircle(Color.White, radius = w * 0.20f, center = Offset(w * 0.5f, w * 0.5f), style = stroke)
-    for (i in 0..7) {
-      val a = Math.toRadians(i * 45.0)
-      val cos = kotlin.math.cos(a).toFloat()
-      val sin = kotlin.math.sin(a).toFloat()
-      drawLine(Color.White,
-          Offset(w * 0.5f + cos * w * 0.30f, w * 0.5f + sin * w * 0.30f),
-          Offset(w * 0.5f + cos * w * 0.44f, w * 0.5f + sin * w * 0.44f),
-          strokeWidth = s, cap = StrokeCap.Round)
-    }
-  }
-}
-
-/** White speaker glyph for the header volume button. */
-@Composable
-private fun VolumeIcon() {
-  Canvas(modifier = Modifier.size(28.dp)) {
-    val w = size.minDimension
-    val s = w * 0.08f
-    val stroke = Stroke(width = s, cap = StrokeCap.Round, join = StrokeJoin.Round)
-    val body = Path().apply {
-      moveTo(w * 0.46f, w * 0.22f)
-      lineTo(w * 0.24f, w * 0.37f)
-      lineTo(w * 0.08f, w * 0.37f)
-      lineTo(w * 0.08f, w * 0.63f)
-      lineTo(w * 0.24f, w * 0.63f)
-      lineTo(w * 0.46f, w * 0.78f)
-      close()
-    }
-    drawPath(body, Color.White, style = stroke)
-    drawArc(Color.White, -35f, 70f, false,
-        topLeft = Offset(w * 0.50f, w * 0.31f), size = Size(w * 0.20f, w * 0.38f), style = stroke)
-    drawArc(Color.White, -50f, 100f, false,
-        topLeft = Offset(w * 0.55f, w * 0.18f), size = Size(w * 0.34f, w * 0.64f), style = stroke)
-  }
-}
-
 /** Bottom-right Manage / Done toggle. */
 @Composable
 private fun EditButton(editMode: Boolean, modifier: Modifier = Modifier, onClick: () -> Unit) {
@@ -2191,588 +1857,23 @@ private fun EditButton(editMode: Boolean, modifier: Modifier = Modifier, onClick
   }
 }
 
-/**
- * Floating back button shown in the bottom-right corner whenever a folder
- * or overlay is open in the launcher. Tapping it closes the folder/overlay.
- * Separate from the settings pages so we can position it over the folder
- * overlay specifically.
- */
+/** Edit-mode "clean up" button — re-packs every tile into a tidy ordered grid. */
 @Composable
-fun FolderBackButton(onClick: () -> Unit, modifier: Modifier = Modifier) {
-  val buttonColor = MaterialTheme.colorScheme.primary
-  Box(
-      modifier =
-          modifier
-              .fillMaxSize()
-              .padding(end = 36.dp, bottom = 32.dp)
-              .wrapContentSize(Alignment.BottomEnd),
-  ) {
-    Surface(
-        color = buttonColor,
-        shape = androidx.compose.foundation.shape.CircleShape,
-        onClick = onClick,
-        modifier = Modifier.size(64.dp),
-    ) {
-      Box(contentAlignment = Alignment.Center) {
-        Canvas(modifier = Modifier.size(36.dp)) {
-          val strokeWidth = 4.dp.toPx()
-          val path = Path().apply {
-            moveTo(size.width * 0.72f, size.height * 0.20f)
-            lineTo(size.width * 0.28f, size.height * 0.50f)
-            lineTo(size.width * 0.72f, size.height * 0.80f)
-          }
-          drawPath(
-              path = path,
-              color = Color.Black,
-              style = androidx.compose.ui.graphics.drawscope.Stroke(
-                  width = strokeWidth,
-                  cap = androidx.compose.ui.graphics.StrokeCap.Round,
-                  join = androidx.compose.ui.graphics.StrokeJoin.Round,
-              ),
-          )
-          drawLine(
-              color = Color.Black,
-              start = Offset(size.width * 0.68f, size.height * 0.50f),
-              end = Offset(size.width * 0.28f, size.height * 0.50f),
-              strokeWidth = strokeWidth,
-              cap = androidx.compose.ui.graphics.StrokeCap.Round,
-          )
-        }
-      }
-    }
-  }
-}
-
-private data class SystemStats(
-    val ramUsedMb: Int,
-    val ramTotalMb: Int,
-    val storageUsedGb: Float,
-    val storageTotalGb: Float,
-    val uptimeHours: Float,
-    val rxKBs: Float = 0f,
-    val txKBs: Float = 0f,
-    val ip: String = "",
-    val cpuPercent: Int = 0,
-    val tempC: Float = 0f,
-)
-
-/** Page indicator dots for the home pager. */
-@Composable
-private fun PagerDots(current: Int, count: Int) {
-  Row(
-      modifier = Modifier.fillMaxWidth().padding(top = 10.dp),
-      horizontalArrangement = Arrangement.Center,
-  ) {
-    repeat(count) { i ->
-      Box(
-          modifier =
-              Modifier.padding(horizontal = 5.dp)
-                  .size(if (i == current) 9.dp else 7.dp)
-                  .clip(androidx.compose.foundation.shape.CircleShape)
-                  .background(if (i == current) Color.White else Color(0x55FFFFFF)),
-      )
-    }
-  }
-}
-
-/** The second home page: a glanceable, full-screen info dashboard (big clock, date,
- * sun times, countdowns, weather, calendar, system stats — whatever the user has on).
- * Reuses the existing home widgets so it tracks their settings automatically. */
-@Composable
-private fun DashboardPage() {
-  val context = androidx.compose.ui.platform.LocalContext.current
-  val use24 = remember { ImmortalSettings.use24HourClock(context) }
-  var now by remember { mutableStateOf(java.util.Date()) }
-  LaunchedEffect(Unit) {
-    while (true) {
-      now = java.util.Date()
-      delay(10_000)
-    }
-  }
-  val timeFmt = remember(use24) { SimpleDateFormat(if (use24) "HH:mm" else "h:mm", Locale.getDefault()) }
-  // Live widget toggles: the chooser at the bottom flips these and persists them, so
-  // the page updates instantly without a trip to Settings. Weather is intentionally
-  // absent here — it lives at the bottom of the main page.
-  var calendarOn by remember { mutableStateOf(ImmortalSettings.load(context).calendarWidget == ImmortalSettings.CALENDAR_ON) }
-  var statsOn by remember { mutableStateOf(ImmortalSettings.load(context).statsMode == ImmortalSettings.STATS_ON) }
-  var timeProgressOn by remember { mutableStateOf(ImmortalSettings.load(context).showTimeProgress) }
-  var clockOn by remember { mutableStateOf(ImmortalSettings.load(context).showDashClock) }
-  var countdownsOn by remember { mutableStateOf(ImmortalSettings.load(context).showDashCountdowns) }
-  Column(
-      modifier =
-          Modifier.fillMaxSize()
-              .verticalScroll(rememberScrollState())
-              .padding(horizontal = 8.dp),
-      horizontalAlignment = Alignment.CenterHorizontally,
-  ) {
-    Spacer(Modifier.size(8.dp))
-    if (clockOn) {
-      Text(timeFmt.format(now), color = Color.White, fontSize = 96.sp, fontWeight = FontWeight.Bold)
-      Text(
-          SimpleDateFormat("EEEE, MMMM d", Locale.getDefault()).format(now),
-          color = Color(0xFFDADADA),
-          fontSize = 22.sp,
-      )
-    }
-    Spacer(Modifier.size(20.dp))
-    if (countdownsOn) CountdownChips()
-    if (timeProgressOn) {
-      Spacer(Modifier.size(12.dp))
-      TimeProgressCard()
-    }
-    if (calendarOn) {
-      Spacer(Modifier.size(12.dp))
-      CalendarWidget()
-    }
-    if (statsOn) {
-      Spacer(Modifier.size(12.dp))
-      SystemStatsWidget()
-    }
-    Spacer(Modifier.size(20.dp))
-    // Widget chooser: add/remove the dashboard widgets right here.
-    DashboardWidgetChooser(
-        clockOn = clockOn,
-        countdownsOn = countdownsOn,
-        calendarOn = calendarOn,
-        statsOn = statsOn,
-        timeProgressOn = timeProgressOn,
-        onClock = {
-          clockOn = it
-          ImmortalSettings.setShowDashClock(context, it)
-        },
-        onCountdowns = {
-          countdownsOn = it
-          ImmortalSettings.setShowDashCountdowns(context, it)
-        },
-        onCalendar = {
-          calendarOn = it
-          ImmortalSettings.setCalendarWidget(context, if (it) ImmortalSettings.CALENDAR_ON else ImmortalSettings.CALENDAR_OFF)
-        },
-        onStats = {
-          statsOn = it
-          ImmortalSettings.setStatsMode(context, if (it) ImmortalSettings.STATS_ON else ImmortalSettings.STATS_OFF)
-        },
-        onTimeProgress = {
-          timeProgressOn = it
-          ImmortalSettings.setShowTimeProgress(context, it)
-        },
-    )
-    Spacer(Modifier.size(20.dp))
-  }
-}
-
-/** Inline chooser at the bottom of the dashboard page for toggling its widgets. */
-@Composable
-private fun DashboardWidgetChooser(
-    clockOn: Boolean,
-    countdownsOn: Boolean,
-    calendarOn: Boolean,
-    statsOn: Boolean,
-    timeProgressOn: Boolean,
-    onClock: (Boolean) -> Unit,
-    onCountdowns: (Boolean) -> Unit,
-    onCalendar: (Boolean) -> Unit,
-    onStats: (Boolean) -> Unit,
-    onTimeProgress: (Boolean) -> Unit,
-) {
-  Column(horizontalAlignment = Alignment.CenterHorizontally) {
-    Text("Edit this page", color = Color(0xFF8A8A8A), fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
-    Spacer(Modifier.size(4.dp))
-    Text("Tap to show or hide each widget", color = Color(0xFF6A6A6A), fontSize = 12.sp)
-    Spacer(Modifier.size(10.dp))
-    FlowRow(
-        horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.CenterHorizontally),
-        verticalArrangement = Arrangement.spacedBy(10.dp),
-        modifier = Modifier.fillMaxWidth(0.9f),
-    ) {
-      WidgetToggleChip("🕑  Clock", clockOn) { onClock(!clockOn) }
-      WidgetToggleChip("🎈  Countdowns", countdownsOn) { onCountdowns(!countdownsOn) }
-      WidgetToggleChip("📅  Calendar", calendarOn) { onCalendar(!calendarOn) }
-      WidgetToggleChip("📊  System stats", statsOn) { onStats(!statsOn) }
-      WidgetToggleChip("⏳  Time progress", timeProgressOn) { onTimeProgress(!timeProgressOn) }
-    }
-  }
-}
-
-@Composable
-private fun WidgetToggleChip(label: String, active: Boolean, onClick: () -> Unit) {
+private fun TidyButton(onClick: () -> Unit) {
+  val path = remember { PathParser().parsePathString(ICON_WIDGETS).toPath() }
   Surface(
-      color = if (active) MaterialTheme.colorScheme.primary else Color(0x22FFFFFF),
-      shape = RoundedCornerShape(20.dp),
-      modifier = Modifier.tvFocusable(RoundedCornerShape(20.dp), focusScale = 1f) { onClick() },
-  ) {
-    Text(
-        (if (active) "✓  " else "+  ") + label,
-        color = if (active) Color.White else Color(0xFFDADADA),
-        fontSize = 15.sp,
-        fontWeight = if (active) FontWeight.SemiBold else FontWeight.Normal,
-        modifier = Modifier.padding(horizontal = 18.dp, vertical = 10.dp),
-    )
-  }
-}
-
-/** Category filter tabs: "All" plus each folder. Selecting one filters the grid to
- * that folder's apps; "All" restores the normal home view. */
-@Composable
-private fun CategoryTabs(categories: List<String>, selected: String?, onSelect: (String?) -> Unit) {
-  Row(
-      modifier =
-          Modifier.fillMaxWidth()
-              .horizontalScroll(rememberScrollState()),
-      horizontalArrangement = Arrangement.spacedBy(10.dp),
-  ) {
-    TabChip("All", selected == null) { onSelect(null) }
-    categories.forEach { name -> TabChip(name, selected == name) { onSelect(name) } }
-  }
-}
-
-@Composable
-private fun TabChip(label: String, active: Boolean, onClick: () -> Unit) {
-  Surface(
-      color = if (active) MaterialTheme.colorScheme.primary else Color(0x22FFFFFF),
-      shape = RoundedCornerShape(20.dp),
-      modifier = Modifier.tvFocusable(RoundedCornerShape(20.dp), focusScale = 1f) { onClick() },
-  ) {
-    Text(
-        label,
-        color = if (active) Color.White else Color(0xFFDADADA),
-        fontSize = 15.sp,
-        fontWeight = if (active) FontWeight.SemiBold else FontWeight.Normal,
-        modifier = Modifier.padding(horizontal = 18.dp, vertical = 9.dp),
-    )
-  }
-}
-
-/** A horizontally-scrolling row of countdown chips, soonest first. Hidden when the
- * user hasn't created any. Re-read on each composition of the home screen. */
-@Composable
-private fun CountdownChips(version: Int = 0) {
-  val context = androidx.compose.ui.platform.LocalContext.current
-  val events = remember(version) { CountdownConfig.loadSorted(context) }
-  if (events.isEmpty()) return
-  Row(
-      modifier =
-          Modifier.fillMaxWidth()
-              .horizontalScroll(rememberScrollState())
-              .padding(horizontal = 18.dp, vertical = 2.dp),
-      horizontalArrangement = Arrangement.spacedBy(10.dp),
-  ) {
-    events.forEach { e ->
-      Surface(
-          color = MaterialTheme.colorScheme.surface.copy(alpha = 0.86f),
-          shape = RoundedCornerShape(14.dp),
-      ) {
-        Row(
-            modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-          Text("${e.emoji} ", fontSize = 16.sp)
-          Text(e.label, color = MaterialTheme.colorScheme.onSurface, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
-          Text("  ·  ${e.phrase()}", color = MaterialTheme.colorScheme.primary, fontSize = 15.sp)
-        }
-      }
-    }
-  }
-  Spacer(Modifier.size(14.dp))
-}
-
-/** The single home control/info strip: category tabs, then countdown chips, then
- *  live kitchen timers + a "+ Timer" chip — all on one horizontally-scrolling line
- *  so nothing stacks. Tapping a timer cancels it. Leans on [CountdownConfig],
- *  [TimerConfig], [ChimePlayer]. */
-@Composable
-private fun HomeControlStrip(
-    showTabs: Boolean,
-    tabs: List<String>,
-    selectedTab: String?,
-    onSelectTab: (String?) -> Unit,
-    countdownVersion: Int,
-    timerVersion: Int,
-    onTimerChanged: () -> Unit,
-) {
-  val context = androidx.compose.ui.platform.LocalContext.current
-  var nowTick by remember { mutableStateOf(System.currentTimeMillis()) }
-  LaunchedEffect(Unit) { while (true) { nowTick = System.currentTimeMillis(); delay(1000) } }
-  val countdowns = remember(countdownVersion) { CountdownConfig.loadSorted(context) }
-  // Re-read once per second so timers the background receiver removed disappear too.
-  val timers = remember(timerVersion, nowTick / 1000) {
-    TimerConfig.load(context).sortedBy { it.endAtMillis }
-  }
-  Row(
-      modifier =
-          Modifier.fillMaxWidth()
-              .horizontalScroll(rememberScrollState())
-              .padding(horizontal = 18.dp, vertical = 2.dp),
-      horizontalArrangement = Arrangement.spacedBy(10.dp),
-      verticalAlignment = Alignment.CenterVertically,
-  ) {
-    if (showTabs) {
-      TabChip("All", selectedTab == null) { onSelectTab(null) }
-      TabChip("Apps", selectedTab == TAB_APPS) { onSelectTab(TAB_APPS) }
-      TabChip("Tools", selectedTab == TAB_TOOLS) { onSelectTab(TAB_TOOLS) }
-      tabs.filter { it != TAB_APPS && it != TAB_TOOLS }
-          .forEach { name -> TabChip(name, selectedTab == name) { onSelectTab(name) } }
-      // Thin separator between navigation tabs and the info/timer chips.
-      Box(Modifier.size(width = 1.dp, height = 22.dp).background(Color(0x33FFFFFF)))
-    }
-    countdowns.forEach { e ->
-      Surface(
-          color = MaterialTheme.colorScheme.surface.copy(alpha = 0.86f),
-          shape = RoundedCornerShape(14.dp),
-      ) {
-        Row(
-            modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-          Text("${e.emoji} ", fontSize = 16.sp)
-          Text(e.label, color = MaterialTheme.colorScheme.onSurface, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
-          Text("  ·  ${e.phrase()}", color = MaterialTheme.colorScheme.primary, fontSize = 15.sp)
-        }
-      }
-    }
-    timers.forEach { t ->
-      val rem = (t.endAtMillis - nowTick).coerceAtLeast(0)
-      Surface(
-          color = MaterialTheme.colorScheme.primary.copy(alpha = 0.90f),
-          shape = RoundedCornerShape(14.dp),
-          modifier = Modifier.tvFocusable(RoundedCornerShape(14.dp), focusScale = 1f) {
-            TimerConfig.remove(context, t.id); onTimerChanged()
-          },
-      ) {
-        Row(
-            modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-          Text("⏲ ", fontSize = 16.sp)
-          Text(t.label, color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
-          Text("  ${formatTimerRemaining(rem)}", color = Color(0xFFEAF1FF), fontSize = 15.sp)
-          Text("   ✕", color = Color(0xCCFFFFFF), fontSize = 14.sp)
-        }
-      }
-    }
-  }
-  Spacer(Modifier.size(12.dp))
-}
-
-/** mm:ss, or h:mm:ss past an hour. */
-private fun formatTimerRemaining(ms: Long): String {
-  val total = (ms / 1000).toInt()
-  val h = total / 3600; val m = (total % 3600) / 60; val s = total % 60
-  return if (h > 0) "%d:%02d:%02d".format(h, m, s) else "%d:%02d".format(m, s)
-}
-
-/** Modal to add a named kitchen timer: preset names (each with a sensible default
- *  duration) + a minute picker. */
-@Composable
-private fun AddTimerOverlay(onDismiss: () -> Unit, onAdd: (String, Long) -> Unit) {
-  var label by remember { mutableStateOf("") }
-  var minutes by remember { mutableStateOf(5) }
-  // Common kitchen presets → (name, default minutes).
-  val presets = listOf("Pasta" to 10, "Eggs" to 7, "Tea" to 4, "Oven" to 20, "Rice" to 15)
-  val quick = listOf(1, 2, 3, 5, 10, 15, 20, 30, 45, 60)
-  BackHandler { onDismiss() }
-  Box(
-      contentAlignment = Alignment.Center,
-      modifier = Modifier.fillMaxSize().background(Color(0xCC000000))
-          .tvFocusable(RoundedCornerShape(0.dp), focusScale = 1f) { onDismiss() },
-  ) {
-    Surface(color = MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(24.dp),
-        modifier = Modifier.widthIn(max = 640.dp).padding(24.dp)) {
-      Column(modifier = Modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-        Text("New timer", color = Color.White, fontSize = 24.sp, fontWeight = FontWeight.Bold)
-        androidx.compose.material3.OutlinedTextField(
-            value = label, onValueChange = { label = it },
-            label = { Text("Name (optional)") }, singleLine = true,
-            modifier = Modifier.fillMaxWidth(),
-        )
-        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-          presets.forEach { (name, mins) ->
-            WidgetToggleChip(name, label == name) { label = name; minutes = mins }
-          }
-        }
-        Text("Duration", color = Color(0xFF9A9A9A), fontSize = 14.sp)
-        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-          quick.forEach { m -> WidgetToggleChip("${m}m", minutes == m) { minutes = m } }
-        }
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-          Surface(color = Color(0x22FFFFFF), shape = RoundedCornerShape(12.dp),
-              modifier = Modifier.tvFocusable(RoundedCornerShape(12.dp), focusScale = 1f) {
-                minutes = (minutes - 1).coerceAtLeast(1) }) {
-            Text("−", color = Color.White, fontSize = 22.sp, modifier = Modifier.padding(horizontal = 18.dp, vertical = 6.dp))
-          }
-          Text("$minutes min", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
-          Surface(color = Color(0x22FFFFFF), shape = RoundedCornerShape(12.dp),
-              modifier = Modifier.tvFocusable(RoundedCornerShape(12.dp), focusScale = 1f) {
-                minutes = (minutes + 1).coerceAtMost(600) }) {
-            Text("+", color = Color.White, fontSize = 22.sp, modifier = Modifier.padding(horizontal = 18.dp, vertical = 6.dp))
-          }
-        }
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
-          Surface(color = MaterialTheme.colorScheme.primary, shape = RoundedCornerShape(14.dp),
-              modifier = Modifier.weight(1f).tvFocusable(RoundedCornerShape(14.dp), focusScale = 1f) {
-                onAdd(label.ifBlank { "Timer" }, minutes * 60_000L)
-              }) {
-            Text("Start", color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.SemiBold,
-                textAlign = TextAlign.Center, modifier = Modifier.padding(vertical = 12.dp).fillMaxWidth())
-          }
-          Surface(color = Color(0x22FFFFFF), shape = RoundedCornerShape(14.dp),
-              modifier = Modifier.weight(1f).tvFocusable(RoundedCornerShape(14.dp), focusScale = 1f) { onDismiss() }) {
-            Text("Cancel", color = Color.White, fontSize = 17.sp,
-                textAlign = TextAlign.Center, modifier = Modifier.padding(vertical = 12.dp).fillMaxWidth())
-          }
-        }
-      }
-    }
-  }
-}
-
-@Composable
-private fun SystemStatsWidget() {
-  val context = androidx.compose.ui.platform.LocalContext.current
-  val reading = remember { mutableStateOf(SystemStats(0, 0, 0f, 0f, 0f)) }
-
-  LaunchedEffect(Unit) {
-    var prevRx = TrafficStats.getTotalRxBytes()
-    var prevTx = TrafficStats.getTotalTxBytes()
-    var prevTime = System.currentTimeMillis()
-    var prevCpuIdle = 0L; var prevCpuTotal = 0L
-    while (true) {
-      val am = context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
-      val mem = ActivityManager.MemoryInfo()
-      am.getMemoryInfo(mem)
-      val usedMb = ((mem.totalMem - mem.availMem) / 1_048_576L).toInt()
-      val totalMb = (mem.totalMem / 1_048_576L).toInt()
-      val uptimeHours =
-          runCatching { android.os.SystemClock.elapsedRealtime() / 3_600_000f }.getOrDefault(0f)
-
-      val stat = StatFs(context.filesDir.absolutePath)
-      val totalBytes = stat.totalBytes.toDouble()
-      val freeBytes = stat.availableBytes.toDouble()
-      val totalGb = (totalBytes / 1_073_741_824.0).toFloat()
-      val usedGb = ((totalBytes - freeBytes) / 1_073_741_824.0).toFloat().coerceAtLeast(0f)
-
-      val nowRx = TrafficStats.getTotalRxBytes()
-      val nowTx = TrafficStats.getTotalTxBytes()
-      val nowTime = System.currentTimeMillis()
-      val elapsedSec = ((nowTime - prevTime) / 1000f).coerceAtLeast(1f)
-      val rxKBs = ((nowRx - prevRx).coerceAtLeast(0L) / 1024f) / elapsedSec
-      val txKBs = ((nowTx - prevTx).coerceAtLeast(0L) / 1024f) / elapsedSec
-      prevRx = nowRx; prevTx = nowTx; prevTime = nowTime
-
-      // CPU %: delta of /proc/stat idle vs total between polls.
-      val cpuPercent = withContext(Dispatchers.IO) {
-        runCatching {
-          val parts = File("/proc/stat").bufferedReader().use { it.readLine() }
-              .trim().split("\\s+".toRegex()).drop(1)
-          val idle = parts.getOrElse(3) { "0" }.toLongOrNull() ?: 0L
-          val total = parts.take(8).sumOf { it.toLongOrNull() ?: 0L }
-          val cpu = if (prevCpuTotal > 0) {
-            val dIdle = (idle - prevCpuIdle).coerceAtLeast(0L)
-            val dTotal = (total - prevCpuTotal).coerceAtLeast(1L)
-            ((1.0 - dIdle.toDouble() / dTotal.toDouble()) * 100).toInt().coerceIn(0, 100)
-          } else 0
-          prevCpuIdle = idle; prevCpuTotal = total
-          cpu
-        }.getOrDefault(0)
-      }
-
-      // Device temp from thermal zone (millidegrees on most kernels).
-      val tempC = withContext(Dispatchers.IO) {
-        runCatching {
-          val raw = File("/sys/class/thermal/thermal_zone0/temp").readText().trim().toFloat()
-          if (raw > 1000f) raw / 1000f else raw
-        }.getOrDefault(0f)
-      }
-
-      // Wi-Fi IP address.
-      @Suppress("DEPRECATION")
-      val ip = runCatching {
-        val wm = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
-        val ipInt = wm.connectionInfo.ipAddress
-        if (ipInt == 0) "" else String.format("%d.%d.%d.%d",
-            ipInt and 0xff, (ipInt shr 8) and 0xff, (ipInt shr 16) and 0xff, (ipInt shr 24) and 0xff)
-      }.getOrDefault("")
-
-      reading.value = SystemStats(usedMb, totalMb, usedGb, totalGb, uptimeHours, rxKBs, txKBs, ip, cpuPercent, tempC)
-      delay(10_000)
-    }
-  }
-
-  val r = reading.value
-  Surface(
-      color = MaterialTheme.colorScheme.surface.copy(alpha = 0.86f),
-      shape = RoundedCornerShape(18.dp),
-      modifier = Modifier.fillMaxWidth().padding(horizontal = 18.dp),
-  ) {
-    Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
-      val ramPercent =
-          if (r.ramTotalMb > 0) (r.ramUsedMb * 100 / r.ramTotalMb).coerceIn(0, 100) else 0
-      val storagePercent =
-          if (r.storageTotalGb > 0f) (r.storageUsedGb * 100 / r.storageTotalGb).coerceIn(0f, 100f)
-          else 0f
-
-      Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-        Text("System", color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.Bold)
-        Text(
-            String.format("Uptime %.1fh", r.uptimeHours),
-            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.72f),
-        )
-      }
-      Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-        Text("RAM", color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.82f))
-        Text(
-            "${r.ramUsedMb}/${r.ramTotalMb} MB · $ramPercent%",
-            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.82f),
-        )
-      }
-      Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-        Text("Storage", color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.82f))
-        Text(
-            String.format("%.1f/%.1f GB · %.0f%%", r.storageUsedGb, r.storageTotalGb, storagePercent),
-            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.82f),
-        )
-      }
-      Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-        Text("Network", color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.82f))
-        Text(
-            "↓ ${formatNetRate(r.rxKBs)}  ↑ ${formatNetRate(r.txKBs)}",
-            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.82f),
-        )
-      }
-      if (r.ip.isNotEmpty()) {
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-          Text("IP", color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.82f))
-          Text(r.ip, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.82f))
-        }
-      }
-      if (r.cpuPercent > 0) {
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-          Text("CPU", color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.82f))
-          Text("${r.cpuPercent}%", color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.82f))
-        }
-      }
-      if (r.tempC > 0f) {
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-          Text("Temp", color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.82f))
-          Text(String.format("%.1f °C", r.tempC), color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.82f))
-        }
-      }
-    }
-  }
-}
-
-@Composable
-private fun NewFolderButton(modifier: Modifier = Modifier, onClick: () -> Unit) {
-  Surface(
-      color = MaterialTheme.colorScheme.primary,
+      color = Color(0xCC2B2B2B),
       shape = androidx.compose.foundation.shape.CircleShape,
       modifier =
-          modifier.size(60.dp).tvFocusable(androidx.compose.foundation.shape.CircleShape) {
+          Modifier.size(60.dp).tvFocusable(androidx.compose.foundation.shape.CircleShape) {
             onClick()
           },
   ) {
     Box(contentAlignment = Alignment.Center) {
-      Text("+", color = Color.White, fontSize = 32.sp, fontWeight = FontWeight.Bold)
+      Canvas(Modifier.size(26.dp)) {
+        val s = size.minDimension / 24f
+        scale(s, s, pivot = Offset.Zero) { drawPath(path, Color.White) }
+      }
     }
   }
 }
@@ -2781,13 +1882,6 @@ private data class BatteryReading(val present: Boolean, val percent: Int, val ch
 
 /** Reads the device battery, updating live. Returns present=false on devices
  * without a battery (Portal+, Portal TV, Portal Mini), so callers can hide it. */
-@Composable
-private fun formatNetRate(kbs: Float): String = when {
-  kbs >= 1024f -> String.format("%.1f MB/s", kbs / 1024f)
-  kbs >= 1f    -> String.format("%.0f KB/s", kbs)
-  else         -> "0 KB/s"
-}
-
 @Composable
 private fun batteryState(): BatteryReading {
   val context = androidx.compose.ui.platform.LocalContext.current
@@ -2880,1472 +1974,6 @@ private fun PortalHomeTile(onClick: () -> Unit) {
   )
 }
 
-/**
- * Dedicated "Portal Home" shortcut. Use this to jump to the stock Portal
- * launcher when you need features only it provides (Messenger, etc.).
- * Distinct from the "Calls" tile above so the user can reach the Portal
- * home without having to go through the calling flow.
- */
-@Composable
-private fun PortalHomeShortcutTile(onClick: () -> Unit) {
-  BuiltInTile(
-      label = "Portal",
-      background = Color(0xFF1877F2),
-      glyph = ICON_PORTAL,
-      onClick = onClick,
-  )
-}
-
-/**
- * Camera tile: opens a full-screen camera preview showing the Portal's
- * front-facing camera feed. Tap anywhere to exit.
- */
-@Composable
-private fun CameraTile(onClick: () -> Unit) {
-  BuiltInTile(
-      label = "Camera",
-      background = Color(0xFF9C27B0),
-      glyph = ICON_CAMERA,
-      onClick = onClick,
-  )
-}
-
-@Composable
-private fun SpeedTestTile(onClick: () -> Unit) {
-  BuiltInTile(
-      label = "Speed Test",
-      background = Color(0xFF1565C0),
-      glyph = ICON_SPEEDTEST,
-      onClick = onClick,
-  )
-}
-
-@Composable
-private fun TransitTile(onClick: () -> Unit) {
-  BuiltInTile(
-      label = "Transit",
-      background = Color(0xFF00695C),
-      glyph = ICON_BUS,
-      onClick = onClick,
-  )
-}
-
-/** Opens myNoise.net (Stéphane Pigeon's online ambient-sound generators) in the
- *  browser. We can't bundle/stream its (copyrighted) audio, but a link tile lets the
- *  user reach its full library directly. */
-@Composable
-private fun MyNoiseTile() {
-  val context = androidx.compose.ui.platform.LocalContext.current
-  BuiltInTile(
-      label = "myNoise",
-      background = Color(0xFF37474F),
-      glyph = ICON_HEADPHONES,
-      onClick = {
-        runCatching {
-          context.startActivity(
-              Intent(Intent.ACTION_VIEW, Uri.parse("https://mynoise.net/noiseMachines.php"))
-                  .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-        }
-      },
-  )
-}
-
-/** Worldwide real-time departures board (Transitous / MOTIS). The user searches for a
- *  stop by name anywhere in the world, picks it, and sees the next departures,
- *  auto-refreshing while open. */
-@Composable
-private fun TransitOverlay(onDismiss: () -> Unit) {
-  val context = androidx.compose.ui.platform.LocalContext.current
-  var stopId by remember { mutableStateOf(Transit.savedStopId(context)) }
-  var stopName by remember { mutableStateOf(Transit.savedStopName(context)) }
-  var editing by remember { mutableStateOf(Transit.savedStopId(context).isBlank()) }
-  var query by remember { mutableStateOf("") }
-  var results by remember { mutableStateOf<List<Transit.Stop>>(emptyList()) }
-  var searching by remember { mutableStateOf(false) }
-  var departures by remember { mutableStateOf<List<Transit.Departure>>(emptyList()) }
-  var loading by remember { mutableStateOf(false) }
-
-  // Debounced stop search while typing.
-  LaunchedEffect(query, editing) {
-    if (editing && query.trim().length >= 2) {
-      delay(350)
-      searching = true
-      results = withContext(Dispatchers.IO) { Transit.searchStops(query) }
-      searching = false
-    } else if (query.trim().length < 2) {
-      results = emptyList()
-    }
-  }
-
-  LaunchedEffect(stopId, editing) {
-    if (!editing && stopId.isNotBlank()) {
-      while (true) {
-        loading = true
-        departures = withContext(Dispatchers.IO) { Transit.fetch(stopId) }
-        loading = false
-        delay(30_000)
-      }
-    }
-  }
-
-  BackHandler { onDismiss() }
-  Box(
-      contentAlignment = Alignment.Center,
-      modifier = Modifier.fillMaxSize().background(Color(0xCC000000))
-          .tvFocusable(RoundedCornerShape(0.dp), focusScale = 1f) { onDismiss() },
-  ) {
-    Surface(color = MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(24.dp),
-        modifier = Modifier.widthIn(max = 560.dp).padding(24.dp)) {
-      Column(modifier = Modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-          Text("🚌 Next departures", color = Color.White, fontSize = 22.sp,
-              fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
-          if (!editing) {
-            Surface(color = Color(0x22FFFFFF), shape = RoundedCornerShape(10.dp),
-                modifier = Modifier.tvFocusable(RoundedCornerShape(10.dp), focusScale = 1f) {
-                  editing = true; query = ""; results = emptyList()
-                }) {
-              Text("Change stop", color = Color.White, fontSize = 13.sp,
-                  modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp))
-            }
-          }
-        }
-        if (editing) {
-          androidx.compose.material3.OutlinedTextField(
-              value = query,
-              onValueChange = { query = it },
-              label = { Text("Search stop or station") },
-              singleLine = true,
-              modifier = Modifier.fillMaxWidth(),
-          )
-          Text(
-              "Type a stop or station name anywhere in the world — e.g. \"Connolly\", " +
-                  "\"Alexanderplatz\", \"Times Sq 42 St\".",
-              color = Color(0xFF9A9A9A), fontSize = 13.sp,
-          )
-          when {
-            searching -> Text("Searching…", color = Color(0xFFB0B0B0), fontSize = 15.sp)
-            results.isEmpty() && query.trim().length >= 2 ->
-                Text("No stops found. Try a different name.", color = Color(0xFFB0B0B0), fontSize = 15.sp)
-            else ->
-                Column(
-                    modifier = Modifier.fillMaxWidth().heightIn(max = 280.dp)
-                        .verticalScroll(rememberScrollState()),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                  results.forEach { stop ->
-                    Surface(color = Color(0x18FFFFFF), shape = RoundedCornerShape(12.dp),
-                        modifier = Modifier.fillMaxWidth()
-                            .tvFocusableRow {
-                              Transit.saveStop(context, stop)
-                              stopId = stop.id; stopName = stop.name; editing = false
-                            }) {
-                      Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
-                        Text(stop.name, color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.SemiBold,
-                            maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        if (stop.region.isNotBlank())
-                            Text(stop.region, color = Color(0xFF9A9A9A), fontSize = 13.sp, maxLines = 1)
-                      }
-                    }
-                  }
-                }
-          }
-        } else {
-          Text(stopName.ifBlank { "Selected stop" }, color = Color(0xFF9A9A9A), fontSize = 14.sp)
-          if (departures.isEmpty()) {
-            Text(if (loading) "Loading…" else "No departures right now.",
-                color = Color(0xFFB0B0B0), fontSize = 16.sp)
-          } else {
-            departures.forEach { d ->
-              Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Surface(color = MaterialTheme.colorScheme.primary, shape = RoundedCornerShape(8.dp)) {
-                  Text(d.route, color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold,
-                      maxLines = 1, modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp))
-                }
-                Text("  ${d.destination}", color = Color.White, fontSize = 16.sp,
-                    maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
-                Text(d.due, color = MaterialTheme.colorScheme.primary, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
-              }
-            }
-          }
-        }
-        Surface(color = Color(0x22FFFFFF), shape = RoundedCornerShape(14.dp),
-            modifier = Modifier.fillMaxWidth().tvFocusable(RoundedCornerShape(14.dp), focusScale = 1f) { onDismiss() }) {
-          Text("Close", color = Color.White, fontSize = 16.sp, textAlign = TextAlign.Center,
-              modifier = Modifier.padding(vertical = 10.dp).fillMaxWidth())
-        }
-      }
-    }
-  }
-}
-
-@Composable
-private fun IssTile(onClick: () -> Unit) {
-  BuiltInTile(
-      label = "ISS Pass",
-      background = Color(0xFF1A237E),
-      glyph = ICON_SATELLITE,
-      onClick = onClick,
-  )
-}
-
-/** "When does the space station fly over?" overlay. Lists the next visible/overhead
- *  passes for the device's location — start time, the direction it rises and sets,
- *  how high it climbs, and a ✨ badge when it'll be bright enough to actually spot.
- *  All computed on-device (SGP4) after a single keyless TLE fetch. */
-@Composable
-private fun IssOverlay(onDismiss: () -> Unit) {
-  val context = androidx.compose.ui.platform.LocalContext.current
-  var passes by remember { mutableStateOf<List<IssPasses.Pass>?>(null) }
-
-  LaunchedEffect(Unit) {
-    passes = withContext(Dispatchers.IO) { IssPasses.predict(context) }
-  }
-
-  BackHandler { onDismiss() }
-  Box(
-      contentAlignment = Alignment.Center,
-      modifier = Modifier.fillMaxSize().background(Color(0xCC000000))
-          .tvFocusable(RoundedCornerShape(0.dp), focusScale = 1f) { onDismiss() },
-  ) {
-    Surface(color = MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(24.dp),
-        modifier = Modifier.widthIn(max = 560.dp).padding(24.dp)) {
-      Column(modifier = Modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-        Text("🛰️ Space station overhead", color = Color.White, fontSize = 22.sp,
-            fontWeight = FontWeight.Bold)
-        val p = passes
-        when {
-          p == null ->
-              Text("Finding passes…", color = Color(0xFFB0B0B0), fontSize = 16.sp)
-          p.isEmpty() ->
-              Text(
-                  "No passes found. Check the device is online so it can fetch the latest " +
-                      "orbit, and that your location is set (it follows the weather tile).",
-                  color = Color(0xFFB0B0B0), fontSize = 15.sp)
-          else -> {
-            // Lead with the headline the way you'd say it out loud.
-            val first = p.first()
-            Text(
-                buildString {
-                  append(if (first.visible) "Visible pass " else "Passes over ")
-                  append(IssPasses.timeLabel(first.startMillis))
-                  append(if (first.visible) " ✨" else "")
-                },
-                color = if (first.visible) Color(0xFFFFD54F) else Color.White,
-                fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
-            Column(
-                modifier = Modifier.fillMaxWidth().heightIn(max = 320.dp)
-                    .verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(10.dp),
-            ) {
-              p.forEach { pass ->
-                Surface(color = Color(0x18FFFFFF), shape = RoundedCornerShape(12.dp),
-                    modifier = Modifier.fillMaxWidth()) {
-                  Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                      Text(IssPasses.timeLabel(pass.startMillis), color = Color.White,
-                          fontSize = 16.sp, fontWeight = FontWeight.SemiBold,
-                          modifier = Modifier.weight(1f))
-                      if (pass.visible) {
-                        Surface(color = Color(0x33FFD54F), shape = RoundedCornerShape(8.dp)) {
-                          Text("✨ visible", color = Color(0xFFFFD54F), fontSize = 13.sp,
-                              fontWeight = FontWeight.SemiBold,
-                              modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp))
-                        }
-                      }
-                    }
-                    Text(
-                        "Rises ${pass.startDir} · peak ${pass.maxElevationDeg}° to the " +
-                            "${pass.peakDir} · sets ${pass.endDir}",
-                        color = Color(0xFFB8B8B8), fontSize = 14.sp)
-                  }
-                }
-              }
-            }
-            Text(
-                "Times are local. ✨ means it should be bright enough to see — go outside " +
-                    "and look up to the listed direction.",
-                color = Color(0xFF8A8A8A), fontSize = 12.sp)
-          }
-        }
-        Surface(color = Color(0x22FFFFFF), shape = RoundedCornerShape(14.dp),
-            modifier = Modifier.fillMaxWidth().tvFocusable(RoundedCornerShape(14.dp), focusScale = 1f) { onDismiss() }) {
-          Text("Close", color = Color.White, fontSize = 16.sp, textAlign = TextAlign.Center,
-              modifier = Modifier.padding(vertical = 10.dp).fillMaxWidth())
-        }
-      }
-    }
-  }
-}
-
-/** Aurora outlook tile — it stays a dim slate when there's nothing to see, and lights
- *  up green (with the Kp number) when the oval is reaching, or near, your latitude.
- *  Reads the outlook once in the background so the home grid never blocks on network. */
-@Composable
-private fun AuroraTile(onClick: () -> Unit) {
-  val context = androidx.compose.ui.platform.LocalContext.current
-  var status by remember { mutableStateOf<Aurora.Status?>(null) }
-  LaunchedEffect(Unit) { status = withContext(Dispatchers.IO) { Aurora.status(context) } }
-  val st = status
-  val background =
-      when (st?.chance) {
-        Aurora.Chance.LIKELY -> Color(0xFF00C853) // vivid: go outside
-        Aurora.Chance.POSSIBLE -> Color(0xFF2E7D32)
-        Aurora.Chance.SLIM -> Color(0xFF37474F)
-        else -> Color(0xFF263238) // none / unknown: dim
-      }
-  val label =
-      when (st?.chance) {
-        Aurora.Chance.LIKELY,
-        Aurora.Chance.POSSIBLE -> "Aurora Kp${Aurora.fmtKp(st.kpForecast)}"
-        else -> "Aurora"
-      }
-  BuiltInTile(label = label, background = background, glyph = ICON_AURORA, onClick = onClick)
-}
-
-/** "Any chance of northern/southern lights here tonight?" overlay — the Kp now + the
- *  24 h forecast peak, what it means at this device's geomagnetic latitude, and which
- *  way to look. Computed on-device after the keyless NOAA SWPC fetch. */
-@Composable
-private fun AuroraOverlay(onDismiss: () -> Unit) {
-  val context = androidx.compose.ui.platform.LocalContext.current
-  var status by remember { mutableStateOf<Aurora.Status?>(null) }
-  var loaded by remember { mutableStateOf(false) }
-
-  LaunchedEffect(Unit) {
-    status = withContext(Dispatchers.IO) { Aurora.status(context) }
-    loaded = true
-  }
-
-  BackHandler { onDismiss() }
-  Box(
-      contentAlignment = Alignment.Center,
-      modifier = Modifier.fillMaxSize().background(Color(0xCC000000))
-          .tvFocusable(RoundedCornerShape(0.dp), focusScale = 1f) { onDismiss() },
-  ) {
-    Surface(color = MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(24.dp),
-        modifier = Modifier.widthIn(max = 560.dp).padding(24.dp)) {
-      Column(modifier = Modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-        Text("🌌 Aurora outlook", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Bold)
-        val st = status
-        when {
-          !loaded -> Text("Checking the K-index…", color = Color(0xFFB0B0B0), fontSize = 16.sp)
-          st == null ->
-              Text(
-                  "Couldn't fetch the K-index. Check the device is online and that your " +
-                      "location is set (it follows the weather tile).",
-                  color = Color(0xFFB0B0B0), fontSize = 15.sp)
-          else -> {
-            val accent =
-                when (st.chance) {
-                  Aurora.Chance.LIKELY -> Color(0xFF69F0AE)
-                  Aurora.Chance.POSSIBLE -> Color(0xFFB9F6CA)
-                  Aurora.Chance.SLIM -> Color(0xFFB0BEC5)
-                  Aurora.Chance.NONE -> Color(0xFF90A4AE)
-                }
-            Text(st.headline, color = accent, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
-            Text(st.detail, color = Color(0xFFCFCFCF), fontSize = 15.sp, lineHeight = 21.sp)
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
-              AuroraStat("Kp now", Aurora.fmtKp(st.kpNow), Modifier.weight(1f))
-              AuroraStat("Next 24 h peak", Aurora.fmtKp(st.kpForecast), Modifier.weight(1f))
-              AuroraStat("Look", st.lookToward, Modifier.weight(1f))
-            }
-            Text(
-                "Source: NOAA SWPC planetary K-index. Best after dark, away from city lights, " +
-                    "with a clear ${if (st.lookToward == "N") "northern" else "southern"} horizon.",
-                color = Color(0xFF8A8A8A), fontSize = 12.sp)
-          }
-        }
-        Surface(color = Color(0x22FFFFFF), shape = RoundedCornerShape(14.dp),
-            modifier = Modifier.fillMaxWidth().tvFocusable(RoundedCornerShape(14.dp), focusScale = 1f) { onDismiss() }) {
-          Text("Close", color = Color.White, fontSize = 16.sp, textAlign = TextAlign.Center,
-              modifier = Modifier.padding(vertical = 10.dp).fillMaxWidth())
-        }
-      }
-    }
-  }
-}
-
-@Composable
-private fun AuroraStat(label: String, value: String, modifier: Modifier = Modifier) {
-  Surface(color = Color(0x18FFFFFF), shape = RoundedCornerShape(12.dp), modifier = modifier) {
-    Column(
-        horizontalAlignment = Alignment.CenterHorizontally,
-        modifier = Modifier.padding(vertical = 10.dp).fillMaxWidth(),
-    ) {
-      Text(value, color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold)
-      Text(label, color = Color(0xFF9A9A9A), fontSize = 12.sp, textAlign = TextAlign.Center)
-    }
-  }
-}
-
-@Composable
-private fun StopwatchTile(onClick: () -> Unit) {
-  BuiltInTile(label = "Stopwatch", background = Color(0xFF455A64), glyph = ICON_STOPWATCH, onClick = onClick)
-}
-
-/** A count-up stopwatch with lap marks — for workouts, steeping, anything. Runs while
- *  the overlay is open; it's a quick tool, not a persisted timer (that's the chips). */
-@Composable
-private fun StopwatchOverlay(onDismiss: () -> Unit) {
-  var running by remember { mutableStateOf(false) }
-  // accumulated = time banked from previous runs; startedAt = when the current run began.
-  var accumulated by remember { mutableStateOf(0L) }
-  var startedAt by remember { mutableStateOf(0L) }
-  var nowTick by remember { mutableStateOf(0L) }
-  val laps = remember { mutableStateListOf<Long>() }
-
-  val elapsed = accumulated + if (running) (nowTick - startedAt).coerceAtLeast(0L) else 0L
-
-  LaunchedEffect(running) {
-    while (running) {
-      nowTick = System.currentTimeMillis()
-      delay(31)
-    }
-  }
-
-  BackHandler { onDismiss() }
-  Box(
-      contentAlignment = Alignment.Center,
-      modifier = Modifier.fillMaxSize().background(Color(0xCC000000))
-          .tvFocusable(RoundedCornerShape(0.dp), focusScale = 1f) { onDismiss() },
-  ) {
-    Surface(color = MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(24.dp),
-        modifier = Modifier.widthIn(max = 520.dp).padding(24.dp)) {
-      Column(modifier = Modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(16.dp),
-          horizontalAlignment = Alignment.CenterHorizontally) {
-        Text("⏱ Stopwatch", color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold)
-        Text(formatStopwatch(elapsed), color = Color.White, fontSize = 56.sp,
-            fontWeight = FontWeight.Bold, fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace)
-        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-          StopwatchButton(if (running) "Pause" else "Start",
-              if (running) Color(0xFFB0BEC5) else Color(0xFF00C853)) {
-            if (running) {
-              accumulated = elapsed
-              running = false
-            } else {
-              startedAt = System.currentTimeMillis()
-              nowTick = startedAt
-              running = true
-            }
-          }
-          StopwatchButton(if (running) "Lap" else "Reset", Color(0xFF455A64)) {
-            if (running) laps.add(0, elapsed) else { accumulated = 0L; laps.clear() }
-          }
-        }
-        if (laps.isNotEmpty()) {
-          Column(
-              modifier = Modifier.fillMaxWidth().heightIn(max = 200.dp)
-                  .verticalScroll(rememberScrollState()),
-              verticalArrangement = Arrangement.spacedBy(6.dp),
-          ) {
-            laps.forEachIndexed { i, lap ->
-              Row(modifier = Modifier.fillMaxWidth()) {
-                Text("Lap ${laps.size - i}", color = Color(0xFF9A9A9A), fontSize = 15.sp,
-                    modifier = Modifier.weight(1f))
-                Text(formatStopwatch(lap), color = Color.White, fontSize = 15.sp,
-                    fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace)
-              }
-            }
-          }
-        }
-        Surface(color = Color(0x22FFFFFF), shape = RoundedCornerShape(14.dp),
-            modifier = Modifier.fillMaxWidth().tvFocusable(RoundedCornerShape(14.dp), focusScale = 1f) { onDismiss() }) {
-          Text("Close", color = Color.White, fontSize = 16.sp, textAlign = TextAlign.Center,
-              modifier = Modifier.padding(vertical = 10.dp).fillMaxWidth())
-        }
-      }
-    }
-  }
-}
-
-@Composable
-private fun StopwatchButton(label: String, color: Color, onClick: () -> Unit) {
-  Surface(color = color, shape = RoundedCornerShape(14.dp),
-      modifier = Modifier.width(130.dp).tvFocusable(RoundedCornerShape(14.dp), focusScale = 1.04f) { onClick() }) {
-    Text(label, color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.SemiBold,
-        textAlign = TextAlign.Center, modifier = Modifier.padding(vertical = 14.dp).fillMaxWidth())
-  }
-}
-
-private fun formatStopwatch(ms: Long): String {
-  val totalCs = ms / 10
-  val cs = totalCs % 100
-  val totalSec = totalCs / 100
-  val s = totalSec % 60
-  val m = totalSec / 60
-  return "%02d:%02d.%02d".format(m, s, cs)
-}
-
-@Composable
-private fun ConverterTile(onClick: () -> Unit) {
-  BuiltInTile(label = "Convert", background = Color(0xFF00838F), glyph = ICON_CONVERT, onClick = onClick)
-}
-
-/** Quick unit + currency converter. Units convert instantly offline; the Currency
- *  category uses the keyless ECB feed (cached). */
-@Composable
-private fun ConverterOverlay(onDismiss: () -> Unit) {
-  val context = androidx.compose.ui.platform.LocalContext.current
-  val categories = remember { Converter.UNIT_CATEGORIES.map { it.first } + "Currency" }
-  var category by remember { mutableStateOf("Length") }
-  val units: List<String> =
-      remember(category) {
-        if (category == "Currency") Converter.CURRENCIES
-        else Converter.UNIT_CATEGORIES.first { it.first == category }.second.keys.toList()
-      }
-  var from by remember(category) { mutableStateOf(units.first()) }
-  var to by remember(category) { mutableStateOf(units.getOrElse(1) { units.first() }) }
-  var input by remember { mutableStateOf("1") }
-  var result by remember { mutableStateOf("") }
-
-  // Recompute on any change. Currency is async (network/cache); units are instant.
-  LaunchedEffect(category, from, to, input) {
-    val v = input.toDoubleOrNull()
-    if (v == null) { result = ""; return@LaunchedEffect }
-    result =
-        if (category == "Currency") {
-          val r = withContext(Dispatchers.IO) { Converter.convertCurrency(context, from, to, v) }
-          if (r == null) "—" else trimNum(r)
-        } else {
-          trimNum(Converter.convert(category, from, to, v))
-        }
-  }
-
-  BackHandler { onDismiss() }
-  Box(
-      contentAlignment = Alignment.Center,
-      modifier = Modifier.fillMaxSize().background(Color(0xCC000000))
-          .tvFocusable(RoundedCornerShape(0.dp), focusScale = 1f) { onDismiss() },
-  ) {
-    Surface(color = MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(24.dp),
-        modifier = Modifier.widthIn(max = 560.dp).padding(24.dp)) {
-      Column(modifier = Modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-        Text("🔁 Converter", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Bold)
-        ChipRow(categories, category) { category = it }
-        androidx.compose.material3.OutlinedTextField(
-            value = input,
-            onValueChange = { input = it.filter { c -> c.isDigit() || c == '.' || c == '-' } },
-            label = { Text("Value") },
-            singleLine = true,
-            keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
-                keyboardType = androidx.compose.ui.text.input.KeyboardType.Number),
-            modifier = Modifier.fillMaxWidth(),
-        )
-        Text("From", color = Color(0xFF9A9A9A), fontSize = 13.sp)
-        ChipRow(units, from) { from = it }
-        Text("To", color = Color(0xFF9A9A9A), fontSize = 13.sp)
-        ChipRow(units, to) { to = it }
-        Surface(color = Color(0x18FFFFFF), shape = RoundedCornerShape(14.dp),
-            modifier = Modifier.fillMaxWidth()) {
-          Column(modifier = Modifier.padding(16.dp)) {
-            Text("$input $from =", color = Color(0xFF9A9A9A), fontSize = 14.sp)
-            Text(if (result.isBlank()) "…" else "$result $to", color = Color.White,
-                fontSize = 28.sp, fontWeight = FontWeight.Bold)
-            if (category == "Currency")
-                Text("ECB reference rate (cached).", color = Color(0xFF8A8A8A), fontSize = 12.sp)
-          }
-        }
-        Surface(color = Color(0x22FFFFFF), shape = RoundedCornerShape(14.dp),
-            modifier = Modifier.fillMaxWidth().tvFocusable(RoundedCornerShape(14.dp), focusScale = 1f) { onDismiss() }) {
-          Text("Close", color = Color.White, fontSize = 16.sp, textAlign = TextAlign.Center,
-              modifier = Modifier.padding(vertical = 10.dp).fillMaxWidth())
-        }
-      }
-    }
-  }
-}
-
-/** A horizontally-scrolling single-select chip row. */
-@Composable
-private fun ChipRow(options: List<String>, selected: String, onSelect: (String) -> Unit) {
-  Row(
-      modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-      horizontalArrangement = Arrangement.spacedBy(8.dp),
-  ) {
-    options.forEach { opt ->
-      val on = opt == selected
-      Surface(
-          color = if (on) MaterialTheme.colorScheme.primary else Color(0x22FFFFFF),
-          shape = RoundedCornerShape(12.dp),
-          modifier = Modifier.tvFocusable(RoundedCornerShape(12.dp), focusScale = 1.04f) { onSelect(opt) },
-      ) {
-        Text(opt, color = Color.White, fontSize = 15.sp,
-            fontWeight = if (on) FontWeight.Bold else FontWeight.Normal,
-            modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp))
-      }
-    }
-  }
-}
-
-private fun trimNum(d: Double): String {
-  if (d.isNaN() || d.isInfinite()) return "—"
-  val r = if (kotlin.math.abs(d) >= 1000 || d == d.toLong().toDouble()) "%,.2f".format(d)
-          else "%.4g".format(d)
-  return r.trimEnd('0').trimEnd('.').ifBlank { "0" }
-}
-
-@Composable
-private fun WhatChangedTile(onClick: () -> Unit) {
-  BuiltInTile(label = "What's New", background = Color(0xFF5D4037), glyph = ICON_HISTORY, onClick = onClick)
-}
-
-/** Recent self-updates, from the launcher's GitHub releases — so a device that improves
- *  itself isn't a black box. */
-@Composable
-private fun WhatChangedOverlay(onDismiss: () -> Unit) {
-  val context = androidx.compose.ui.platform.LocalContext.current
-  var releases by remember { mutableStateOf<List<WhatChanged.Release>?>(null) }
-  val installedVersion = remember {
-    runCatching { context.packageManager.getPackageInfo(context.packageName, 0).versionName }
-        .getOrNull() ?: "?"
-  }
-  LaunchedEffect(Unit) { releases = withContext(Dispatchers.IO) { WhatChanged.recent() } }
-
-  BackHandler { onDismiss() }
-  Box(
-      contentAlignment = Alignment.Center,
-      modifier = Modifier.fillMaxSize().background(Color(0xCC000000))
-          .tvFocusable(RoundedCornerShape(0.dp), focusScale = 1f) { onDismiss() },
-  ) {
-    Surface(color = MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(24.dp),
-        modifier = Modifier.widthIn(max = 600.dp).padding(24.dp)) {
-      Column(modifier = Modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Text("🗒 What's new", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Bold)
-        Text("This Immortal: $installedVersion", color = Color(0xFF9A9A9A), fontSize = 13.sp)
-        val r = releases
-        when {
-          r == null -> Text("Loading…", color = Color(0xFFB0B0B0), fontSize = 16.sp)
-          r.isEmpty() ->
-              Text("Couldn't load the changelog (offline, or no releases yet).",
-                  color = Color(0xFFB0B0B0), fontSize = 15.sp)
-          else ->
-              Column(
-                  modifier = Modifier.fillMaxWidth().heightIn(max = 360.dp)
-                      .verticalScroll(rememberScrollState()),
-                  verticalArrangement = Arrangement.spacedBy(12.dp),
-              ) {
-                r.forEach { rel ->
-                  Surface(color = Color(0x18FFFFFF), shape = RoundedCornerShape(12.dp),
-                      modifier = Modifier.fillMaxWidth()) {
-                    Column(modifier = Modifier.padding(14.dp)) {
-                      Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(rel.version, color = Color.White, fontSize = 17.sp,
-                            fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
-                        Text(rel.date, color = Color(0xFF9A9A9A), fontSize = 13.sp)
-                      }
-                      Text(rel.notes, color = Color(0xFFCFCFCF), fontSize = 14.sp,
-                          lineHeight = 20.sp, modifier = Modifier.padding(top = 6.dp))
-                    }
-                  }
-                }
-              }
-        }
-        Surface(color = Color(0x22FFFFFF), shape = RoundedCornerShape(14.dp),
-            modifier = Modifier.fillMaxWidth().tvFocusable(RoundedCornerShape(14.dp), focusScale = 1f) { onDismiss() }) {
-          Text("Close", color = Color.White, fontSize = 16.sp, textAlign = TextAlign.Center,
-              modifier = Modifier.padding(vertical = 10.dp).fillMaxWidth())
-        }
-      }
-    }
-  }
-}
-
-@Composable
-private fun LampTile() {
-  val context = androidx.compose.ui.platform.LocalContext.current
-  BuiltInTile(label = "Lamp", background = Color(0xFFFF8F00), glyph = ICON_LAMP, onClick = {
-    runCatching { context.startActivity(Intent(context, LampActivity::class.java)) }
-  })
-}
-
-@Composable
-private fun BedtimeTile() {
-  val context = androidx.compose.ui.platform.LocalContext.current
-  BuiltInTile(label = "Story", background = Color(0xFF512DA8), glyph = ICON_BOOK, onClick = {
-    runCatching { context.startActivity(Intent(context, BedtimeStoryActivity::class.java)) }
-  })
-}
-
-@Composable
-private fun SunriseTile() {
-  val context = androidx.compose.ui.platform.LocalContext.current
-  BuiltInTile(label = "Sunrise", background = Color(0xFFEF6C00), glyph = ICON_SUNRISE, onClick = {
-    runCatching { context.startActivity(Intent(context, SunriseSettingsActivity::class.java)) }
-  })
-}
-
-/** Opens a prefilled GitHub issue so the household can signal which apps they want —
- *  the demand board, with no server to run. */
-@Composable
-private fun RequestAppTile() {
-  val context = androidx.compose.ui.platform.LocalContext.current
-  BuiltInTile(label = "Request App", background = Color(0xFF263238), glyph = ICON_INBOX, onClick = {
-    val url =
-        "https://github.com/starbrightlab/immortal/issues/new?labels=app-request&title=" +
-            Uri.encode("App request: ") +
-            "&body=" +
-            Uri.encode("Which app would you like on Portal?\n\nApp name:\nWhy:\n")
-    runCatching {
-      context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-    }
-  })
-}
-
-/** Ping another Portal in the house — taps send a chime + spoken room name to every
- *  Immortal device on the LAN. Shows a brief "Pinged!" confirmation. */
-@Composable
-private fun PingTile() {
-  val context = androidx.compose.ui.platform.LocalContext.current
-  var pinged by remember { mutableStateOf(false) }
-  LaunchedEffect(pinged) {
-    if (pinged) { delay(1500); pinged = false }
-  }
-  BuiltInTile(
-      label = if (pinged) "Pinged!" else "Ping Room",
-      background = if (pinged) Color(0xFF00C853) else Color(0xFF00897B),
-      glyph = ICON_PING,
-      onClick = {
-        val name = ImmortalSettings.deviceRoomName(context)
-        PingService.send(context, name)
-        pinged = true
-      },
-  )
-}
-
-@Composable
-private fun NoteTile(onClick: () -> Unit) {
-  val context = androidx.compose.ui.platform.LocalContext.current
-  val hasNote = remember { NotesConfig.loadText(context).isNotBlank() || NotesConfig.hasAudioNote(context) }
-  BuiltInTile(
-      label = if (hasNote) "Note •" else "Leave Note",
-      background = Color(0xFFD4A017),
-      glyph = ICON_NOTE,
-      onClick = onClick,
-  )
-}
-
-/** A pinned sticky-note card on the home screen, shown when a text and/or voice note
- * exists. Tapping the text opens the editor; the audio note plays inline. */
-@Composable
-private fun HomeNoteCard(version: Int, onEdit: () -> Unit) {
-  val context = androidx.compose.ui.platform.LocalContext.current
-  val text = remember(version) { NotesConfig.loadText(context) }
-  val hasAudio = remember(version) { NotesConfig.hasAudioNote(context) }
-  if (text.isBlank() && !hasAudio) return
-  val audio = remember { AudioNote(context) }
-  DisposableEffect(Unit) { onDispose { audio.release() } }
-  var playing by remember { mutableStateOf(false) }
-  Surface(
-      color = Color(0xFFFFF3C4),
-      shape = RoundedCornerShape(14.dp),
-      modifier = Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 4.dp)
-          .tvFocusable(RoundedCornerShape(14.dp), focusScale = 1f) { onEdit() },
-  ) {
-    Row(
-        modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-      Text("📌", fontSize = 18.sp)
-      Spacer(Modifier.size(10.dp))
-      Text(
-          text.ifBlank { "Voice note" },
-          color = Color(0xFF3A2E00),
-          fontSize = 16.sp,
-          maxLines = 2,
-          overflow = TextOverflow.Ellipsis,
-          modifier = Modifier.weight(1f),
-      )
-      if (hasAudio) {
-        Surface(
-            color = Color(0xFFD4A017),
-            shape = androidx.compose.foundation.shape.CircleShape,
-            modifier = Modifier.size(40.dp).tvFocusable(androidx.compose.foundation.shape.CircleShape, focusScale = 1.05f) {
-              if (playing) { audio.stopPlaying(); playing = false }
-              else { playing = true; audio.play { playing = false } }
-            },
-        ) {
-          Box(contentAlignment = Alignment.Center) {
-            Text(if (playing) "⏸" else "▶", color = Color.White, fontSize = 16.sp)
-          }
-        }
-      }
-    }
-  }
-  Spacer(Modifier.size(8.dp))
-}
-
-/** "Did you know" discoverability card — one tip a day, dismissible. Teaches the
- *  device's depth instead of hiding it. Hidden once dismissed until tomorrow's tip. */
-@Composable
-private fun DidYouKnowCard(version: Int) {
-  val context = androidx.compose.ui.platform.LocalContext.current
-  var dismissed by remember(version) { mutableStateOf(Tips.isDismissedToday(context)) }
-  if (dismissed) return
-  val tip = remember { Tips.todaysTip() }
-  Surface(
-      color = Color(0xFF1C2A3A),
-      shape = RoundedCornerShape(14.dp),
-      modifier = Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 4.dp),
-  ) {
-    Row(
-        modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-      Text("💡", fontSize = 18.sp)
-      Spacer(Modifier.size(10.dp))
-      Column(modifier = Modifier.weight(1f)) {
-        Text("Did you know?", color = Color(0xFF8AB4F8), fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
-        Text(tip, color = Color(0xFFDADADA), fontSize = 15.sp, lineHeight = 20.sp)
-      }
-      Spacer(Modifier.size(10.dp))
-      Surface(
-          color = Color(0x22FFFFFF),
-          shape = androidx.compose.foundation.shape.CircleShape,
-          modifier = Modifier.size(36.dp).tvFocusable(androidx.compose.foundation.shape.CircleShape, focusScale = 1.05f) {
-            Tips.dismissToday(context); dismissed = true
-          },
-      ) {
-        Box(contentAlignment = Alignment.Center) { Text("✕", color = Color.White, fontSize = 15.sp) }
-      }
-    }
-  }
-  Spacer(Modifier.size(8.dp))
-}
-
-/** Editor overlay for the fridge note: a typed message plus a single voice memo. */
-@Composable
-private fun NoteOverlay(onDismiss: () -> Unit) {
-  val context = androidx.compose.ui.platform.LocalContext.current
-  var text by remember { mutableStateOf(NotesConfig.loadText(context)) }
-  var hasAudio by remember { mutableStateOf(NotesConfig.hasAudioNote(context)) }
-  val audio = remember { AudioNote(context) }
-  var recording by remember { mutableStateOf(false) }
-  var playing by remember { mutableStateOf(false) }
-  var level by remember { mutableStateOf(0f) }
-  var heardSignal by remember { mutableStateOf(false) }
-  DisposableEffect(Unit) { onDispose { audio.release() } }
-
-  // While recording, poll the mic peak so the user can see they're being heard.
-  // The Portal only exposes the near-field handset mic, so a voice from across
-  // the room reads as near-silence — this makes that visible instead of mysterious.
-  LaunchedEffect(recording) {
-    if (recording) {
-      heardSignal = false
-      while (recording) {
-        val peak = (audio.peakLevel() / 12000f).coerceIn(0f, 1f)
-        level = peak
-        if (peak > 0.08f) heardSignal = true
-        delay(120)
-      }
-      level = 0f
-    }
-  }
-
-  // Runtime mic permission; start recording once granted.
-  val permLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
-      androidx.activity.result.contract.ActivityResultContracts.RequestPermission()) { granted ->
-    if (granted) { recording = audio.startRecording() }
-  }
-  fun toggleRecord() {
-    if (recording) {
-      audio.stopRecording(); recording = false; hasAudio = NotesConfig.hasAudioNote(context)
-    } else {
-      val granted = android.content.pm.PackageManager.PERMISSION_GRANTED ==
-          context.checkSelfPermission(android.Manifest.permission.RECORD_AUDIO)
-      if (granted) recording = audio.startRecording()
-      else permLauncher.launch(android.Manifest.permission.RECORD_AUDIO)
-    }
-  }
-
-  BackHandler { onDismiss() }
-  Box(
-      contentAlignment = Alignment.Center,
-      modifier = Modifier.fillMaxSize().background(Color(0xCC000000))
-          .tvFocusable(RoundedCornerShape(0.dp), focusScale = 1f) { onDismiss() },
-  ) {
-    Surface(color = MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(24.dp),
-        modifier = Modifier.widthIn(max = 560.dp).padding(24.dp)) {
-      Column(modifier = Modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-        Text("Leave a note", color = Color.White, fontSize = 24.sp, fontWeight = FontWeight.Bold)
-        androidx.compose.material3.OutlinedTextField(
-            value = text,
-            onValueChange = { text = it },
-            label = { Text("Type a note") },
-            modifier = Modifier.fillMaxWidth(),
-            minLines = 2,
-        )
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
-          Surface(
-              color = if (recording) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
-              shape = RoundedCornerShape(14.dp),
-              modifier = Modifier.tvFocusable(RoundedCornerShape(14.dp), focusScale = 1f) { toggleRecord() },
-          ) {
-            Text(if (recording) "■ Stop recording" else "● Record voice", color = Color.White,
-                fontSize = 16.sp, modifier = Modifier.padding(horizontal = 18.dp, vertical = 12.dp))
-          }
-          if (recording) {
-            // Live input meter — fills as the mic hears you. Stays empty = speak closer.
-            Box(
-                modifier = Modifier.weight(1f).height(12.dp)
-                    .background(Color(0x22FFFFFF), RoundedCornerShape(6.dp)),
-            ) {
-              Box(
-                  modifier = Modifier.fillMaxHeight().fillMaxWidth(level)
-                      .background(
-                          if (level > 0.08f) Color(0xFF34C759) else Color(0xFFFF9F0A),
-                          RoundedCornerShape(6.dp)),
-              )
-            }
-          }
-          if (hasAudio && !recording) {
-            Surface(color = Color(0x22FFFFFF), shape = RoundedCornerShape(14.dp),
-                modifier = Modifier.tvFocusable(RoundedCornerShape(14.dp), focusScale = 1f) {
-                  if (playing) { audio.stopPlaying(); playing = false }
-                  else { playing = true; audio.play { playing = false } }
-                }) {
-              Text(if (playing) "⏸ Stop" else "▶ Play", color = Color.White, fontSize = 16.sp,
-                  modifier = Modifier.padding(horizontal = 18.dp, vertical = 12.dp))
-            }
-            Surface(color = Color(0x22FFFFFF), shape = RoundedCornerShape(14.dp),
-                modifier = Modifier.tvFocusable(RoundedCornerShape(14.dp), focusScale = 1f) {
-                  NotesConfig.clearAudio(context); hasAudio = false
-                }) {
-              Text("🗑", fontSize = 16.sp, modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp))
-            }
-          }
-        }
-        if (recording && !heardSignal) {
-          Text(
-              "Speak close to the device — Portal only gives apps the near-field mic, " +
-                  "so a voice from across the room barely registers.",
-              color = Color(0xFFFF9F0A), fontSize = 13.sp,
-          )
-        }
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
-          Surface(color = MaterialTheme.colorScheme.primary, shape = RoundedCornerShape(14.dp),
-              modifier = Modifier.weight(1f).tvFocusable(RoundedCornerShape(14.dp), focusScale = 1f) {
-                NotesConfig.saveText(context, text)
-                if (recording) { audio.stopRecording(); recording = false }
-                onDismiss()
-              }) {
-            Text("Save", color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.SemiBold,
-                textAlign = TextAlign.Center, modifier = Modifier.padding(vertical = 12.dp).fillMaxWidth())
-          }
-          Surface(color = Color(0x22FFFFFF), shape = RoundedCornerShape(14.dp),
-              modifier = Modifier.weight(1f).tvFocusable(RoundedCornerShape(14.dp), focusScale = 1f) {
-                NotesConfig.clearText(context); NotesConfig.clearAudio(context)
-                text = ""; hasAudio = false; onDismiss()
-              }) {
-            Text("Clear all", color = Color.White, fontSize = 17.sp,
-                textAlign = TextAlign.Center, modifier = Modifier.padding(vertical = 12.dp).fillMaxWidth())
-          }
-        }
-      }
-    }
-  }
-}
-
-@Composable
-private fun DailyTile(mode: String, onClick: () -> Unit) {
-  val label = when (DailyContent.modeOf(mode)) {
-    DailyContent.Mode.WORD -> "Word"
-    DailyContent.Mode.TRIVIA -> "Trivia"
-    else -> "Quote"
-  }
-  BuiltInTile(
-      label = "Daily $label",
-      background = Color(0xFF7B5BD6),
-      glyph = ICON_LIGHTBULB,
-      onClick = onClick,
-  )
-}
-
-/** Pop-out overlay for the daily quote / word / trivia. Trivia hides the answer
- *  behind a Reveal button; tapping the scrim or Back dismisses it. */
-@Composable
-private fun DailyOverlay(mode: String, onDismiss: () -> Unit) {
-  var revealed by remember { mutableStateOf(false) }
-  BackHandler { onDismiss() }
-  Box(
-      contentAlignment = Alignment.Center,
-      modifier =
-          Modifier.fillMaxSize()
-              .background(Color(0xCC000000))
-              .tvFocusable(RoundedCornerShape(0.dp), focusScale = 1f) { onDismiss() },
-  ) {
-    Surface(
-        color = MaterialTheme.colorScheme.surface,
-        shape = RoundedCornerShape(24.dp),
-        modifier = Modifier.widthIn(max = 560.dp).padding(24.dp),
-    ) {
-      Column(
-          modifier = Modifier.padding(28.dp),
-          horizontalAlignment = Alignment.CenterHorizontally,
-          verticalArrangement = Arrangement.spacedBy(16.dp),
-      ) {
-        when (DailyContent.modeOf(mode)) {
-          DailyContent.Mode.WORD -> {
-            val w = remember { DailyContent.wordOfDay() }
-            Text("Word of the day", color = MaterialTheme.colorScheme.primary, fontSize = 15.sp)
-            Text(w.word, color = Color.White, fontSize = 30.sp, fontWeight = FontWeight.Bold)
-            Text("/${w.pronunciation}/", color = Color(0xFFB0B0B0), fontSize = 16.sp)
-            Text(w.definition, color = Color(0xFFDADADA), fontSize = 18.sp, textAlign = TextAlign.Center)
-          }
-          DailyContent.Mode.TRIVIA -> {
-            val t = remember { DailyContent.triviaOfDay() }
-            Text("Trivia of the day", color = MaterialTheme.colorScheme.primary, fontSize = 15.sp)
-            Text(t.question, color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.SemiBold, textAlign = TextAlign.Center)
-            if (revealed) {
-              Text(t.answer, color = MaterialTheme.colorScheme.primary, fontSize = 22.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
-            } else {
-              Surface(
-                  color = MaterialTheme.colorScheme.primary,
-                  shape = RoundedCornerShape(14.dp),
-                  modifier = Modifier.tvFocusable(RoundedCornerShape(14.dp), focusScale = 1f) { revealed = true },
-              ) {
-                Text("Reveal answer", color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.SemiBold,
-                    modifier = Modifier.padding(horizontal = 24.dp, vertical = 12.dp))
-              }
-            }
-          }
-          else -> {
-            val q = remember { DailyContent.quoteOfDay() }
-            Text("Quote of the day", color = MaterialTheme.colorScheme.primary, fontSize = 15.sp)
-            Text("“${q.text}”", color = Color.White, fontSize = 24.sp, fontWeight = FontWeight.Medium, textAlign = TextAlign.Center)
-            Text("— ${q.author}", color = Color(0xFFB0B0B0), fontSize = 16.sp)
-          }
-        }
-        Spacer(Modifier.size(4.dp))
-        Surface(
-            color = Color(0x22FFFFFF),
-            shape = RoundedCornerShape(14.dp),
-            modifier = Modifier.tvFocusable(RoundedCornerShape(14.dp), focusScale = 1f) { onDismiss() },
-        ) {
-          Text("Close", color = Color.White, fontSize = 16.sp,
-              modifier = Modifier.padding(horizontal = 28.dp, vertical = 10.dp))
-        }
-      }
-    }
-  }
-}
-
-private enum class SpeedPhase { PING, DOWNLOAD, UPLOAD, DONE }
-
-private class SpeedResult {
-  var server by mutableStateOf("")
-  var pingMs by mutableStateOf(0.0)
-  var jitterMs by mutableStateOf(0.0)
-  var downMbps by mutableStateOf(0.0)
-  var upMbps by mutableStateOf(0.0)
-  fun reset() { server = ""; pingMs = 0.0; jitterMs = 0.0; downMbps = 0.0; upMbps = 0.0 }
-}
-
-/** Pop-out window: full ping / download / upload test against Cloudflare's open speed
- *  endpoints, with the serving data-centre shown, live updates, an X to close, and a
- *  Run-again button. Each leg runs independently so one failing doesn't sink the rest.
- *  Rendered as a top-level scrim overlay (not a Compose Dialog) so it composites into
- *  the launcher's own window — Portal's window manager doesn't always show separate
- *  Dialog windows. Auto-closes 3s after the run completes. */
-@Composable
-private fun SpeedTestOverlay(onDismiss: () -> Unit) {
-  var phase by remember { mutableStateOf(SpeedPhase.PING) }
-  val r = remember { SpeedResult() }
-  var runId by remember { mutableStateOf(0) }
-
-  LaunchedEffect(runId) {
-    r.reset()
-    phase = SpeedPhase.PING
-    runSpeedTest(
-        result = r,
-        onPhase = { phase = it },
-    )
-    phase = SpeedPhase.DONE
-  }
-
-  // Auto-dismiss a short while after the test finishes, unless the user re-runs it.
-  LaunchedEffect(phase, runId) {
-    if (phase == SpeedPhase.DONE) {
-      delay(3_000)
-      onDismiss()
-    }
-  }
-
-  BackHandler { onDismiss() }
-  Box(
-      contentAlignment = Alignment.Center,
-      modifier =
-          Modifier.fillMaxSize()
-              .background(Color(0xCC000000))
-              .clickable(
-                  interactionSource = remember { MutableInteractionSource() },
-                  indication = null,
-              ) { onDismiss() },
-  ) {
-    Surface(
-        shape = RoundedCornerShape(28.dp),
-        color = Color(0xFF1C1C1E),
-        modifier =
-            Modifier.clickable(
-                interactionSource = remember { MutableInteractionSource() },
-                indication = null,
-            ) {},
-    ) {
-      Column(modifier = Modifier.width(380.dp).padding(24.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-          Column(modifier = Modifier.weight(1f)) {
-            Text("Speed Test", color = Color.White, fontSize = 22.sp)
-            Text(
-                if (r.server.isNotEmpty()) "via ${r.server}"
-                else if (phase == SpeedPhase.DONE) "Cloudflare" else "Finding server…",
-                color = Color(0xFF9A9A9A),
-                fontSize = 13.sp,
-                modifier = Modifier.padding(top = 2.dp),
-            )
-          }
-          Surface(
-              color = Color(0x22FFFFFF),
-              shape = androidx.compose.foundation.shape.CircleShape,
-              modifier =
-                  Modifier.size(40.dp).tvFocusable(androidx.compose.foundation.shape.CircleShape) {
-                    onDismiss()
-                  },
-          ) {
-            Box(contentAlignment = Alignment.Center) {
-              Canvas(Modifier.size(16.dp)) {
-                val w = size.minDimension
-                val s = w * 0.13f
-                drawLine(Color.White, Offset(w * 0.18f, w * 0.18f), Offset(w * 0.82f, w * 0.82f),
-                    strokeWidth = s, cap = StrokeCap.Round)
-                drawLine(Color.White, Offset(w * 0.82f, w * 0.18f), Offset(w * 0.18f, w * 0.82f),
-                    strokeWidth = s, cap = StrokeCap.Round)
-              }
-            }
-          }
-        }
-        Spacer(Modifier.size(22.dp))
-        Row(Modifier.fillMaxWidth()) {
-          SpeedMetric("Ping", r.pingMs, "ms", 0, active = phase == SpeedPhase.PING,
-              accent = Color(0xFFFFCA28), modifier = Modifier.weight(1f))
-          SpeedMetric("Jitter", r.jitterMs, "ms", 1, active = phase == SpeedPhase.PING,
-              accent = Color(0xFFFFCA28), modifier = Modifier.weight(1f))
-        }
-        Spacer(Modifier.size(20.dp))
-        SpeedMetric("↓  Download", r.downMbps, "Mbps", 1, active = phase == SpeedPhase.DOWNLOAD,
-            accent = Color(0xFF42A5F5), big = true)
-        Spacer(Modifier.size(16.dp))
-        SpeedMetric("↑  Upload", r.upMbps, "Mbps", 1, active = phase == SpeedPhase.UPLOAD,
-            accent = Color(0xFF66BB6A), big = true)
-        Spacer(Modifier.size(26.dp))
-        val busy = phase != SpeedPhase.DONE
-        val label =
-            when (phase) {
-              SpeedPhase.PING -> "Pinging…"
-              SpeedPhase.DOWNLOAD -> "Testing download…"
-              SpeedPhase.UPLOAD -> "Testing upload…"
-              SpeedPhase.DONE -> "Run again"
-            }
-        Surface(
-            color = if (busy) Color(0x22FFFFFF) else MaterialTheme.colorScheme.primary,
-            shape = RoundedCornerShape(14.dp),
-            modifier =
-                Modifier.fillMaxWidth().tvFocusable(RoundedCornerShape(14.dp)) {
-                  if (!busy) runId++
-                },
-        ) {
-          Text(label, color = Color.White, fontSize = 16.sp, textAlign = TextAlign.Center,
-              modifier = Modifier.fillMaxWidth().padding(vertical = 13.dp))
-        }
-      }
-    }
-  }
-}
-
-@Composable
-private fun SpeedMetric(
-    label: String,
-    value: Double,
-    unit: String,
-    decimals: Int,
-    active: Boolean,
-    accent: Color,
-    modifier: Modifier = Modifier,
-    big: Boolean = false,
-) {
-  val shown = if (value > 0.0) String.format("%.${decimals}f", value) else "—"
-  if (big) {
-    Row(modifier.fillMaxWidth(), verticalAlignment = Alignment.Bottom) {
-      Text(label, color = Color(0xFFDADADA), fontSize = 17.sp, modifier = Modifier.weight(1f))
-      Text(shown, color = if (active) accent else Color.White,
-          fontSize = 30.sp, fontWeight = FontWeight.Medium, lineHeight = 30.sp)
-      Spacer(Modifier.size(6.dp))
-      Text(unit, color = Color(0xFF9A9A9A), fontSize = 14.sp, modifier = Modifier.padding(bottom = 4.dp))
-    }
-  } else {
-    Column(modifier) {
-      Text(label.uppercase(), color = Color(0xFF8A8A8A), fontSize = 12.sp, letterSpacing = 0.5.sp)
-      Row(verticalAlignment = Alignment.Bottom, modifier = Modifier.padding(top = 4.dp)) {
-        Text(shown, color = if (active) accent else Color.White,
-            fontSize = 24.sp, fontWeight = FontWeight.Medium, lineHeight = 24.sp)
-        Spacer(Modifier.size(4.dp))
-        Text(unit, color = Color(0xFF9A9A9A), fontSize = 12.sp, modifier = Modifier.padding(bottom = 3.dp))
-      }
-    }
-  }
-}
-
-/** Cloudflare speed test: serving data-centre, latency + jitter, download, upload.
- *  Each leg is wrapped independently — a failure leaves that metric blank but lets the
- *  others complete. Emits live via the [result] snapshot-state holder; runs on IO. */
-private suspend fun runSpeedTest(result: SpeedResult, onPhase: (SpeedPhase) -> Unit) {
-  withContext(Dispatchers.IO) {
-    // ---- serving data-centre (cdn-cgi/trace: colo=IATA, loc=country) ----
-    runCatching {
-      val conn =
-          java.net.URL("https://speed.cloudflare.com/cdn-cgi/trace").openConnection()
-              as java.net.HttpURLConnection
-      conn.connectTimeout = 6_000
-      conn.readTimeout = 6_000
-      val text = conn.inputStream.bufferedReader().use { it.readText() }
-      conn.disconnect()
-      val kv = text.lineSequence().mapNotNull {
-        val i = it.indexOf('='); if (i > 0) it.substring(0, i) to it.substring(i + 1) else null
-      }.toMap()
-      result.server =
-          listOfNotNull("Cloudflare", kv["colo"], kv["loc"]).filter { it.isNotBlank() }
-              .joinToString(" · ")
-    }
-
-    // ---- ping: TTFB of a 0-byte download, keep-alive reused; drop the warm-up ----
-    onPhase(SpeedPhase.PING)
-    runCatching {
-      val samples = ArrayList<Double>()
-      repeat(6) { i ->
-        val t0 = System.nanoTime()
-        val conn =
-            java.net.URL("https://speed.cloudflare.com/__down?bytes=0").openConnection()
-                as java.net.HttpURLConnection
-        conn.connectTimeout = 5_000
-        conn.readTimeout = 5_000
-        conn.inputStream.use { it.read() }
-        val ms = (System.nanoTime() - t0) / 1_000_000.0
-        if (i > 0) samples.add(ms) // first request pays TLS setup
-      }
-      if (samples.isNotEmpty()) {
-        val avg = samples.average()
-        result.pingMs = avg
-        result.jitterMs = samples.map { kotlin.math.abs(it - avg) }.average()
-      }
-    }
-
-    // ---- download: Cloudflare caps __down at <100 MB (100 MB → 403), so pull 50 MB
-    //      segments back-to-back until the 10s budget is spent. This also keeps the
-    //      pipe full on fast links where a single segment finishes in well under 1s. ----
-    onPhase(SpeedPhase.DOWNLOAD)
-    runCatching {
-      val t0 = System.currentTimeMillis()
-      var bytes = 0L
-      var lastEmit = 0L
-      val buf = ByteArray(65_536)
-      while (System.currentTimeMillis() - t0 < 10_000) {
-        val conn =
-            java.net.URL("https://speed.cloudflare.com/__down?bytes=52428800").openConnection()
-                as java.net.HttpURLConnection
-        conn.connectTimeout = 8_000
-        conn.readTimeout = 20_000
-        try {
-          conn.inputStream.use { s ->
-            while (true) {
-              val n = s.read(buf)
-              if (n == -1) break
-              bytes += n
-              val now = System.currentTimeMillis()
-              val sec = (now - t0) / 1000.0
-              if (now - lastEmit > 200 && sec > 0) {
-                result.downMbps = bytes * 8.0 / 1_000_000.0 / sec
-                lastEmit = now
-              }
-              if (now - t0 > 10_000) break
-            }
-          }
-        } finally {
-          conn.disconnect()
-        }
-      }
-      val sec = (System.currentTimeMillis() - t0) / 1000.0
-      if (sec > 0) result.downMbps = bytes * 8.0 / 1_000_000.0 / sec
-    }
-
-    // ---- upload: stream random bytes for up to 10s; measured during the write so a
-    //      truncated-response close doesn't lose the reading ----
-    onPhase(SpeedPhase.UPLOAD)
-    runCatching {
-      val conn =
-          java.net.URL("https://speed.cloudflare.com/__up").openConnection()
-              as java.net.HttpURLConnection
-      conn.requestMethod = "POST"
-      conn.doOutput = true
-      conn.connectTimeout = 8_000
-      conn.readTimeout = 20_000
-      conn.setChunkedStreamingMode(0)
-      val chunk = ByteArray(65_536).also { java.util.Random().nextBytes(it) }
-      val t0 = System.currentTimeMillis()
-      var sent = 0L
-      var lastEmit = 0L
-      runCatching {
-        conn.outputStream.use { o ->
-          while (System.currentTimeMillis() - t0 < 10_000) {
-            o.write(chunk)
-            sent += chunk.size
-            val now = System.currentTimeMillis()
-            val sec = (now - t0) / 1000.0
-            if (now - lastEmit > 200 && sec > 0) {
-              result.upMbps = sent * 8.0 / 1_000_000.0 / sec
-              lastEmit = now
-            }
-          }
-          o.flush()
-        }
-        runCatching { conn.responseCode }
-      }
-      conn.disconnect()
-      val sec = (System.currentTimeMillis() - t0) / 1000.0
-      if (sec > 0 && sent > 0) result.upMbps = sent * 8.0 / 1_000_000.0 / sec
-    }
-  }
-}
-
-@Composable
-private fun NowPlayingTile(onClick: () -> Unit) {
-  val context = androidx.compose.ui.platform.LocalContext.current
-  val audioMgr = remember { context.getSystemService(Context.AUDIO_SERVICE) as AudioManager }
-  var playing by remember { mutableStateOf(audioMgr.isMusicActive) }
-  LaunchedEffect(Unit) {
-    while (true) { playing = audioMgr.isMusicActive; delay(1_500) }
-  }
-  BuiltInTile(
-      label = if (playing) "Now Playing" else "Media",
-      background = if (playing) Color(0xFF1B5E20) else Color(0xFF2B2B2B),
-      glyph = if (playing) ICON_PAUSE else ICON_PLAY,
-      onClick = onClick,
-  )
-}
-
-/** Full Now Playing panel: album art + track from the active media session, with
- *  transport controls. If notification-listener access isn't granted, it can't read
- *  the track — so it shows a one-tap button to enable it (still offers play/pause). */
-@Composable
-private fun NowPlayingOverlay(onDismiss: () -> Unit) {
-  val context = androidx.compose.ui.platform.LocalContext.current
-  val audioMgr = remember { context.getSystemService(Context.AUDIO_SERVICE) as AudioManager }
-  var listenerOn by remember { mutableStateOf(SettingsGuard.isMediaListenerEnabled(context)) }
-  var track by remember { mutableStateOf<NowPlayingState?>(null) }
-  var playing by remember { mutableStateOf(audioMgr.isMusicActive) }
-
-  // Re-check the listener grant on resume (the user may have just enabled it) and poll
-  // the current track while open.
-  LaunchedEffect(Unit) {
-    while (true) {
-      listenerOn = SettingsGuard.isMediaListenerEnabled(context)
-      track = if (listenerOn) NowPlayingHub.current else null
-      playing = audioMgr.isMusicActive
-      delay(1_500)
-    }
-  }
-
-  fun mediaKey(code: Int) {
-    audioMgr.dispatchMediaKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, code))
-    audioMgr.dispatchMediaKeyEvent(KeyEvent(KeyEvent.ACTION_UP, code))
-  }
-
-  BackHandler { onDismiss() }
-  Box(
-      contentAlignment = Alignment.Center,
-      modifier = Modifier.fillMaxSize().background(Color(0xCC000000))
-          .tvFocusable(RoundedCornerShape(0.dp), focusScale = 1f) { onDismiss() },
-  ) {
-    Surface(color = MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(24.dp),
-        modifier = Modifier.widthIn(max = 560.dp).padding(24.dp)) {
-      Column(modifier = Modifier.padding(28.dp), horizontalAlignment = Alignment.CenterHorizontally,
-          verticalArrangement = Arrangement.spacedBy(16.dp)) {
-        Text("Now Playing", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Bold)
-
-        val art = track?.artBitmap
-        if (art != null) {
-          Image(bitmap = art.asImageBitmap(), contentDescription = null,
-              modifier = Modifier.size(180.dp).clip(RoundedCornerShape(16.dp)))
-        } else {
-          Box(modifier = Modifier.size(180.dp).clip(RoundedCornerShape(16.dp)).background(Color(0x22FFFFFF)),
-              contentAlignment = Alignment.Center) {
-            Text("♪", color = Color(0x66FFFFFF), fontSize = 72.sp)
-          }
-        }
-
-        when {
-          track != null -> {
-            Text(track!!.title, color = Color.White, fontSize = 19.sp, fontWeight = FontWeight.SemiBold,
-                maxLines = 1, overflow = TextOverflow.Ellipsis)
-            if (track!!.artist.isNotBlank())
-                Text(track!!.artist, color = Color(0xFFBFBFBF), fontSize = 15.sp, maxLines = 1)
-          }
-          !listenerOn -> {
-            Text("To show the track name and album art, give Immortal permission to read " +
-                "media notifications.", color = Color(0xFF9A9A9A), fontSize = 14.sp,
-                textAlign = TextAlign.Center)
-            Surface(color = MaterialTheme.colorScheme.primary, shape = RoundedCornerShape(12.dp),
-                modifier = Modifier.tvFocusable(RoundedCornerShape(12.dp), focusScale = 1f) {
-                  // Prefer flipping the secure setting ourselves (Portal's listener
-                  // settings UI is unreliable); fall back to it only if we can't.
-                  SettingsGuard.enableMediaListener(context)
-                  if (SettingsGuard.isMediaListenerEnabled(context)) {
-                    listenerOn = true
-                  } else {
-                    runCatching {
-                      context.startActivity(
-                          Intent("android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS")
-                              .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-                    }
-                  }
-                }) {
-              Text("Enable now-playing access",
-                  color = Color.White, fontSize = 15.sp,
-                  fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(horizontal = 18.dp, vertical = 10.dp))
-            }
-          }
-          else -> Text(if (playing) "Playing" else "Nothing playing", color = Color(0xFF9A9A9A), fontSize = 15.sp)
-        }
-
-        // Transport controls (work via media keys regardless of listener access).
-        Row(horizontalArrangement = Arrangement.spacedBy(20.dp), verticalAlignment = Alignment.CenterVertically) {
-          TransportButton("⏮") { mediaKey(KeyEvent.KEYCODE_MEDIA_PREVIOUS) }
-          TransportButton(if (playing) "⏸" else "▶", big = true) {
-            mediaKey(KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE); playing = !playing
-          }
-          TransportButton("⏭") { mediaKey(KeyEvent.KEYCODE_MEDIA_NEXT) }
-        }
-
-        Surface(color = Color(0x22FFFFFF), shape = RoundedCornerShape(14.dp),
-            modifier = Modifier.fillMaxWidth().tvFocusable(RoundedCornerShape(14.dp), focusScale = 1f) { onDismiss() }) {
-          Text("Close", color = Color.White, fontSize = 16.sp, textAlign = TextAlign.Center,
-              modifier = Modifier.padding(vertical = 10.dp).fillMaxWidth())
-        }
-      }
-    }
-  }
-}
-
-@Composable
-private fun TransportButton(glyph: String, big: Boolean = false, onClick: () -> Unit) {
-  val sz = if (big) 64.dp else 52.dp
-  Surface(color = if (big) MaterialTheme.colorScheme.primary else Color(0x22FFFFFF),
-      shape = androidx.compose.foundation.shape.CircleShape,
-      modifier = Modifier.size(sz).tvFocusable(androidx.compose.foundation.shape.CircleShape) { onClick() }) {
-    Box(contentAlignment = Alignment.Center) {
-      Text(glyph, color = Color.White, fontSize = if (big) 26.sp else 20.sp)
-    }
-  }
-}
-
 // Material-style glyph paths (24x24 viewport), rendered crisply as vectors.
 private const val ICON_CALL =
     "M6.62 10.79c1.44 2.83 3.76 5.14 6.59 6.59l2.2-2.2c.27-.27.67-.36 1.02-.24 1.12.37 2.33.57 3.57.57.55 0 1 .45 1 1V20c0 .55-.45 1-1 1-9.39 0-17-7.61-17-17 0-.55.45-1 1-1h3.5c.55 0 1 .45 1 1 0 1.25.2 2.45.57 3.57.11.35.03.74-.25 1.02l-2.2 2.2z"
@@ -4354,326 +1982,15 @@ private const val ICON_REFRESH =
     "M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"
 private const val ICON_IMAGE =
     "M21 19V5c0-1.1-.9-2-2-2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2zM8.5 13.5l2.5 3.01L14.5 12l4.5 6H5l3.5-4.5z"
-private const val ICON_CAMERA =
-    "M9 2L7.17 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2h-3.17L15 2H9zm3 15c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5z"
-private const val ICON_SPEEDTEST =
-    "M20.38 8.57l-1.23 1.85a8 8 0 0 1-.22 7.58H5.07A8 8 0 0 1 15.58 6.85l1.85-1.23A10 10 0 0 0 3.35 19a2 2 0 0 0 1.72 1h13.85a2 2 0 0 0 1.74-1 10 10 0 0 0-.27-10.44zm-9.79 6.84a2 2 0 0 0 2.83 0l5.66-8.49-8.49 5.66a2 2 0 0 0 0 2.83z"
-private const val ICON_MOON =
-    "M12 3c-4.97 0-9 4.03-9 9s4.03 9 9 9 9-4.03 9-9c0-.46-.04-.92-.1-1.36-.98 1.37-2.58 2.26-4.4 2.26-2.98 0-5.4-2.42-5.4-5.4 0-1.81.89-3.42 2.26-4.4-.44-.06-.9-.1-1.36-.1z"
-private const val ICON_PLAY = "M5 3l14 9-14 9V3z"
-private const val ICON_PAUSE = "M6 19h4V5H6v14zm8-14v14h4V5h-4z"
-private const val ICON_WAVING_HAND =
-    "M23 17c0 3.31-2.69 6-6 6v-1.5c2.48 0 4.5-2.02 4.5-4.5H23zM1 7c0-3.31 2.69-6 6-6v1.5C4.52 2.5 2.5 4.52 2.5 7H1zm7.01-1.5L7 7v3.5l1.01 1.5L10 13.5l-1 1.5v3.5l1.01 1.5 7 .01L18 18.5v-3.5l-1-1.5 1.99-1.5L18 10v-3.5l-1.01-1.5-7-.01zM13 7h2.5l1.5 1.5-1.5 1.5H13V7z"
+private const val ICON_WIDGETS =
+    "M3 3h8v8H3V3zm10 0h8v5h-8V3zM3 13h5v8H3v-8zm7 0h11v8H10v-8z"
 private const val ICON_HELP =
     "M11 18h2v-2h-2v2zm1-16C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm0-14c-2.21 0-4 1.79-4 4h2c0-1.1.9-2 2-2s2 .9 2 2c0 2-3 1.75-3 5h2c0-2.25 3-2.5 3-5 0-2.21-1.79-4-4-4z"
-// Contact / address-book icon for the Contacts tile in Settings.
-private const val ICON_CONTACT =
-    "M20 0H4v2h16V0zM4 24h16v-2H4v2zM20 4H4c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm-8 2.5c1.93 0 3.5 1.57 3.5 3.5s-1.57 3.5-3.5 3.5-3.5-1.57-3.5-3.5 1.57-3.5 3.5-3.5zM18 18H6v-1c0-2 4-3.1 6-3.1s6 1.1 6 3.1v1z"
 private const val ICON_GEAR =
     "M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"
-// Simple clock face: circle with hour and minute hands.
-private const val ICON_TIME =
-    "M11.99 2C6.47 2 2 6.48 2 12s4.47 10 9.99 10C17.52 22 22 17.52 22 12S17.52 2 11.99 2zM12 20c-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8-3.58 8-8 8zm.5-13H11v6l5.25 3.15.75-1.23-4.5-2.67z"
-// Simple home icon for the Portal home shortcut tile.
-private const val ICON_PORTAL =
-    "M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z"
-// Bell icon for the Sounds (ambient chime) tile in Settings.
-private const val ICON_BELL =
-    "M12 22c1.1 0 2-.9 2-2h-4c0 1.1.9 2 2 2zm6-6v-5c0-3.07-1.63-5.64-4.5-6.32V4c0-.83-.67-1.5-1.5-1.5s-1.5.67-1.5 1.5v.68C7.64 5.36 6 7.92 6 11v5l-2 2v1h16v-1l-2-2z"
-// Hourglass icon for the Countdowns tile in Settings.
-private const val ICON_HOURGLASS =
-    "M6 2v6h.01L6 8.01 10 12l-4 4 .01.01H6V22h12v-5.99h-.01L18 16l-4-4 4-3.99-.01-.01H18V2H6zm10 14.5V20H8v-3.5l4-4 4 4zM12 11.5l-4-4V4h8v3.5l-4 4z"
-// Lightbulb icon for the Daily quote/word/trivia tile.
-private const val ICON_LIGHTBULB =
-    "M9 21c0 .55.45 1 1 1h4c.55 0 1-.45 1-1v-1H9v1zm3-19C8.14 2 5 5.14 5 9c0 2.38 1.19 4.47 3 5.74V17c0 .55.45 1 1 1h6c.55 0 1-.45 1-1v-2.26c1.81-1.27 3-3.36 3-5.74 0-3.86-3.14-7-7-7z"
-// Sticky-note icon for the Leave-a-note tile.
-private const val ICON_NOTE =
-    "M14 2H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V8l-6-6zm2 16H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z"
-// Bus icon for the Transit tile.
-private const val ICON_BUS =
-    "M4 16c0 .88.39 1.67 1 2.22V20c0 .55.45 1 1 1h1c.55 0 1-.45 1-1v-1h8v1c0 .55.45 1 1 1h1c.55 0 1-.45 1-1v-1.78c.61-.55 1-1.34 1-2.22V6c0-3.5-3.58-4-8-4s-8 .5-8 4v10zm3.5 1c-.83 0-1.5-.67-1.5-1.5S6.67 14 7.5 14s1.5.67 1.5 1.5S8.33 17 7.5 17zm9 0c-.83 0-1.5-.67-1.5-1.5s.67-1.5 1.5-1.5 1.5.67 1.5 1.5-.67 1.5-1.5 1.5zm1.5-6H6V6h12v5z"
-private const val ICON_HEADPHONES =
-    "M12 1c-4.97 0-9 4.03-9 9v7c0 1.66 1.34 3 3 3h3v-8H5v-2c0-3.87 3.13-7 7-7s7 3.13 7 7v2h-3v8h3c1.66 0 3-1.34 3-3v-7c0-4.97-4.03-9-9-9z"
-// Stopwatch / timer icon.
-private const val ICON_STOPWATCH =
-    "M15 1H9v2h6V1zm-4 13h2V8h-2v6zm8.03-6.61l1.42-1.42c-.43-.51-.9-.99-1.41-1.41l-1.42 1.42C16.07 4.74 14.12 4 12 4c-4.97 0-9 4.03-9 9s4.02 9 9 9 9-4.03 9-9c0-2.12-.74-4.07-1.97-5.61zM12 20c-3.87 0-7-3.13-7-7s3.13-7 7-7 7 3.13 7 7-3.13 7-7 7z"
-// Swap/convert arrows icon.
-private const val ICON_CONVERT =
-    "M7.5 21.5L4 18l3.5-3.5 1.42 1.42L7.83 17H16v2H7.83l1.09 1.08L7.5 21.5zM16.5 2.5L20 6l-3.5 3.5-1.42-1.42L16.17 7H8V5h8.17l-1.09-1.08L16.5 2.5z"
-// Lamp / nightlight (wb_incandescent) icon.
-private const val ICON_LAMP =
-    "M3.55 18.54l1.41 1.41 1.79-1.8-1.41-1.41-1.79 1.8zM11 22.45h2V19.5h-2v2.95zM4 10.5H1v2h3v-2zm11-4.19V1.5H9v4.81C7.21 7.35 6 9.28 6 11.5c0 3.31 2.69 6 6 6s6-2.69 6-6c0-2.22-1.21-4.15-3-5.19zM20 10.5v2h3v-2h-3zm-2.76 7.66l1.79 1.8 1.41-1.41-1.8-1.79-1.4 1.4z"
-// Book (menu_book) icon for the bedtime story tile.
-private const val ICON_BOOK =
-    "M21 5c-1.11-.35-2.33-.5-3.5-.5-1.95 0-4.05.4-5.5 1.5-1.45-1.1-3.55-1.5-5.5-1.5S2.45 4.9 1 6v14.65c0 .25.25.5.5.5.1 0 .15-.05.25-.05C3.1 20.45 5.05 20 6.5 20c1.95 0 4.05.4 5.5 1.5 1.35-.85 3.8-1.5 5.5-1.5 1.65 0 3.35.3 4.75 1.05.1.05.15.05.25.05.25 0 .5-.25.5-.5V6c-.6-.45-1.25-.75-2-1zm0 13.5c-1.1-.35-2.3-.5-3.5-.5-1.7 0-4.15.65-5.5 1.5V8c1.35-.85 3.8-1.5 5.5-1.5 1.2 0 2.4.15 3.5.5v11.5z"
-// Sunrise (wb_twilight) icon.
-private const val ICON_SUNRISE =
-    "M6.76 4.84l-1.8-1.79-1.41 1.41 1.79 1.79 1.42-1.41zM4 10.5H1v2h3v-2zm9-9.95h-2V3.5h2V.55zm7.45 3.91l-1.41-1.41-1.79 1.79 1.41 1.41 1.79-1.79zm-3.21 13.7l1.79 1.8 1.41-1.41-1.8-1.79-1.4 1.4zM20 10.5v2h3v-2h-3zm-8-5c-3.31 0-6 2.69-6 6s2.69 6 6 6 6-2.69 6-6-2.69-6-6-6zm-1 16.95h2V19.5h-2v2.95zm-7.45-3.91l1.41 1.41 1.79-1.8-1.41-1.41-1.79 1.8z"
-// Inbox / request board icon.
-private const val ICON_INBOX =
-    "M19 3H4.99c-1.11 0-1.98.9-1.98 2L3 19c0 1.1.88 2 1.99 2H19c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 12h-4c0 1.66-1.35 3-3 3s-3-1.34-3-3H4.99V5H19v10z"
-// Notifications/bell-ring icon for the Ping tile.
-private const val ICON_PING =
-    "M7.58 4.08L6.15 2.65C3.75 4.48 2.17 7.3 2.03 10.5h2c.15-2.65 1.51-4.97 3.55-6.42zm12.39 6.42h2c-.15-3.2-1.73-6.02-4.12-7.85l-1.42 1.43c2.02 1.45 3.39 3.77 3.54 6.42zM18 11c0-3.07-1.64-5.64-4.5-6.32V4c0-.83-.67-1.5-1.5-1.5s-1.5.67-1.5 1.5v.68C7.63 5.36 6 7.92 6 11v5l-2 2v1h16v-1l-2-2v-5zm-6 11c.14 0 .27-.01.4-.04.65-.14 1.18-.58 1.44-1.18.1-.24.15-.5.15-.78h-4c.01 1.1.9 2 2.01 2z"
-// History / changelog icon.
-private const val ICON_HISTORY =
-    "M13 3c-4.97 0-9 4.03-9 9H1l3.89 3.89.07.14L9 12H6c0-3.87 3.13-7 7-7s7 3.13 7 7-3.13 7-7 7c-1.93 0-3.68-.79-4.94-2.06l-1.42 1.42C8.27 19.99 10.51 21 13 21c4.97 0 9-4.03 9-9s-4.03-9-9-9zm-1 5v5l4.28 2.54.72-1.21-3.5-2.08V8H12z"
-// Waves icon (aurora curtains) for the Aurora tile.
-private const val ICON_AURORA =
-    "M17 16.99c-1.35 0-2.2.42-2.95.8-.65.33-1.18.6-2.05.6-.9 0-1.4-.25-2.05-.6-.75-.38-1.57-.8-2.95-.8s-2.2.42-2.95.8c-.65.33-1.17.6-2.05.6v1.95c1.35 0 2.2-.42 2.95-.8.65-.33 1.17-.6 2.05-.6s1.4.25 2.05.6c.75.38 1.57.8 2.95.8s2.2-.42 2.95-.8c.65-.33 1.18-.6 2.05-.6.9 0 1.4.25 2.05.6.75.38 1.58.8 2.95.8v-1.95c-.9 0-1.4-.25-2.05-.6-.75-.38-1.6-.8-2.95-.8zm0-4.45c-1.35 0-2.2.43-2.95.8-.65.32-1.18.6-2.05.6-.9 0-1.4-.25-2.05-.6-.75-.37-1.57-.8-2.95-.8s-2.2.43-2.95.8c-.65.32-1.17.6-2.05.6v1.95c1.35 0 2.2-.43 2.95-.8.65-.33 1.17-.6 2.05-.6s1.4.25 2.05.6c.75.37 1.57.8 2.95.8s2.2-.43 2.95-.8c.65-.33 1.18-.6 2.05-.6.9 0 1.4.25 2.05.6.75.38 1.58.8 2.95.8v-1.95c-.9 0-1.4-.25-2.05-.6-.75-.37-1.6-.8-2.95-.8zM17 8.09c-1.35 0-2.2.43-2.95.8-.65.32-1.18.61-2.05.61-.9 0-1.4-.25-2.05-.61-.75-.37-1.57-.8-2.95-.8s-2.2.43-2.95.8c-.65.33-1.17.61-2.05.61v1.95c1.35 0 2.2-.43 2.95-.8.65-.32 1.17-.6 2.05-.6s1.4.25 2.05.6c.75.38 1.57.8 2.95.8s2.2-.43 2.95-.8c.65-.32 1.18-.6 2.05-.6.9 0 1.4.25 2.05.6.75.38 1.58.8 2.95.8V8.9c-.9 0-1.4-.25-2.05-.61-.75-.37-1.6-.8-2.95-.8z"
-// Satellite (satellite_alt) icon for the ISS pass tile.
-private const val ICON_SATELLITE =
-    "M11.62 1.99l-3.83 3.83c-.78.78-.78 2.05 0 2.83l1.41 1.41-1.42 1.42-1.41-1.41c-.78-.78-2.05-.78-2.83 0L1.99 13.4c-.79.78-.79 2.05 0 2.83l5.78 5.78c.78.78 2.05.78 2.83 0l3.55-3.55c.78-.78.78-2.05 0-2.83l-1.41-1.41 1.42-1.42 1.41 1.41c.78.78 2.05.78 2.83 0l3.83-3.83c.78-.78.78-2.05 0-2.83l-5.78-5.78c-.79-.78-2.06-.78-2.84 0zm-4.2 16.6l-4.4-4.4 2.13-2.13 4.4 4.4-2.13 2.13zm9.2-9.2l-4.4-4.4 2.13-2.13 4.4 4.4-2.13 2.13z"
 
 /** A non-app tile injected into a folder (e.g. the Screensaver settings entry). */
 private data class FolderExtra(val label: String, val glyph: String, val onClick: () -> Unit)
-
-// ---- Tool category folders --------------------------------------------------
-// The built-in "tool" tiles (ISS, Aurora, Stopwatch, Lamp, Ping, …) are grouped
-// into these few category folders on the home grid. The folder tile opens a
-// ToolCategoryOverlay that renders the real tiles, so dynamic ones (Aurora lighting
-// up, ISS pass count) keep working inside the folder. Membership is wired where the
-// overlay is built in HomeScreen; this list only drives the folder tiles shown.
-private const val TOOLCAT_SKY = "Sky & Outdoors"
-private const val TOOLCAT_KITCHEN = "Kitchen & Tools"
-private const val TOOLCAT_AMBIENT = "Ambient & Sleep"
-private const val TOOLCAT_HOME = "Home & LAN"
-private const val TOOLCAT_MORE = "More"
-
-private data class ToolCat(val id: String, val glyph: String)
-
-private val TOOL_CATEGORIES =
-    listOf(
-        ToolCat(TOOLCAT_SKY, ICON_SATELLITE),
-        ToolCat(TOOLCAT_KITCHEN, ICON_STOPWATCH),
-        ToolCat(TOOLCAT_AMBIENT, ICON_MOON),
-        ToolCat(TOOLCAT_HOME, ICON_PING),
-        ToolCat(TOOLCAT_MORE, ICON_INBOX),
-    )
-
-// Canonical tool ids — persisted in UserLayout tool-category overrides, so keep stable.
-private const val TOOL_ISS = "iss"
-private const val TOOL_AURORA = "aurora"
-private const val TOOL_TRANSIT = "transit"
-private const val TOOL_STOPWATCH = "stopwatch"
-private const val TOOL_CONVERTER = "converter"
-private const val TOOL_SPEEDTEST = "speedtest"
-private const val TOOL_LAMP = "lamp"
-private const val TOOL_MYNOISE = "mynoise"
-private const val TOOL_BEDTIME = "bedtime"
-private const val TOOL_SUNRISE = "sunrise"
-private const val TOOL_PING = "ping"
-private const val TOOL_NOTE = "note"
-private const val TOOL_NOWPLAYING = "nowplaying"
-private const val TOOL_CAMERA = "camera"
-private const val TOOL_DAILY = "daily"
-private const val TOOL_WHATSNEW = "whatsnew"
-private const val TOOL_REQUEST = "request"
-private const val TOOL_REPORTAL = "reportal"
-
-/** A built-in tool: its stable id, a label + glyph for the folder editor's static chip,
- *  and the category it lives in by default (a user override in UserLayout wins). */
-private data class ToolDef(
-    val id: String,
-    val label: String,
-    val glyph: String,
-    val defaultCat: String,
-)
-
-private val ALL_TOOLS =
-    listOf(
-        ToolDef(TOOL_ISS, "Space station", ICON_SATELLITE, TOOLCAT_SKY),
-        ToolDef(TOOL_AURORA, "Aurora", ICON_AURORA, TOOLCAT_SKY),
-        ToolDef(TOOL_TRANSIT, "Transit", ICON_BUS, TOOLCAT_SKY),
-        ToolDef(TOOL_STOPWATCH, "Stopwatch", ICON_STOPWATCH, TOOLCAT_KITCHEN),
-        ToolDef(TOOL_CONVERTER, "Converter", ICON_CONVERT, TOOLCAT_KITCHEN),
-        ToolDef(TOOL_SPEEDTEST, "Speed test", ICON_SPEEDTEST, TOOLCAT_KITCHEN),
-        ToolDef(TOOL_LAMP, "Lamp", ICON_LAMP, TOOLCAT_AMBIENT),
-        ToolDef(TOOL_MYNOISE, "Soundscapes", ICON_HEADPHONES, TOOLCAT_AMBIENT),
-        ToolDef(TOOL_BEDTIME, "Bedtime", ICON_BOOK, TOOLCAT_AMBIENT),
-        ToolDef(TOOL_SUNRISE, "Sunrise", ICON_SUNRISE, TOOLCAT_AMBIENT),
-        ToolDef(TOOL_PING, "Ping", ICON_PING, TOOLCAT_HOME),
-        ToolDef(TOOL_NOTE, "Note", ICON_NOTE, TOOLCAT_HOME),
-        ToolDef(TOOL_NOWPLAYING, "Now playing", ICON_PLAY, TOOLCAT_HOME),
-        ToolDef(TOOL_CAMERA, "Cameras", ICON_CAMERA, TOOLCAT_HOME),
-        ToolDef(TOOL_DAILY, "Daily", ICON_LIGHTBULB, TOOLCAT_MORE),
-        ToolDef(TOOL_WHATSNEW, "What's new", ICON_HISTORY, TOOLCAT_MORE),
-        ToolDef(TOOL_REQUEST, "Request app", ICON_INBOX, TOOLCAT_MORE),
-        ToolDef(TOOL_REPORTAL, "Reportal", ICON_GLOBE, TOOLCAT_MORE),
-    )
-
-private fun toolDefOf(id: String): ToolDef? = ALL_TOOLS.firstOrNull { it.id == id }
-
-/** Home-grid tile for a tool category. Styled like a folder (neutral slate) with the
- *  category's glyph, to read as a container rather than a single action. */
-@Composable
-private fun ToolFolderTile(label: String, glyph: String, onClick: () -> Unit) {
-  BuiltInTile(label = label, background = Color(0xFF3A3A3A), glyph = glyph, onClick = onClick)
-}
-
-private const val ICON_GLOBE =
-    "M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"
-
-/** Web shortcut to reportal.dev — the community directory of Portal apps/widgets. Opens
- *  in the device browser (Chromium handles https). Lives in the tools folders (movable). */
-@Composable
-private fun ReportalTile(onClick: () -> Unit) {
-  BuiltInTile(label = "Reportal", background = Color(0xFF1565C0), glyph = ICON_GLOBE, onClick = onClick)
-}
-
-/** Overlay listing one tool category's tiles in a grid. Lighter than [FolderOverlay]
- *  (these aren't app folders). The ✎ button toggles edit mode: each tool becomes a chip
- *  whose tap menu moves it to another folder, and an Add tile pulls tools in from other
- *  folders. Back / tap-outside dismiss; the grid takes focus on open so the D-pad works. */
-@Composable
-private fun ToolCategoryOverlay(
-    title: String,
-    toolIds: List<String>,
-    editMode: Boolean,
-    onToggleEdit: () -> Unit,
-    renderLive: @Composable (String) -> Unit,
-    categories: List<String>,
-    addable: List<ToolDef>,
-    onMove: (String, String) -> Unit,
-    onDismiss: () -> Unit,
-) {
-  val noRipple = remember { MutableInteractionSource() }
-  BackHandler { onDismiss() }
-  val gridFocus = remember { FocusRequester() }
-  LaunchedEffect(Unit) { runCatching { gridFocus.requestFocus() } }
-
-  val count = toolIds.size + if (editMode) 1 else 0
-  val cols = when {
-    count <= 3 -> 3
-    count <= 8 -> 4
-    else -> 5
-  }
-  val tileScale = LocalTileDp.current / 88.dp
-  val desiredWidth = (420.dp + 126.dp * (cols - 3)) * tileScale
-  val screenWidth = androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp.dp
-  val screenHeight = androidx.compose.ui.platform.LocalConfiguration.current.screenHeightDp.dp
-
-  Box(
-      contentAlignment = Alignment.Center,
-      modifier =
-          Modifier.fillMaxSize()
-              .onPreviewKeyEvent { e ->
-                if (e.key == Key.Back || e.key == Key.Escape) {
-                  if (e.type == KeyEventType.KeyUp) onDismiss()
-                  true
-                } else false
-              }
-              .background(Color(0xCC000000))
-              .clickable(interactionSource = noRipple, indication = null) { onDismiss() },
-  ) {
-    Surface(
-        color = Color(0xFF1C1C1E),
-        shape = RoundedCornerShape(28.dp),
-        modifier =
-            Modifier.width(desiredWidth)
-                .widthIn(max = screenWidth * 0.94f)
-                .clickable(interactionSource = noRipple, indication = null) {},
-    ) {
-      Column(modifier = Modifier.padding(28.dp)) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
-          Text(title, color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Bold,
-              modifier = Modifier.weight(1f))
-          Surface(
-              color = if (editMode) MaterialTheme.colorScheme.primary else Color(0x33FFFFFF),
-              shape = androidx.compose.foundation.shape.CircleShape,
-              modifier =
-                  Modifier.size(40.dp).tvFocusable(androidx.compose.foundation.shape.CircleShape) {
-                    onToggleEdit()
-                  },
-          ) {
-            Box(contentAlignment = Alignment.Center) { Text("✎", color = Color.White, fontSize = 18.sp) }
-          }
-        }
-        Spacer(Modifier.size(20.dp))
-        LazyVerticalGrid(
-            columns = GridCells.Fixed(cols),
-            horizontalArrangement = Arrangement.spacedBy(16.dp),
-            verticalArrangement = Arrangement.spacedBy(20.dp),
-            modifier =
-                Modifier.heightIn(max = screenHeight * 0.62f).focusRequester(gridFocus).focusGroup(),
-        ) {
-          items(toolIds, key = { it }) { id ->
-            if (!editMode) {
-              renderLive(id)
-            } else {
-              val def = toolDefOf(id)
-              if (def != null) {
-                EditableToolTile(
-                    def = def,
-                    currentCat = title,
-                    categories = categories,
-                    onMove = { target -> onMove(id, target) },
-                )
-              }
-            }
-          }
-          if (editMode) {
-            item(key = "__add__") {
-              AddToolTile(addable = addable, onAdd = { d -> onMove(d.id, title) })
-            }
-          }
-        }
-        if (editMode) {
-          Spacer(Modifier.size(10.dp))
-          Text(
-              "Tap a tool to move it to another folder, or use Add to bring one in.",
-              color = Color(0xFF8A8A8A), fontSize = 13.sp,
-              modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.Center)
-        }
-      }
-    }
-  }
-}
-
-/** Edit-mode representation of a tool: a static glyph+label tile with a menu to move it
- *  to a different category folder. */
-@Composable
-private fun EditableToolTile(
-    def: ToolDef,
-    currentCat: String,
-    categories: List<String>,
-    onMove: (String) -> Unit,
-) {
-  var menu by remember { mutableStateOf(false) }
-  Box {
-    BuiltInTile(label = def.label, background = Color(0xFF4A3B57), glyph = def.glyph) { menu = true }
-    DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
-      Text("  Move to…", color = Color(0xFF9A9A9A), fontSize = 13.sp,
-          modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp))
-      categories.filter { it != currentCat }.forEach { cat ->
-        DropdownMenuItem(text = { Text(cat) }, onClick = { menu = false; onMove(cat) })
-      }
-    }
-  }
-}
-
-/** Edit-mode "Add" tile: a menu of tools currently living in other folders; picking one
- *  moves it into this folder. */
-@Composable
-private fun AddToolTile(addable: List<ToolDef>, onAdd: (ToolDef) -> Unit) {
-  var menu by remember { mutableStateOf(false) }
-  Box {
-    BuiltInTile(label = "Add", background = Color(0xFF2E7D32), glyph = ICON_DOWNLOAD) { menu = true }
-    DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
-      if (addable.isEmpty()) {
-        Text("  All tools are here", color = Color(0xFF9A9A9A), fontSize = 13.sp,
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp))
-      }
-      addable.forEach { d ->
-        DropdownMenuItem(text = { Text(d.label) }, onClick = { menu = false; onAdd(d) })
-      }
-    }
-  }
-}
 
 /** A built-in launcher tile: a rounded colour tile with a centered white vector
  * glyph, styled to sit naturally beside real app icons. */
@@ -4688,7 +2005,7 @@ private fun BuiltInTile(
   val tileDp = LocalTileDp.current
   Column(
       horizontalAlignment = Alignment.CenterHorizontally,
-      modifier = Modifier.padding(4.dp).tvFocusable(RoundedCornerShape(22.dp)) { onClick() },
+      modifier = Modifier.fillMaxWidth().padding(4.dp).tvFocusable(RoundedCornerShape(22.dp)) { onClick() },
   ) {
     Surface(
         color = background,
@@ -4712,18 +2029,19 @@ private fun FolderTile(
     name: String,
     apps: List<AppEntry>,
     modifier: Modifier = Modifier,
+    editMode: Boolean = false,
     onClick: () -> Unit,
 ) {
   val tileDp = LocalTileDp.current
   val scale = tileDp / 88.dp // mini-icon grid scales with the tile
   Column(
       horizontalAlignment = Alignment.CenterHorizontally,
-      modifier = modifier.padding(4.dp).tvFocusable(RoundedCornerShape(22.dp)) { onClick() },
+      modifier = modifier.fillMaxWidth().padding(4.dp).tvFocusable(RoundedCornerShape(22.dp)) { onClick() },
   ) {
     Surface(
         color = Color(0xFF3A3A3A),
         shape = RoundedCornerShape(20.dp),
-        modifier = Modifier.size(tileDp),
+        modifier = Modifier.size(tileDp).jiggle(editMode, name.hashCode()),
     ) {
       Column(
           modifier = Modifier.padding(13.dp * scale),
@@ -4777,22 +2095,6 @@ private fun FolderOverlay(
   val gridFocus = remember { FocusRequester() }
   LaunchedEffect(Unit) { runCatching { gridFocus.requestFocus() } }
 
-  // The folder widens (more columns) as it fills, so a packed folder spreads left/right
-  // instead of becoming a tall narrow strip. Column count scales with the item count;
-  // the panel width grows to match and is clamped to the screen (tiles shrink only if
-  // it would otherwise overflow). The grid scrolls vertically once very full.
-  val totalItems = extras.size + apps.size
-  val cols = when {
-    totalItems <= 6 -> 3
-    totalItems <= 12 -> 4
-    totalItems <= 20 -> 5
-    else -> 6
-  }
-  val tileScale = LocalTileDp.current / 88.dp
-  val desiredWidth = (420.dp + 126.dp * (cols - 3)) * tileScale
-  val screenWidth = androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp.dp
-  val screenHeight = androidx.compose.ui.platform.LocalConfiguration.current.screenHeightDp.dp
-
   Box(
       contentAlignment = Alignment.Center,
       modifier =
@@ -4832,10 +2134,9 @@ private fun FolderOverlay(
         color = Color(0xFF1C1C1E),
         shape = RoundedCornerShape(28.dp),
         modifier =
-            // Width grows with the column count and tile size, clamped to 94% of the
-            // screen so it never overflows the panel off-screen.
-            Modifier.width(desiredWidth)
-                .widthIn(max = screenWidth * 0.94f)
+            // The panel grows with the tile size (3 columns of LocalTileDp tiles
+            // must fit) — at 88dp this is the original 420dp.
+            Modifier.width(420.dp * (LocalTileDp.current / 88.dp))
                 .onGloballyPositioned { panel = it.boundsInWindow() }
                 .clickable(interactionSource = noRipple, indication = null) {},
     ) {
@@ -4862,11 +2163,10 @@ private fun FolderOverlay(
         }
         Spacer(Modifier.size(20.dp))
         LazyVerticalGrid(
-            columns = GridCells.Fixed(cols),
+            columns = GridCells.Fixed(3),
             horizontalArrangement = Arrangement.spacedBy(16.dp),
             verticalArrangement = Arrangement.spacedBy(20.dp),
-            // Cap height so a very full folder scrolls instead of overflowing the screen.
-            modifier = Modifier.heightIn(max = screenHeight * 0.62f).focusRequester(gridFocus).focusGroup(),
+            modifier = Modifier.focusRequester(gridFocus).focusGroup(),
         ) {
           extras.forEach { extra ->
             item(key = "extra:${extra.label}") {
@@ -5006,7 +2306,7 @@ private fun UpdatesTile(update: UpdateInfo?, status: String?, onClick: () -> Uni
   val tileDp = LocalTileDp.current
   Column(
       horizontalAlignment = Alignment.CenterHorizontally,
-      modifier = Modifier.padding(4.dp).tvFocusable(RoundedCornerShape(22.dp)) { onClick() },
+      modifier = Modifier.fillMaxWidth().padding(4.dp).tvFocusable(RoundedCornerShape(22.dp)) { onClick() },
   ) {
     Box {
       Surface(
@@ -5052,52 +2352,818 @@ private fun StoreTile(onClick: () -> Unit) {
 }
 
 @Composable
+private fun AddWidgetButton(onClick: () -> Unit) {
+  Surface(
+      color = Color(0xFF5B6BC0),
+      shape = RoundedCornerShape(30.dp),
+      modifier = Modifier.width(124.dp).height(60.dp).tvFocusable(RoundedCornerShape(30.dp)) {
+        onClick()
+      },
+  ) {
+    Row(
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.padding(horizontal = 20.dp),
+    ) {
+      Text("+", color = Color.White, fontSize = 30.sp, fontWeight = FontWeight.Light)
+      Text("Widget", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+    }
+  }
+}
+
+@Composable
+private fun WidgetTile(
+    widget: HomeWidgetStore.HomeWidget,
+    host: AppWidgetHost,
+    manager: AppWidgetManager,
+    editMode: Boolean,
+    tileDp: Dp,
+    modifier: Modifier = Modifier,
+    dimmed: Boolean = false,
+) {
+  val info = remember(widget.appWidgetId) {
+    if (widget.isAppWidget) manager.getAppWidgetInfo(widget.appWidgetId) else null
+  }
+  val height =
+      tileDp * widget.spanY.toFloat() +
+          20.dp * (widget.spanY - 1).coerceAtLeast(0).toFloat()
+
+  LaunchedEffect(widget, tileDp) {
+    if (widget.isAppWidget) updateWidgetSizeOptions(manager, widget, tileDp)
+  }
+
+  Box(modifier = modifier.fillMaxWidth().height(height).padding(4.dp)) {
+    Surface(
+        color = Color(0xFF252527),
+        shape = RoundedCornerShape(20.dp),
+        modifier =
+            Modifier.fillMaxSize()
+                .alpha(if (dimmed) 0.3f else 1f)
+                .jiggle(editMode && !dimmed, widget.key.hashCode()),
+    ) {
+      if (!widget.isAppWidget) {
+        ImmortalWidgetContent(widget = widget, modifier = Modifier.fillMaxSize())
+      } else if (info != null) {
+        AndroidView(
+            factory = {
+              host.createView(it, widget.appWidgetId, info).apply {
+                setAppWidget(widget.appWidgetId, info)
+                setPadding(0, 0, 0, 0)
+                isFocusable = true
+                isFocusableInTouchMode = true
+                descendantFocusability = ViewGroup.FOCUS_AFTER_DESCENDANTS
+              }
+            },
+            update = { view ->
+              view.setAppWidget(widget.appWidgetId, info)
+              view.isEnabled = !editMode
+            },
+            modifier = Modifier.fillMaxSize(),
+        )
+      } else {
+        Box(
+            Modifier.fillMaxSize().background(Color(0xFF303033)),
+            contentAlignment = Alignment.Center,
+        ) {
+          Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            WidgetGlyph()
+            Text(
+                "Widget unavailable",
+                color = Color.White,
+                fontSize = 16.sp,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.padding(top = 10.dp),
+            )
+            Text(
+                widget.providerPackage,
+                color = Color(0xFF9A9A9A),
+                fontSize = 13.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(top = 2.dp, start = 18.dp, end = 18.dp),
+            )
+          }
+        }
+      }
+    }
+    if (editMode) {
+      // Dim/scrim only — the drag scrim and ✕ / resize controls are added by the enclosing
+      // WidgetCell so they layer correctly above the hosted widget's own touch handling.
+      Box(
+          Modifier.fillMaxSize()
+              .jiggle(!dimmed, widget.key.hashCode())
+              .clip(RoundedCornerShape(20.dp))
+              .background(Color(0x66000000)))
+    }
+  }
+}
+
+@Composable
+private fun ImmortalWidgetContent(widget: HomeWidgetStore.HomeWidget, modifier: Modifier = Modifier) {
+  when (widget.kind) {
+    HomeWidgetStore.KIND_WEATHER -> ImmortalWeatherWidget(modifier)
+    HomeWidgetStore.KIND_WORLD_CLOCK -> ImmortalWorldClockWidget(modifier)
+    HomeWidgetStore.KIND_TIMERS -> ImmortalTimersWidget(modifier)
+    else -> UnknownImmortalWidget(widget.kind, modifier)
+  }
+}
+
+@Composable
+private fun ImmortalWidgetShell(
+    title: String,
+    modifier: Modifier = Modifier,
+    accent: Color = Color(0xFF7AA7FF),
+    content: @Composable ColumnScope.() -> Unit,
+) {
+  Column(
+      modifier =
+          modifier
+              .background(Color(0xFF161618), RoundedCornerShape(24.dp))
+              .padding(18.dp),
+  ) {
+    Text(
+        title.uppercase(Locale.getDefault()),
+        color = accent,
+        fontSize = 12.sp,
+        fontWeight = FontWeight.Bold,
+        maxLines = 1,
+    )
+    Spacer(Modifier.size(8.dp))
+    content()
+  }
+}
+
+@Composable
+private fun ImmortalWeatherWidget(modifier: Modifier = Modifier) {
+  val context = androidx.compose.ui.platform.LocalContext.current
+  var fahrenheit by remember { mutableStateOf(ImmortalSettings.useFahrenheit(context)) }
+  val lifecycleOwner = LocalLifecycleOwner.current
+  DisposableEffect(lifecycleOwner) {
+    val obs = LifecycleEventObserver { _, e ->
+      if (e == Lifecycle.Event.ON_RESUME) fahrenheit = ImmortalSettings.useFahrenheit(context)
+    }
+    lifecycleOwner.lifecycle.addObserver(obs)
+    onDispose { lifecycleOwner.lifecycle.removeObserver(obs) }
+  }
+  val current by
+      produceState<Weather.Current?>(initialValue = null, fahrenheit) {
+        while (true) {
+          value = withContext(Dispatchers.IO) { Weather.fetchCurrent(context) }
+          delay(if (value == null) 60_000L else 30L * 60 * 1000)
+        }
+      }
+  val forecast by
+      produceState<Weather.Forecast?>(initialValue = null, fahrenheit) {
+        value = withContext(Dispatchers.IO) { Weather.fetchForecast(context) }
+      }
+  val code = current?.code ?: 0
+  val isDay = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY) in 6..18
+  val (gTop, gBottom) = weatherGradient(code, isDay)
+  // Dynamic gradient card that matches the weather (iOS-style), city + big temp top-left,
+  // condition glyph top-right, and an hourly strip along the bottom.
+  Box(
+      modifier =
+          modifier
+              .clip(RoundedCornerShape(24.dp))
+              .background(Brush.linearGradient(listOf(gTop, gBottom)))
+              .padding(18.dp),
+  ) {
+    Column(Modifier.fillMaxSize()) {
+      Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
+        Column(Modifier.weight(1f)) {
+          Text(
+              current?.city?.ifBlank { "Weather" } ?: "Weather",
+              color = Color.White,
+              fontSize = 18.sp,
+              fontWeight = FontWeight.SemiBold,
+              maxLines = 1,
+              overflow = TextOverflow.Ellipsis,
+          )
+          Text(
+              current?.let { "${it.temp}°" } ?: "—",
+              color = Color.White,
+              fontSize = 46.sp,
+              fontWeight = FontWeight.Light,
+          )
+        }
+        Text(Weather.emoji(code), fontSize = 34.sp)
+      }
+      Spacer(Modifier.weight(1f))
+      val hours = forecast?.hours?.take(5).orEmpty()
+      if (hours.isNotEmpty()) {
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+          hours.forEach { h ->
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                modifier = Modifier.weight(1f),
+            ) {
+              Text(h.label, color = Color(0xCCFFFFFF), fontSize = 11.sp, maxLines = 1)
+              Text(Weather.emoji(h.code), fontSize = 18.sp, modifier = Modifier.padding(vertical = 3.dp))
+              Text("${h.temp}°", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+/** A weather-matching two-stop gradient (top → bottom), varying with the condition and day/night. */
+private fun weatherGradient(code: Int, isDay: Boolean): Pair<Color, Color> {
+  if (!isDay) {
+    return when {
+      code in 51..99 -> Color(0xFF2A3340) to Color(0xFF49586B)
+      code == 3 || code in 45..48 -> Color(0xFF263041) to Color(0xFF3C4A5E)
+      else -> Color(0xFF18233F) to Color(0xFF36527E)
+    }
+  }
+  return when {
+    code in 71..77 -> Color(0xFF7E93A8) to Color(0xFFBFCEDC) // snow
+    code in 51..67 || code in 80..82 -> Color(0xFF45607A) to Color(0xFF7791A6) // rain
+    code in 95..99 -> Color(0xFF3A4A5C) to Color(0xFF5E7286) // thunder
+    code == 3 -> Color(0xFF5E7E98) to Color(0xFF93ABC0) // overcast
+    code in 45..48 -> Color(0xFF7E8E9C) to Color(0xFFAEBBC6) // fog
+    else -> Color(0xFF3E8BD0) to Color(0xFF77B8E8) // clear / partly (the blue from the mock)
+  }
+}
+
+@Composable
+private fun ImmortalWorldClockWidget(modifier: Modifier = Modifier) {
+  val context = androidx.compose.ui.platform.LocalContext.current
+  var zones by remember { mutableStateOf(ImmortalSettings.worldClockZones(context)) }
+  val lifecycleOwner = LocalLifecycleOwner.current
+  DisposableEffect(lifecycleOwner) {
+    val obs = LifecycleEventObserver { _, e ->
+      if (e == Lifecycle.Event.ON_RESUME) zones = ImmortalSettings.worldClockZones(context)
+    }
+    lifecycleOwner.lifecycle.addObserver(obs)
+    onDispose { lifecycleOwner.lifecycle.removeObserver(obs) }
+  }
+  var now by remember { mutableStateOf(Date()) }
+  LaunchedEffect(Unit) {
+    while (true) {
+      now = Date()
+      delay(1000)
+    }
+  }
+  ImmortalWidgetShell(title = "World Clock", accent = Color(0xFFFFC857), modifier = modifier) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        verticalAlignment = Alignment.Top,
+    ) {
+      zones.take(4).forEach { zone ->
+        Column(
+            modifier = Modifier.weight(1f),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+          AnalogClock(zone, now, Modifier.fillMaxWidth().aspectRatio(1f))
+          Spacer(Modifier.size(6.dp))
+          Text(
+              worldClockLabel(zone),
+              color = Color.White,
+              fontSize = 12.sp,
+              fontWeight = FontWeight.Medium,
+              maxLines = 1,
+              overflow = TextOverflow.Ellipsis,
+          )
+          Text(worldClockOffset(zone, now), color = Color(0xFF9A9A9A), fontSize = 10.sp, maxLines = 1)
+        }
+      }
+    }
+  }
+}
+
+/** Short city label from a tz id, e.g. "America/New_York" → "New York". */
+private fun worldClockLabel(zoneId: String): String =
+    zoneId.substringAfterLast('/').replace('_', ' ')
+
+/** Offset of [zoneId] vs the device's zone, e.g. "+5h" / "-3h" / "same". */
+private fun worldClockOffset(zoneId: String, now: Date): String {
+  val local = TimeZone.getDefault().getOffset(now.time)
+  val there = TimeZone.getTimeZone(zoneId).getOffset(now.time)
+  val diffH = (there - local) / 3_600_000
+  return when {
+    diffH == 0 -> "same"
+    diffH > 0 -> "+${diffH}h"
+    else -> "${diffH}h"
+  }
+}
+
+/** A small analog clock face for [zoneId], white by day / dark by night, with an orange seconds hand. */
+@Composable
+private fun AnalogClock(zoneId: String, now: Date, modifier: Modifier = Modifier) {
+  val cal = remember(zoneId) { java.util.Calendar.getInstance(TimeZone.getTimeZone(zoneId)) }
+  cal.time = now
+  val hour = cal.get(java.util.Calendar.HOUR)
+  val minute = cal.get(java.util.Calendar.MINUTE)
+  val second = cal.get(java.util.Calendar.SECOND)
+  val night = cal.get(java.util.Calendar.HOUR_OF_DAY) !in 6..18
+  val face = if (night) Color(0xFF1F1F22) else Color.White
+  val ink = if (night) Color.White else Color(0xFF1A1A1A)
+  val tick = if (night) Color(0x66FFFFFF) else Color(0x55000000)
+  Canvas(modifier) {
+    val r = size.minDimension / 2f
+    val c = Offset(size.width / 2f, size.height / 2f)
+    drawCircle(face, radius = r, center = c)
+    // Hour ticks.
+    for (i in 0 until 12) {
+      val a = Math.toRadians(i * 30.0)
+      val sin = kotlin.math.sin(a).toFloat()
+      val cos = kotlin.math.cos(a).toFloat()
+      drawLine(
+          tick,
+          start = Offset(c.x + sin * r * 0.82f, c.y - cos * r * 0.82f),
+          end = Offset(c.x + sin * r * 0.94f, c.y - cos * r * 0.94f),
+          strokeWidth = r * 0.05f,
+      )
+    }
+    fun hand(angleDeg: Double, length: Float, width: Float, color: Color) {
+      val a = Math.toRadians(angleDeg)
+      drawLine(
+          color,
+          start = c,
+          end = Offset(c.x + (kotlin.math.sin(a) * length).toFloat(), c.y - (kotlin.math.cos(a) * length).toFloat()),
+          strokeWidth = width,
+          cap = StrokeCap.Round,
+      )
+    }
+    hand((hour % 12 + minute / 60.0) * 30.0, r * 0.5f, r * 0.10f, ink)
+    hand((minute + second / 60.0) * 6.0, r * 0.78f, r * 0.07f, ink)
+    hand(second * 6.0, r * 0.85f, r * 0.03f, Color(0xFFFF9500))
+    drawCircle(Color(0xFFFF9500), radius = r * 0.06f, center = c)
+  }
+}
+
+@Composable
+private fun ImmortalTimersWidget(modifier: Modifier = Modifier) {
+  val context = androidx.compose.ui.platform.LocalContext.current
+  var state by remember { mutableStateOf(TimerStore.load(context)) }
+  var nowMs by remember { mutableStateOf(System.currentTimeMillis()) }
+  var showCustom by remember { mutableStateOf(false) }
+  // Live updates if the timer is changed elsewhere (e.g. another Timers widget instance).
+  DisposableEffect(Unit) {
+    val l: () -> Unit = {
+      state = TimerStore.load(context)
+      nowMs = System.currentTimeMillis()
+    }
+    TimerStore.addListener(l)
+    onDispose { TimerStore.removeListener(l) }
+  }
+  // Tick the countdown while it's running. When it hits zero we stop ticking but DON'T clear —
+  // the exact alarm ([TimerAlarmReceiver]) flips the timer to ringing, which the listener picks up.
+  LaunchedEffect(state.running, state.endsAt) {
+    while (state.running) {
+      nowMs = System.currentTimeMillis()
+      if (state.remaining(nowMs) <= 0L) break
+      delay(250)
+    }
+  }
+  val remainingMs = state.remaining(nowMs)
+  val mins = (remainingMs / 60_000).toInt()
+  val secs = ((remainingMs / 1000) % 60).toInt()
+  ImmortalWidgetShell(title = "Timers", accent = Color(0xFFFF9F0A), modifier = modifier) {
+    Text(
+        when {
+          state.ringing -> "Time's up"
+          remainingMs > 0 -> "%d:%02d".format(mins, secs)
+          else -> "Ready"
+        },
+        color = if (state.ringing) Color(0xFFFF9F0A) else Color.White,
+        fontSize = 34.sp,
+        fontWeight = FontWeight.SemiBold,
+    )
+    Spacer(Modifier.size(12.dp))
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+      if (state.ringing) {
+        TimerChip("Stop") { TimerAlarm.stop(context) }
+      } else {
+        listOf(5, 10, 30).forEach { minutes ->
+          TimerChip("${minutes}m") { TimerStore.start(context, minutes * 60_000L) }
+        }
+        TimerChip("Custom") { showCustom = true }
+        if (remainingMs > 0) {
+          TimerChip(if (state.running) "Pause" else "Start") {
+            if (state.running) TimerStore.pause(context) else TimerStore.resume(context)
+          }
+        }
+      }
+    }
+  }
+  if (showCustom) {
+    CustomTimerDialog(
+        onStart = { ms ->
+          if (ms > 0) TimerStore.start(context, ms)
+          showCustom = false
+        },
+        onDismiss = { showCustom = false },
+    )
+  }
+}
+
+/** A keyboard-free duration picker (±steppers, remote/touch friendly) for a custom timer. */
+@Composable
+private fun CustomTimerDialog(onStart: (Long) -> Unit, onDismiss: () -> Unit) {
+  var minutes by remember { mutableStateOf(5) }
+  var seconds by remember { mutableStateOf(0) }
+  androidx.compose.ui.window.Dialog(onDismissRequest = onDismiss) {
+    Surface(color = Color(0xFF1C1C1E), shape = RoundedCornerShape(24.dp)) {
+      Column(
+          modifier = Modifier.padding(28.dp),
+          horizontalAlignment = Alignment.CenterHorizontally,
+      ) {
+        Text("Custom timer", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.SemiBold)
+        Spacer(Modifier.size(24.dp))
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(18.dp),
+        ) {
+          DurationStepper("min", minutes, step = 1) { minutes = (minutes + it).coerceIn(0, 180) }
+          Text(":", color = Color.White, fontSize = 34.sp, fontWeight = FontWeight.Light)
+          DurationStepper("sec", seconds, step = 5) { seconds = (seconds + it + 60) % 60 }
+        }
+        Spacer(Modifier.size(28.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+          TimerChip("Cancel") { onDismiss() }
+          TimerChip("Start ${minutes}:%02d".format(seconds)) {
+            onStart((minutes * 60 + seconds) * 1000L)
+          }
+        }
+      }
+    }
+  }
+}
+
+@Composable
+private fun DurationStepper(label: String, value: Int, step: Int, onChange: (Int) -> Unit) {
+  Column(horizontalAlignment = Alignment.CenterHorizontally) {
+    Text(label.uppercase(Locale.getDefault()), color = Color(0xFF9A9A9A), fontSize = 11.sp, fontWeight = FontWeight.Bold)
+    Spacer(Modifier.size(8.dp))
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+      StepButton("−") { onChange(-step) }
+      Text("%02d".format(value), color = Color.White, fontSize = 30.sp, fontWeight = FontWeight.SemiBold)
+      StepButton("+") { onChange(step) }
+    }
+  }
+}
+
+@Composable
+private fun StepButton(label: String, onClick: () -> Unit) {
+  Surface(
+      color = Color(0x22FFFFFF),
+      shape = CircleShape,
+      modifier = Modifier.size(44.dp).tvFocusable(CircleShape) { onClick() },
+  ) {
+    Box(contentAlignment = Alignment.Center) {
+      Text(label, color = Color.White, fontSize = 26.sp, fontWeight = FontWeight.Light)
+    }
+  }
+}
+
+@Composable
+private fun TimerChip(label: String, onClick: () -> Unit) {
+  Surface(
+      color = Color(0x22FFFFFF),
+      shape = RoundedCornerShape(999.dp),
+      modifier = Modifier.tvFocusable(RoundedCornerShape(999.dp)) { onClick() },
+  ) {
+    Text(
+        label,
+        color = Color.White,
+        fontSize = 13.sp,
+        fontWeight = FontWeight.SemiBold,
+        modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
+    )
+  }
+}
+
+@Composable
+private fun UnknownImmortalWidget(kind: String, modifier: Modifier = Modifier) {
+  Box(modifier.background(Color(0xFF303033)), contentAlignment = Alignment.Center) {
+    Text(kind, color = Color.White, fontSize = 16.sp)
+  }
+}
+
+@Composable
+private fun WidgetPickerOverlay(
+    providers: List<WidgetProviderEntry>,
+    status: String?,
+    onPick: (WidgetProviderEntry) -> Unit,
+    onDismiss: () -> Unit,
+) {
+  val noRipple = remember { MutableInteractionSource() }
+  BackHandler { onDismiss() }
+  val gridFocus = remember { FocusRequester() }
+  LaunchedEffect(providers) { runCatching { gridFocus.requestFocus() } }
+
+  Box(
+      contentAlignment = Alignment.Center,
+      modifier =
+          Modifier.fillMaxSize()
+              .onPreviewKeyEvent { e ->
+                if (e.key == Key.Back || e.key == Key.Escape) {
+                  if (e.type == KeyEventType.KeyUp) onDismiss()
+                  true
+                } else false
+              }
+              .background(Color(0xDD000000))
+              .clickable(interactionSource = noRipple, indication = null) { onDismiss() },
+  ) {
+    Surface(
+        color = Color(0xFF1C1C1E),
+        shape = RoundedCornerShape(28.dp),
+        modifier =
+            Modifier.widthIn(max = 920.dp)
+                .fillMaxWidth(0.78f)
+                .heightIn(max = 620.dp)
+                .clickable(interactionSource = noRipple, indication = null) {},
+    ) {
+      Column(modifier = Modifier.padding(28.dp)) {
+        Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+          Column(modifier = Modifier.weight(1f)) {
+            Text("Add widget", color = Color.White, fontSize = 28.sp, fontWeight = FontWeight.SemiBold)
+            Text(
+                "Choose a widget provider installed on this Portal.",
+                color = Color(0xFF9A9A9A),
+                fontSize = 14.sp,
+                modifier = Modifier.padding(top = 4.dp),
+            )
+          }
+          Surface(
+              color = Color(0x33FFFFFF),
+              shape = CircleShape,
+              modifier = Modifier.size(44.dp).tvFocusable(CircleShape) { onDismiss() },
+          ) {
+            Box(contentAlignment = Alignment.Center) { Text("✕", color = Color.White, fontSize = 20.sp) }
+          }
+        }
+        if (status != null) {
+          Text(
+              status,
+              color = Color(0xFF8AB4F8),
+              fontSize = 13.sp,
+              modifier = Modifier.padding(top = 14.dp),
+          )
+        }
+        Spacer(Modifier.size(20.dp))
+        if (providers.isEmpty()) {
+          Box(
+              modifier = Modifier.fillMaxWidth().height(220.dp),
+              contentAlignment = Alignment.Center,
+          ) {
+            Text(
+                "No widget providers are installed.",
+                color = Color(0xFFB8B8B8),
+                fontSize = 16.sp,
+            )
+          }
+        } else {
+          LazyVerticalGrid(
+              columns = GridCells.Fixed(3),
+              horizontalArrangement = Arrangement.spacedBy(14.dp),
+              verticalArrangement = Arrangement.spacedBy(14.dp),
+              modifier = Modifier.focusRequester(gridFocus).focusGroup(),
+          ) {
+            items(providers, key = { it.info?.provider?.flattenToString() ?: "custom:${it.customKind}" }) { provider ->
+              WidgetProviderTile(provider = provider, onClick = { onPick(provider) })
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+@Composable
+private fun WidgetProviderTile(provider: WidgetProviderEntry, onClick: () -> Unit) {
+  Surface(
+      color = Color(0xFF29292C),
+      shape = RoundedCornerShape(18.dp),
+      modifier = Modifier.tvFocusable(RoundedCornerShape(18.dp)) { onClick() },
+  ) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(16.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+      Surface(
+          color = Color(0xFF38383C),
+          shape = RoundedCornerShape(14.dp),
+          modifier = Modifier.size(58.dp),
+      ) {
+        Box(contentAlignment = Alignment.Center) {
+          if (provider.icon != null) {
+            Image(
+                bitmap = provider.icon,
+                contentDescription = null,
+                modifier = Modifier.size(42.dp).clip(RoundedCornerShape(10.dp)),
+            )
+          } else if (provider.customKind != null) {
+            CustomWidgetGlyph(provider.customKind)
+          } else {
+            WidgetGlyph()
+          }
+        }
+      }
+      Column(modifier = Modifier.padding(start = 14.dp).weight(1f)) {
+        Text(
+            provider.label,
+            color = Color.White,
+            fontSize = 16.sp,
+            fontWeight = FontWeight.SemiBold,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        Text(
+            provider.packageLabel,
+            color = Color(0xFF9A9A9A),
+            fontSize = 12.sp,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.padding(top = 3.dp),
+        )
+        Text(
+            "${provider.spanX} x ${provider.spanY}",
+            color = Color(0xFF7C7C7C),
+            fontSize = 11.sp,
+            modifier = Modifier.padding(top = 5.dp),
+        )
+      }
+    }
+  }
+}
+
+@Composable
+private fun CustomWidgetGlyph(kind: String) {
+  val emoji =
+      when (kind) {
+        HomeWidgetStore.KIND_WEATHER -> "☁"
+        HomeWidgetStore.KIND_WORLD_CLOCK -> "◷"
+        HomeWidgetStore.KIND_TIMERS -> "⏱"
+        else -> "+"
+      }
+  Text(emoji, color = Color.White, fontSize = 28.sp, fontWeight = FontWeight.SemiBold)
+}
+
+@Composable
+private fun WidgetGlyph() {
+  val path = remember { PathParser().parsePathString(ICON_WIDGETS).toPath() }
+  Canvas(Modifier.size(28.dp)) {
+    val s = size.minDimension / 24f
+    scale(s, s, pivot = Offset.Zero) { drawPath(path, Color.White) }
+  }
+}
+
+/**
+ * iOS-style "jiggle": a gentle continuous wobble applied to editable tiles while Manage mode is on.
+ * Each tile is given a [seed] so they fall slightly out of phase (rather than wobbling in lockstep).
+ * The animation only exists while [enabled]; it leaves composition when Manage mode ends so the
+ * long-lived launcher isn't animating in the background.
+ */
+@Composable
+private fun Modifier.jiggle(enabled: Boolean, seed: Int): Modifier {
+  if (!enabled) return this
+  val transition = rememberInfiniteTransition(label = "jiggle")
+  val phase = (abs(seed) % 6) * 28
+  val angle by
+      transition.animateFloat(
+          initialValue = -2.0f,
+          targetValue = 2.0f,
+          animationSpec =
+              infiniteRepeatable(
+                  animation = tween(durationMillis = 170, easing = LinearEasing),
+                  repeatMode = RepeatMode.Reverse,
+                  initialStartOffset = StartOffset(phase),
+              ),
+          label = "jiggle-angle",
+      )
+  val bob by
+      transition.animateFloat(
+          initialValue = -1.4f,
+          targetValue = 1.4f,
+          animationSpec =
+              infiniteRepeatable(
+                  animation = tween(durationMillis = 230, easing = LinearEasing),
+                  repeatMode = RepeatMode.Reverse,
+                  initialStartOffset = StartOffset(phase + 60),
+              ),
+          label = "jiggle-bob",
+      )
+  return this.graphicsLayer {
+    rotationZ = angle
+    translationY = bob
+  }
+}
+
+/**
+ * Round red delete affordance with a crisply-drawn, perfectly-centered ✕ (the unicode glyph
+ * isn't vertically centered inside its line box, so it's drawn as two crossing strokes instead).
+ */
+@Composable
+private fun RemoveBadge(size: Dp, modifier: Modifier = Modifier, onClick: () -> Unit) {
+  Surface(
+      color = Color(0xFFE53935),
+      shape = CircleShape,
+      modifier = modifier.size(size).tvFocusable(CircleShape) { onClick() },
+  ) {
+    Canvas(Modifier.fillMaxSize()) {
+      val cx = this.size.width / 2f
+      val cy = this.size.height / 2f
+      val arm = this.size.minDimension * 0.21f
+      val stroke = this.size.minDimension * 0.11f
+      drawLine(
+          Color.White,
+          Offset(cx - arm, cy - arm),
+          Offset(cx + arm, cy + arm),
+          strokeWidth = stroke,
+          cap = StrokeCap.Round,
+      )
+      drawLine(
+          Color.White,
+          Offset(cx - arm, cy + arm),
+          Offset(cx + arm, cy - arm),
+          strokeWidth = stroke,
+          cap = StrokeCap.Round,
+      )
+    }
+  }
+}
+
+/**
+ * Wraps a tile whose own content does NOT swallow touches (built-ins, folders, apps) with a
+ * dragged-dim. The drag itself is handled by the stable container detector that wraps the pager, so
+ * the gesture survives a page flip (letting a tile be dragged onto another page). Hosted widgets
+ * still use their own in-page scrim handle (see [WidgetCell]), since their AndroidView swallows it.
+ */
+@Composable
+private fun HomeTileFrame(
+    modifier: Modifier,
+    dragged: Boolean,
+    content: @Composable () -> Unit,
+) {
+  Box(modifier = modifier.fillMaxWidth().alpha(if (dragged) 0f else 1f)) { content() }
+}
+
+/** Widget tile + the ✕ remove badge in edit mode. Drag is handled by the stable container detector
+ * (which grabs widgets via the pointer Initial pass), so widgets drag and move across pages like
+ * apps. Widgets are not user-resizable — they keep the size their provider declares. */
+@Composable
+private fun WidgetCell(
+    widget: HomeWidgetStore.HomeWidget,
+    host: AppWidgetHost,
+    manager: AppWidgetManager,
+    editMode: Boolean,
+    tileDp: Dp,
+    dimmed: Boolean,
+    modifier: Modifier,
+    onRemove: () -> Unit,
+) {
+  Box(modifier = modifier) {
+    WidgetTile(
+        widget = widget,
+        host = host,
+        manager = manager,
+        editMode = editMode,
+        tileDp = tileDp,
+        dimmed = dimmed,
+    )
+    if (editMode) {
+      RemoveBadge(
+          size = 30.dp,
+          modifier = Modifier.align(Alignment.TopEnd).offset(x = 7.dp, y = (-7).dp),
+          onClick = onRemove,
+      )
+    }
+  }
+}
+
+@Composable
 private fun AppTile(
     app: AppEntry,
     editMode: Boolean,
     modifier: Modifier = Modifier,
     dimmed: Boolean = false,
     onDelete: () -> Unit = {},
-    onHide: () -> Unit = {},
-    onAppInfo: () -> Unit = {},
+    onLongPress: (() -> Unit)? = null,
     onClick: () -> Unit,
 ) {
-  var menuOpen by remember { mutableStateOf(false) }
   Column(
       horizontalAlignment = Alignment.CenterHorizontally,
-      // In Manage mode the body tap is inert (drag to fold, ✕ to remove); the
-      // icon launches normally otherwise. Long-press opens a quick-action menu.
+      // In Manage mode the body tap is inert (drag to reorder, ✕ to remove); the
+      // icon launches normally otherwise. A long-press enters Manage mode (iOS-style).
       modifier =
-          modifier.padding(4.dp).tvFocusable(
+          modifier.fillMaxWidth().padding(4.dp).tvFocusable(
               RoundedCornerShape(22.dp),
               enabled = !editMode,
-              onLongClick = { menuOpen = true },
+              onLongClick = onLongPress,
           ) {
             onClick()
           },
   ) {
-    Box {
-      androidx.compose.material3.DropdownMenu(
-          expanded = menuOpen,
-          onDismissRequest = { menuOpen = false },
-      ) {
-        androidx.compose.material3.DropdownMenuItem(
-            text = { Text("Open") },
-            onClick = { menuOpen = false; onClick() },
-        )
-        androidx.compose.material3.DropdownMenuItem(
-            text = { Text("App info") },
-            onClick = { menuOpen = false; onAppInfo() },
-        )
-        androidx.compose.material3.DropdownMenuItem(
-            text = { Text("Hide from home") },
-            onClick = { menuOpen = false; onHide() },
-        )
-        androidx.compose.material3.DropdownMenuItem(
-            text = { Text("Uninstall") },
-            onClick = { menuOpen = false; onDelete() },
-        )
-      }
+    // The icon (and its delete badge) jiggle as a unit in Manage mode; the label stays still.
+    Box(modifier = Modifier.jiggle(editMode && !dimmed, app.component.packageName.hashCode())) {
       Image(
           bitmap = app.icon,
           contentDescription = app.label,
@@ -5107,32 +3173,12 @@ private fun AppTile(
                   .alpha(if (dimmed) 0.3f else 1f),
       )
       if (editMode) {
-        // Hide (blue, top-start): removes from grid but keeps installed.
-        Surface(
-            color = Color(0xFF1565C0),
-            shape = androidx.compose.foundation.shape.CircleShape,
-            modifier = Modifier.size(30.dp).align(Alignment.TopStart).clickable { onHide() },
-        ) {
-          Box(contentAlignment = Alignment.Center) {
-            Canvas(modifier = Modifier.size(16.dp)) {
-              val w = size.minDimension; val s = w * 0.12f
-              val stroke = Stroke(width = s, cap = StrokeCap.Round)
-              drawOval(Color.White, topLeft = Offset(w*0.04f, w*0.32f), size = Size(w*0.92f, w*0.36f), style = stroke)
-              drawCircle(Color.White, radius = w*0.12f, center = Offset(w*0.5f, w*0.5f), style = stroke)
-              drawLine(Color.White, Offset(w*0.08f, w*0.08f), Offset(w*0.92f, w*0.92f), strokeWidth = s, cap = StrokeCap.Round)
-            }
-          }
-        }
-        // Uninstall (red, top-end): opens system uninstall dialog.
-        Surface(
-            color = Color(0xFFE53935),
-            shape = androidx.compose.foundation.shape.CircleShape,
-            modifier = Modifier.size(30.dp).align(Alignment.TopEnd).clickable { onDelete() },
-        ) {
-          Box(contentAlignment = Alignment.Center) {
-            Text("✕", color = Color.White, fontSize = 18.sp)
-          }
-        }
+        // Sits at the icon's outer top-right corner (nudged off the icon, iOS-style).
+        RemoveBadge(
+            size = 26.dp,
+            modifier = Modifier.align(Alignment.TopEnd).offset(x = 9.dp, y = (-9).dp),
+            onClick = onDelete,
+        )
       }
     }
     Spacer(Modifier.size(8.dp))
@@ -5144,17 +3190,6 @@ private fun AppTile(
         overflow = TextOverflow.Ellipsis,
         textAlign = TextAlign.Center,
     )
-  }
-}
-
-/** Open the system "App info" screen for [pkg] (from the long-press menu). */
-private fun openAppInfo(context: Context, pkg: String) {
-  runCatching {
-    val intent =
-        Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
-            .setData(android.net.Uri.fromParts("package", pkg, null))
-            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-    context.startActivity(intent)
   }
 }
 
@@ -5189,439 +3224,118 @@ private fun loadApps(context: Context): List<AppEntry> {
       // debug/launcher activity that would otherwise show as a duplicate.
       .distinctBy { it.component.packageName }
       .sortedBy { it.label.lowercase(Locale.getDefault()) }
-      .let { discovered ->
-        // Inject Portal built-ins (no LAUNCHER filter, but user-facing).
-        val extras = Curation.portalBuiltins.mapNotNull { (label, component, folder) ->
-          runCatching {
-            pm.getPackageInfo(component.packageName, 0) // throws if not installed
-            val icon = pm.getApplicationIcon(component.packageName).toBitmap(144, 144).asImageBitmap()
-            AppEntry(label = label, component = component, icon = icon, folder = folder)
-          }.getOrNull()
-        }
-        // Skip any that the main scan already found (shouldn't happen, but guard it).
-        val existing = discovered.map { it.component.packageName }.toSet()
-        discovered + extras.filter { it.component.packageName !in existing }
+}
+
+private fun loadWidgetProviders(context: Context, tileDp: Dp): List<WidgetProviderEntry> {
+  val pm = context.packageManager
+  val density = context.resources.displayMetrics.densityDpi
+  val custom =
+      listOf(
+          WidgetProviderEntry(
+              label = "Weather",
+              packageLabel = "Immortal",
+              icon = null,
+              info = null,
+              spanX = 2,
+              spanY = 2,
+              customKind = HomeWidgetStore.KIND_WEATHER,
+          ),
+          WidgetProviderEntry(
+              label = "World Clock",
+              packageLabel = "Immortal",
+              icon = null,
+              info = null,
+              spanX = 2,
+              spanY = 2,
+              customKind = HomeWidgetStore.KIND_WORLD_CLOCK,
+          ),
+          WidgetProviderEntry(
+              label = "Timers",
+              packageLabel = "Immortal",
+              icon = null,
+              info = null,
+              spanX = 2,
+              spanY = 2,
+              customKind = HomeWidgetStore.KIND_TIMERS,
+          ),
+      )
+  val android =
+      AppWidgetManager.getInstance(context)
+      .installedProviders
+      .mapNotNull { info ->
+        runCatching {
+              val packageLabel =
+                  pm.getApplicationLabel(pm.getApplicationInfo(info.provider.packageName, 0))
+                      .toString()
+              val icon =
+                  runCatching { info.loadIcon(context, density) }
+                      .getOrNull()
+                      ?: runCatching { pm.getApplicationIcon(info.provider.packageName) }.getOrNull()
+              val iconBitmap = icon?.toBitmap(96, 96)?.asImageBitmap()
+              WidgetProviderEntry(
+                  label = info.loadLabel(pm).toString().ifBlank { packageLabel },
+                  packageLabel = packageLabel,
+                  icon = iconBitmap,
+                  info = info,
+                  spanX =
+                      estimateWidgetSpan(appWidgetMinDp(context, info.minWidth), tileDp)
+                          .coerceAtLeast(HomeWidgetStore.DEFAULT_SPAN_X),
+                  spanY =
+                      estimateWidgetSpan(appWidgetMinDp(context, info.minHeight), tileDp)
+                          .coerceAtLeast(HomeWidgetStore.DEFAULT_SPAN_Y),
+              )
+            }
+            .getOrNull()
       }
+      .sortedWith(
+          compareBy(
+              { it.packageLabel.lowercase(Locale.getDefault()) },
+              { it.label.lowercase(Locale.getDefault()) }))
+  return custom + android
 }
 
-@Composable
-private fun BackgroundImage(uriString: String, blur: Boolean) {
-    val context = androidx.compose.ui.platform.LocalContext.current
-    val bitmap by produceState<android.graphics.Bitmap?>(initialValue = null, uriString) {
-        value = withContext(kotlinx.coroutines.Dispatchers.IO) {
-            runCatching {
-                val uri = android.net.Uri.parse(uriString)
-                context.contentResolver.openInputStream(uri)?.use { stream ->
-                    android.graphics.BitmapFactory.decodeStream(stream)
-                }
-            }.getOrNull()
-        }
-    }
-    Box(modifier = Modifier.fillMaxSize().background(Color(0xFF1A1A1A))) {
-        bitmap?.let { bmp ->
-            Image(
-                bitmap = bmp.asImageBitmap(),
-                contentDescription = null,
-                contentScale = androidx.compose.ui.layout.ContentScale.Crop,
-                modifier = Modifier.fillMaxSize()
-            )
-            // Dark overlay for readability
-            Box(modifier = Modifier.fillMaxSize().background(Color(0x99000000)))
-        }
-    }
-}
-
-/** A built-in gradient wallpaper from [ImmortalSettings.GRADIENTS]. */
-@Composable
-private fun GradientBackground(key: String) {
-  val preset = ImmortalSettings.GRADIENTS.firstOrNull { it.first == key } ?: ImmortalSettings.GRADIENTS.first()
-  Box(
-      modifier =
-          Modifier.fillMaxSize()
-              .background(
-                  androidx.compose.ui.graphics.Brush.verticalGradient(
-                      listOf(Color(preset.second), Color(preset.third)))))
-}
-
-/** A sun-driven sky background: the gradient tracks the real time of day, derived
- * from today's sunrise/sunset (keyless Open-Meteo). Dawn pinks, midday blue, dusk
- * orange, night near-black — telling time ambiently on an always-on screen. */
-@Composable
-private fun SkyBackground() {
-  val context = androidx.compose.ui.platform.LocalContext.current
-  val sun by produceState<Weather.SunTimes?>(initialValue = null) {
-    value = withContext(Dispatchers.IO) { Weather.fetchSunTimes(context) }
-  }
-  // Recompute the gradient every few minutes so it drifts through the day.
-  var nowMin by remember { mutableStateOf(currentMinuteOfDay()) }
-  LaunchedEffect(Unit) {
-    while (true) { nowMin = currentMinuteOfDay(); delay(5L * 60 * 1000) }
-  }
-  val sr = sun?.let { minuteOfDay(it.sunriseMillis) } ?: 6 * 60
-  val ss = sun?.let { minuteOfDay(it.sunsetMillis) } ?: 20 * 60
-  val (top, bottom) = SkyColors.gradientFor(nowMin, sr, ss)
-  Box(
-      modifier =
-          Modifier.fillMaxSize()
-              .background(androidx.compose.ui.graphics.Brush.verticalGradient(listOf(top, bottom))))
-}
-
-/** A thin progress line at the very top of the screen showing how far through the day
- *  we are (midnight → midnight). The fill is tinted with the current sky colour so it
- *  matches the Sky background — pink at dawn, blue midday, orange at dusk, dim at night. */
-@Composable
-private fun DayProgressBar(modifier: Modifier = Modifier) {
-  val context = androidx.compose.ui.platform.LocalContext.current
-  val sun by produceState<Weather.SunTimes?>(initialValue = null) {
-    value = withContext(Dispatchers.IO) { Weather.fetchSunTimes(context) }
-  }
-  var nowMin by remember { mutableStateOf(currentMinuteOfDay()) }
-  LaunchedEffect(Unit) {
-    while (true) { nowMin = currentMinuteOfDay(); delay(60L * 1000) }
-  }
-  val sr = sun?.let { minuteOfDay(it.sunriseMillis) } ?: 6 * 60
-  val ss = sun?.let { minuteOfDay(it.sunsetMillis) } ?: 20 * 60
-  // Colour-aware: use the vivid (bottom) colour of the live sky gradient.
-  val fill = SkyColors.gradientFor(nowMin, sr, ss).second
-  val progress = (nowMin / 1440f).coerceIn(0f, 1f)
-  Box(
-      modifier = modifier.fillMaxWidth().height(4.dp).background(fill.copy(alpha = 0.18f)),
-  ) {
-    Box(
-        modifier = Modifier.fillMaxWidth(progress).fillMaxHeight().background(fill),
-    )
-  }
-}
-
-/** The real night sky behind the grid after dark: the brightest stars projected to the
- *  device's horizon for the current time + location, with a few asterism lines. By day
- *  it's just a deep dark panel; stars fade in through twilight. */
-@Composable
-private fun StarFieldBackground() {
-  val context = androidx.compose.ui.platform.LocalContext.current
-  val coords by produceState<Pair<Double, Double>?>(initialValue = null) {
-    value = withContext(Dispatchers.IO) { Weather.coordinates(context) }
-  }
-  var now by remember { mutableStateOf(System.currentTimeMillis()) }
-  LaunchedEffect(Unit) {
-    while (true) { now = System.currentTimeMillis(); delay(30L * 1000) }
-  }
-
-  Box(modifier = Modifier.fillMaxSize().background(
-      androidx.compose.ui.graphics.Brush.verticalGradient(listOf(Color(0xFF05060F), Color(0xFF0C1430))))) {
-    val loc = coords ?: return@Box
-    val (lat, lon) = loc
-    val lst = StarField.localSiderealTime(now, lon)
-    val sunAlt = StarField.sunAltitude(now, lat, lon)
-    // Stars are invisible in daylight; fade in across twilight (0° → −12°).
-    val nightFactor = ((-sunAlt) / 12.0).coerceIn(0.0, 1.0).toFloat()
-    if (nightFactor <= 0.01f) return@Box
-
-    // Project once; reused for stars + lines.
-    val projected = remember(now, lat, lon) {
-      StarField.STARS.map { StarField.project(it, lat, lst) }
-    }
-
-    Canvas(modifier = Modifier.fillMaxSize()) {
-      val w = size.width
-      val h = size.height
-      fun screenX(az: Double) = (az / 360.0 * w).toFloat()
-      fun screenY(alt: Double) = (h * (1.0 - alt / 90.0)).toFloat()
-
-      // Asterism lines first (under the stars).
-      StarField.LINES.forEach { (a, b) ->
-        val pa = projected[a]
-        val pb = projected[b]
-        if (pa.alt > 0 && pb.alt > 0) {
-          val xa = screenX(pa.az)
-          val xb = screenX(pb.az)
-          // Skip the wrap-around seam.
-          if (kotlin.math.abs(xa - xb) < w / 2f) {
-            drawLine(
-                color = Color(0xFF6E8BD8).copy(alpha = 0.35f * nightFactor),
-                start = androidx.compose.ui.geometry.Offset(xa, screenY(pa.alt)),
-                end = androidx.compose.ui.geometry.Offset(xb, screenY(pb.alt)),
-                strokeWidth = 2f,
-            )
-          }
-        }
-      }
-
-      // Stars: brighter (lower mag) → bigger + more opaque.
-      StarField.STARS.forEachIndexed { i, star ->
-        val p = projected[i]
-        if (p.alt <= 0) return@forEachIndexed
-        val radius = (2.6f - star.mag.toFloat() * 0.55f).coerceIn(0.8f, 4.5f)
-        val alpha = ((1.8f - star.mag.toFloat() * 0.32f).coerceIn(0.35f, 1f)) * nightFactor
-        drawCircle(
-            color = Color.White.copy(alpha = alpha),
-            radius = radius,
-            center = androidx.compose.ui.geometry.Offset(screenX(p.az), screenY(p.alt)),
-        )
-      }
+private fun List<HomeWidgetStore.HomeWidget>.filterLiveWidgets(
+    manager: AppWidgetManager,
+    host: AppWidgetHost,
+): List<HomeWidgetStore.HomeWidget> {
+  val live = filter { !it.isAppWidget || manager.getAppWidgetInfo(it.appWidgetId) != null }
+  if (live.size != size) {
+    val liveIds = live.map { it.appWidgetId }.toSet()
+    filter { it.isAppWidget && it.appWidgetId !in liveIds }.forEach {
+      runCatching { host.deleteAppWidgetId(it.appWidgetId) }
     }
   }
+  return live
 }
 
-private fun currentMinuteOfDay(): Int {
-  val c = java.util.Calendar.getInstance()
-  return c.get(java.util.Calendar.HOUR_OF_DAY) * 60 + c.get(java.util.Calendar.MINUTE)
-}
-
-private fun minuteOfDay(epochMillis: Long): Int {
-  val c = java.util.Calendar.getInstance().apply { timeInMillis = epochMillis }
-  return c.get(java.util.Calendar.HOUR_OF_DAY) * 60 + c.get(java.util.Calendar.MINUTE)
-}
-
-@Composable
-private fun QuickSettingsPanel(onDismiss: () -> Unit) {
-    val context = androidx.compose.ui.platform.LocalContext.current
-    var brightness by remember { mutableStateOf(50) }
-    var volume by remember { mutableStateOf(50) }
-    var wifiOn by remember { mutableStateOf(false) }
-    var bluetoothOn by remember { mutableStateOf(false) }
-
-    // Load initial values
-    LaunchedEffect(Unit) {
-        try {
-            val sysBrightness = android.provider.Settings.System.getInt(
-                context.contentResolver, android.provider.Settings.System.SCREEN_BRIGHTNESS)
-            brightness = (sysBrightness * 100 / 255).coerceIn(0, 100)
-        } catch (_: Exception) {}
-        try {
-            val audio = context.getSystemService(android.content.Context.AUDIO_SERVICE) as android.media.AudioManager
-            volume = audio.getStreamVolume(android.media.AudioManager.STREAM_MUSIC) * 100 /
-                    audio.getStreamMaxVolume(android.media.AudioManager.STREAM_MUSIC).coerceAtLeast(1)
-        } catch (_: Exception) {}
-        try {
-            wifiOn = android.net.wifi.WifiManager::class.java.let {
-                val wm = context.applicationContext.getSystemService(it) as android.net.wifi.WifiManager
-                wm.isWifiEnabled
-            }
-        } catch (_: Exception) {}
-        try {
-            bluetoothOn = android.bluetooth.BluetoothAdapter::class.java.let {
-                val adapter = android.bluetooth.BluetoothAdapter.getDefaultAdapter()
-                adapter?.isEnabled == true
-            }
-        } catch (_: Exception) {}
-    }
-
-    fun setBrightness(value: Int) {
-        brightness = value
-        runCatching {
-            android.provider.Settings.System.putInt(
-                context.contentResolver,
-                android.provider.Settings.System.SCREEN_BRIGHTNESS,
-                (value * 255 / 100).coerceIn(0, 255)
-            )
-        }
-    }
-
-    fun setVolume(value: Int) {
-        volume = value
-        runCatching {
-            val audio = context.getSystemService(android.content.Context.AUDIO_SERVICE) as android.media.AudioManager
-            val maxVol = audio.getStreamMaxVolume(android.media.AudioManager.STREAM_MUSIC)
-            audio.setStreamVolume(android.media.AudioManager.STREAM_MUSIC, value * maxVol / 100, 0)
-        }
-    }
-
-    fun toggleWifi() {
-        runCatching {
-            val wm = context.applicationContext.getSystemService(android.content.Context.WIFI_SERVICE) as android.net.wifi.WifiManager
-            wifiOn = !wifiOn
-            wm.isWifiEnabled = wifiOn
-        }
-    }
-
-    fun toggleBluetooth() {
-        runCatching {
-            val adapter = android.bluetooth.BluetoothAdapter.getDefaultAdapter()
-            if (adapter != null) {
-                if (adapter.isEnabled) adapter.disable() else adapter.enable()
-                bluetoothOn = !bluetoothOn
-            }
-        }
-    }
-
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(Color(0xCC000000))
-            .clickable(interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }, indication = null) { onDismiss() }
-    ) {
-        Surface(
-            color = Color(0xFF1C1C1E),
-            shape = RoundedCornerShape(bottomStart = 24.dp, bottomEnd = 24.dp),
-            modifier = Modifier.fillMaxWidth().align(Alignment.TopCenter)
-        ) {
-            Column(
-                modifier = Modifier.padding(24.dp),
-                verticalArrangement = Arrangement.spacedBy(16.dp)
-            ) {
-                Text("Quick settings", color = Color.White, fontSize = 24.sp, fontWeight = FontWeight.SemiBold)
-
-                // Brightness slider
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("☀", color = Color.White, fontSize = 20.sp)
-                    Spacer(Modifier.size(12.dp))
-                    Text("Brightness", color = Color.White, fontSize = 16.sp, modifier = Modifier.weight(1f))
-                    Text("$brightness%", color = Color(0xFF9A9A9A), fontSize = 14.sp)
-                }
-                androidx.compose.material3.Slider(
-                    value = brightness.toFloat(),
-                    onValueChange = { setBrightness(it.toInt()) },
-                    valueRange = 0f..100f,
-                    modifier = Modifier.fillMaxWidth()
-                )
-
-                // Volume slider
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("🔊", color = Color.White, fontSize = 20.sp)
-                    Spacer(Modifier.size(12.dp))
-                    Text("Volume", color = Color.White, fontSize = 16.sp, modifier = Modifier.weight(1f))
-                    Text("$volume%", color = Color(0xFF9A9A9A), fontSize = 14.sp)
-                }
-                androidx.compose.material3.Slider(
-                    value = volume.toFloat(),
-                    onValueChange = { setVolume(it.toInt()) },
-                    valueRange = 0f..100f,
-                    modifier = Modifier.fillMaxWidth()
-                )
-
-                // WiFi and Bluetooth toggles
-                Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                    QuickToggle(
-                        label = "WiFi",
-                        icon = "📶",
-                        isOn = wifiOn,
-                        onToggle = { toggleWifi() },
-                        modifier = Modifier.weight(1f)
-                    )
-                    QuickToggle(
-                        label = "Bluetooth",
-                        icon = "🔵",
-                        isOn = bluetoothOn,
-                        onToggle = { toggleBluetooth() },
-                        modifier = Modifier.weight(1f)
-                    )
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun QuickToggle(
-    label: String,
-    icon: String,
-    isOn: Boolean,
-    onToggle: () -> Unit,
-    modifier: Modifier = Modifier
+private fun updateWidgetSizeOptions(
+    manager: AppWidgetManager,
+    widget: HomeWidgetStore.HomeWidget,
+    tileDp: Dp,
 ) {
-    Surface(
-        color = if (isOn) MaterialTheme.colorScheme.primary else Color(0xFF2A2A2C),
-        shape = RoundedCornerShape(12.dp),
-        modifier = modifier
-            .height(70.dp)
-            .clickable { onToggle() }
-    ) {
-        Column(
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center,
-            modifier = Modifier.fillMaxSize()
-        ) {
-            Text(icon, fontSize = 24.sp)
-            Spacer(Modifier.size(4.dp))
-            Text(label, color = Color.White, fontSize = 12.sp)
-        }
-    }
+  val width =
+      (tileDp.value * widget.spanX + 16f * (widget.spanX - 1).coerceAtLeast(0)).roundToInt()
+  val height =
+      (tileDp.value * widget.spanY + 20f * (widget.spanY - 1).coerceAtLeast(0)).roundToInt()
+  runCatching {
+    manager.updateAppWidgetOptions(
+        widget.appWidgetId,
+        Bundle().apply {
+          putInt(AppWidgetManager.OPTION_APPWIDGET_MIN_WIDTH, width)
+          putInt(AppWidgetManager.OPTION_APPWIDGET_MAX_WIDTH, width)
+          putInt(AppWidgetManager.OPTION_APPWIDGET_MIN_HEIGHT, height)
+          putInt(AppWidgetManager.OPTION_APPWIDGET_MAX_HEIGHT, height)
+        })
+  }
 }
 
-@Composable
-private fun CalendarWidget() {
-    val context = androidx.compose.ui.platform.LocalContext.current
-    var events by remember { mutableStateOf<List<CalendarEvent>>(emptyList()) }
-    var hasPermission by remember { mutableStateOf(CalendarHelper.hasPermission(context)) }
-
-    LaunchedEffect(Unit) {
-        // Request permission if not granted
-        if (!hasPermission) {
-            val activity = context as? android.app.Activity
-            activity?.requestPermissions(arrayOf(android.Manifest.permission.READ_CALENDAR), 2001)
-        }
-        events = CalendarHelper.upcoming(context)
-        hasPermission = CalendarHelper.hasPermission(context)
-    }
-
-    val lifecycleOwner = LocalLifecycleOwner.current
-    DisposableEffect(lifecycleOwner) {
-        val obs = LifecycleEventObserver { _, _ ->
-            hasPermission = CalendarHelper.hasPermission(context)
-            if (hasPermission) {
-                events = CalendarHelper.upcoming(context)
-            }
-        }
-        lifecycleOwner.lifecycle.addObserver(obs)
-        onDispose { lifecycleOwner.lifecycle.removeObserver(obs) }
-    }
-
-    Surface(
-        color = Color(0x14FFFFFF),
-        shape = RoundedCornerShape(20.dp),
-        modifier = Modifier.fillMaxWidth().padding(top = 4.dp)
-    ) {
-        Column(modifier = Modifier.padding(horizontal = 20.dp, vertical = 16.dp)) {
-            Text(
-                "Upcoming events",
-                color = Color(0xFFBFBFBF),
-                fontSize = 14.sp,
-                fontWeight = FontWeight.SemiBold,
-                modifier = Modifier.padding(bottom = 12.dp)
-            )
-            if (!hasPermission) {
-                Text(
-                    "Calendar permission needed. Grant it in Android Settings to see events here.",
-                    color = Color(0xFF9A9A9A),
-                    fontSize = 14.sp,
-                )
-            } else if (events.isEmpty()) {
-                Text(
-                    "No upcoming events in the next 7 days.",
-                    color = Color(0xFF9A9A9A),
-                    fontSize = 14.sp,
-                )
-            } else {
-                events.take(5).forEach { event ->
-                    CalendarEventRow(event)
-                }
-            }
-        }
-    }
+private fun appWidgetMinDp(context: Context, raw: Int): Int {
+  if (raw <= 0) return 0
+  // Android 9/10 on Portal reports AppWidgetProviderInfo sizes as raw complex
+  // dimension values (for example, 10241 == 40dp). Newer framework builds may
+  // already hand back dp integers, so only decode values that are clearly not
+  // plain dp sizes.
+  if (raw < 1000) return raw
+  val metrics = context.resources.displayMetrics
+  return (TypedValue.complexToDimensionPixelSize(raw, metrics) / metrics.density).roundToInt()
 }
-
-@Composable
-private fun CalendarEventRow(event: CalendarEvent) {
-    val context = androidx.compose.ui.platform.LocalContext.current
-    val timeText = remember(event.begin) {
-        val cal = java.util.Calendar.getInstance().apply { timeInMillis = event.begin }
-        if (event.allDay) {
-            val dayFmt = java.text.SimpleDateFormat("MMM d", java.util.Locale.getDefault())
-            "All day · ${dayFmt.format(cal.time)}"
-        } else {
-            val timeFmt = java.text.SimpleDateFormat("h:mm a", java.util.Locale.getDefault())
-            "Today · ${timeFmt.format(cal.time)}"
-        }
-    }
-    Row(
-        modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Column(modifier = Modifier.weight(1f)) {
-            Text(event.title, color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Medium)
-            Text(timeText, color = Color(0xFF9A9A9A), fontSize = 12.sp)
-        }
-    }
-}
-

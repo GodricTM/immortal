@@ -112,8 +112,8 @@ class BacklogLogicTest {
   @Test
   fun `anti burn-in offset stays within bounds and moves`() {
     val max = 14f
-    val a = AntiBurnIn.offsetX(0L, max)
-    val b = AntiBurnIn.offsetX(40_000L, max)
+    val a = AntiBurnIn.shift(0L, max).x
+    val b = AntiBurnIn.shift(40_000L, max).x
     assertTrue(kotlin.math.abs(a) <= max + 1e-3)
     assertTrue(kotlin.math.abs(b) <= max + 1e-3)
     assertTrue("offset should change over time", a != b)

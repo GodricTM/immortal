@@ -300,25 +300,3 @@ private fun SleepMinuteStepper(minutes: Int, onChange: (Int) -> Unit) {
     ArrowButton("▶", focused) { onChange(minutes + 5) }
   }
 }
-
-@Composable
-private fun ArrowButton(glyph: String, rowFocused: Boolean, onClick: () -> Unit) {
-  Box(
-      // Tappable for touch devices (Portal has no D-pad); the row's onKeyEvent still
-      // handles left/right on the TV remote.
-      modifier = Modifier.size(48.dp).clickable { onClick() },
-      contentAlignment = Alignment.Center,
-  ) {
-    Text(
-        glyph,
-        color = if (rowFocused) Color.White else Color(0xFFBBBBBB),
-        fontSize = 20.sp,
-        fontWeight = FontWeight.SemiBold,
-    )
-  }
-}
-
-@Composable
-private fun Divider() {
-  Spacer(Modifier.fillMaxWidth().height(1.dp).background(Color(0x14FFFFFF)))
-}

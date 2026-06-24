@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Meta Platforms, Inc. and affiliates.
+ * Copyright (c) 2026 Starbright Lab.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -12,29 +12,40 @@ import kotlin.math.cos
 import kotlin.math.sin
 
 /**
- * Gentle anti-burn-in for the always-on surfaces (the digital-clock screensaver, etc.).
- * A screen that's never off needs its bright pixels to move, or they age unevenly and
- * ghost. This nudges content along a slow Lissajous path so over minutes every pixel
- * shares the load — slow enough that it's invisible, wide enough to matter.
+ * Burn-in mitigation for the always-on screensaver overlay.
  *
- * Pure + testable: [offsetX]/[offsetY] are a function of the clock only.
+ * A Portal that never sleeps shows the same clock in the same pixels for days, and on
+ * panels prone to it those pixels age unevenly and ghost. The fix is the classic
+ * "pixel shift": nudge the whole overlay by a few pixels so, averaged over time, the
+ * bright content is spread across many pixels instead of branding a fixed silhouette.
+ *
+ * [shift] traces a slow Lissajous path from two incommensurate periods, so the motion
+ * never settles into one repeating line (which would just burn a longer streak). It's
+ * slow enough to be invisible and small enough not to disturb the layout — the host
+ * oversizes the overlay by the same radius so the drift never bares a screen edge.
+ *
+ * Pure and deterministic: the offset is a function of the clock alone, so it's trivially
+ * unit-tested and behaves identically on every device.
  */
 object AntiBurnIn {
 
-  // Two near-but-unequal periods (seconds) trace a slowly-precessing loop rather than a
-  // repeating line, so no pixel sits on the same track for long.
-  private const val PERIOD_X_S = 97.0
-  private const val PERIOD_Y_S = 131.0
+  // Two periods (ms), coprime so the x/y loop precesses for a long time before it ever repeats.
+  // Several minutes each: combined with the small radius this keeps the per-second motion far
+  // below what a glance catches (the earlier ~1.5-minute periods read as a slow, visible creep).
+  private const val PERIOD_X_MS = 311_000.0
+  private const val PERIOD_Y_MS = 421_000.0
 
-  /** Horizontal shift in pixels at [nowMs], within ±[maxPx]. */
-  fun offsetX(nowMs: Long, maxPx: Float): Float {
-    val t = nowMs / 1000.0
-    return (sin(2 * PI * t / PERIOD_X_S) * maxPx).toFloat()
-  }
+  /** A pixel offset to apply as the overlay's translationX / translationY. */
+  data class Shift(val x: Float, val y: Float)
 
-  /** Vertical shift in pixels at [nowMs], within ±[maxPx]. */
-  fun offsetY(nowMs: Long, maxPx: Float): Float {
-    val t = nowMs / 1000.0
-    return (cos(2 * PI * t / PERIOD_Y_S) * maxPx).toFloat()
+  /**
+   * The overlay offset at [nowMs], each axis bounded to ±[maxPx]. x starts centred and
+   * y at its extreme (the two axes are a quarter-cycle apart), so the path is a loop
+   * rather than a single diagonal line.
+   */
+  fun shift(nowMs: Long, maxPx: Float): Shift {
+    val x = sin(2.0 * PI * nowMs / PERIOD_X_MS) * maxPx
+    val y = cos(2.0 * PI * nowMs / PERIOD_Y_MS) * maxPx
+    return Shift(x.toFloat(), y.toFloat())
   }
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Meta Platforms, Inc. and affiliates.
+ * Copyright (c) 2026 Starbright Lab.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -21,7 +21,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -70,6 +69,7 @@ private fun ImmichConnectScreen(onDone: () -> Unit) {
   // null = not connected yet (show the form); non-null = connected, show the album picker.
   var albums by remember { mutableStateOf<List<ImmichSource.Album>?>(null) }
   var selectedAlbumId by remember { mutableStateOf(existing.immichAlbumId) }
+  val (_, initialFocus) = rememberInitialFocus()
 
   BackHandler { onDone() }
 
@@ -129,7 +129,7 @@ private fun ImmichConnectScreen(onDone: () -> Unit) {
             onValueChange = { url = it },
             placeholder = { Text("http://192.168.1.50:2283", color = Color(0xFF777777)) },
             singleLine = true,
-            modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp),
+            modifier = initialFocus.fillMaxWidth().heightIn(min = 56.dp),
             shape = RoundedCornerShape(14.dp),
         )
         Spacer(Modifier.heightIn(min = 12.dp))
@@ -235,9 +235,4 @@ private fun CancelRow(onDone: () -> Unit) {
         modifier = Modifier.padding(vertical = 14.dp).fillMaxWidth(),
     )
   }
-}
-
-@Composable
-private fun Divider() {
-  Spacer(Modifier.fillMaxWidth().size(1.dp).background(Color(0x14FFFFFF)))
 }

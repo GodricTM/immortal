@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Meta Platforms, Inc. and affiliates.
+ * Copyright (c) 2026 Starbright Lab.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -65,6 +65,7 @@ class WebUrlEntryActivity : ComponentActivity() {
 private fun WebUrlEntryScreen(onSave: (String) -> Unit, onCancel: () -> Unit) {
   val context = LocalContext.current
   var url by remember { mutableStateOf(ScreensaverConfig.load(context).webUrl.orEmpty()) }
+  val (_, initialFocus) = rememberInitialFocus()
 
   val trimmed = url.trim()
   val valid = trimmed.startsWith("http://", true) || trimmed.startsWith("https://", true)
@@ -115,7 +116,7 @@ private fun WebUrlEntryScreen(onSave: (String) -> Unit, onCancel: () -> Unit) {
           color = if (valid) Color(0xFF2E6BE6) else Color(0xFF2A2A2C),
           shape = RoundedCornerShape(16.dp),
           modifier =
-              Modifier.fillMaxWidth().tvFocusable(RoundedCornerShape(16.dp), focusScale = 1f) {
+              Modifier.fillMaxWidth().then(initialFocus).tvFocusable(RoundedCornerShape(16.dp), focusScale = 1f) {
                 if (valid) onSave(trimmed)
               },
       ) {

@@ -212,7 +212,6 @@ private fun ClockSettingsScreen() {
                 DigitalClockConfig.setStyle(context, it)
                 clockConfig = DigitalClockConfig.load(context)
               },
-              modifier = Modifier.fillMaxWidth(),
           )
           Spacer(Modifier.size(8.dp))
           Segmented(
@@ -227,7 +226,6 @@ private fun ClockSettingsScreen() {
                 DigitalClockConfig.setStyle(context, it)
                 clockConfig = DigitalClockConfig.load(context)
               },
-              modifier = Modifier.fillMaxWidth(),
           )
         }
       }
@@ -305,7 +303,6 @@ private fun ClockSettingsScreen() {
                 DigitalClockConfig.setFont(context, it)
                 clockConfig = DigitalClockConfig.load(context)
               },
-              modifier = Modifier.fillMaxWidth(),
           )
         }
         Divider()
@@ -700,62 +697,6 @@ private fun ClockSettingsScreen() {
     }
   }
   FolderBackButton(onClick = { activity?.finish() })
-}
-
-@Composable
-private fun SectionLabel(text: String) {
-  Text(
-      text.uppercase(),
-      color = Color(0xFF7C7C7C),
-      fontSize = 13.sp,
-      fontWeight = FontWeight.SemiBold,
-      modifier = Modifier.padding(start = 4.dp, bottom = 8.dp),
-  )
-}
-
-@Composable
-private fun Card(content: @Composable () -> Unit) {
-  Surface(
-      color = Color(0xFF1C1C1E),
-      shape = RoundedCornerShape(18.dp),
-      modifier = Modifier.fillMaxWidth(),
-  ) {
-    Column { content() }
-  }
-}
-
-@Composable
-private fun Divider() {
-  Spacer(Modifier.fillMaxWidth().height(1.dp).background(Color(0x14FFFFFF)))
-}
-
-@Composable
-private fun Segmented(
-    options: List<Pair<String, String>>,
-    selected: String,
-    onSelect: (String) -> Unit,
-    modifier: Modifier = Modifier,
-) {
-  Row(
-      modifier = modifier.background(Color(0xFF2A2A2C), RoundedCornerShape(12.dp)).padding(3.dp),
-      horizontalArrangement = Arrangement.spacedBy(2.dp),
-  ) {
-    options.forEach { (label, value) ->
-      val on = value == selected
-      Surface(
-          color = if (on) MaterialTheme.colorScheme.primary else Color.Transparent,
-          shape = RoundedCornerShape(10.dp),
-          modifier = Modifier.clickable { onSelect(value) },
-      ) {
-        Text(
-            label,
-            color = if (on) Color.White else Color(0xFFBBBBBB),
-            fontSize = 15.sp,
-            modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
-        )
-      }
-    }
-  }
 }
 
 /**

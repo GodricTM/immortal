@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Meta Platforms, Inc. and affiliates.
+ * Copyright (c) 2026 Starbright Lab.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -27,4 +27,9 @@ object QuickBarConfig {
 
   fun setAlwaysShow(c: Context, on: Boolean) =
       prefs(c).edit().putBoolean("always_show", on).apply()
+
+  /** Immutable snapshot, so the settings domain renders through the generic on-device list. */
+  data class Settings(val enabled: Boolean = false, val alwaysShow: Boolean = false)
+
+  fun load(c: Context): Settings = Settings(enabled = isEnabled(c), alwaysShow = alwaysShow(c))
 }

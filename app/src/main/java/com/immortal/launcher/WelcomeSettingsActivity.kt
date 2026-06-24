@@ -334,46 +334,6 @@ private fun ttsQualityLabel(v: android.speech.tts.Voice): String? =
     }
 
 @Composable
-private fun SectionLabel(text: String) {
-  Text(
-      text.uppercase(),
-      color = Color(0xFF7C7C7C),
-      fontSize = 13.sp,
-      fontWeight = FontWeight.SemiBold,
-      modifier = Modifier.padding(start = 4.dp, bottom = 8.dp),
-  )
-}
-
-@Composable
-private fun Card(content: @Composable () -> Unit) {
-  Surface(
-      color = Color(0xFF1C1C1E),
-      shape = RoundedCornerShape(18.dp),
-      modifier = Modifier.fillMaxWidth(),
-  ) {
-    Column { content() }
-  }
-}
-
-@Composable
-private fun Divider() {
-  Spacer(Modifier.fillMaxWidth().height(1.dp).background(Color(0x14FFFFFF)))
-}
-
-@Composable
-private fun ToggleRow(title: String, checked: Boolean, onChange: (Boolean) -> Unit) {
-  Row(
-      modifier =
-          Modifier.fillMaxWidth().tvFocusableRow { onChange(!checked) }
-              .padding(horizontal = 18.dp, vertical = 14.dp),
-      verticalAlignment = Alignment.CenterVertically,
-  ) {
-    Text(title, color = Color.White, fontSize = 17.sp, modifier = Modifier.weight(1f))
-    Switch(checked = checked, onCheckedChange = null)
-  }
-}
-
-@Composable
 private fun AndroidVoiceRow(
     label: String,
     selected: Boolean,
@@ -587,24 +547,5 @@ private fun OpacityStepper(opacity: Float, onChange: (Float) -> Unit) {
         modifier = Modifier.widthIn(min = 64.dp),
     )
     ArrowButton("▶", focused) { onChange(opacity + 0.05f) }
-  }
-}
-
-@Composable
-private fun ArrowButton(glyph: String, rowFocused: Boolean, onClick: () -> Unit) {
-  Box(
-      modifier =
-          Modifier.size(48.dp)
-              .clip(RoundedCornerShape(12.dp))
-              .focusProperties { canFocus = false }
-              .clickable(onClick = onClick),
-      contentAlignment = Alignment.Center,
-  ) {
-    Text(
-        glyph,
-        color = if (rowFocused) Color.White else Color(0xFFBBBBBB),
-        fontSize = 20.sp,
-        fontWeight = FontWeight.SemiBold,
-    )
   }
 }
