@@ -37,6 +37,8 @@ import java.util.concurrent.Executors
 import kotlin.math.abs
 import org.json.JSONObject
 
+private const val SHERPA_VOICE_PARAM = "sherpa_voice_name"
+
 /**
  * The photo-frame UI + update logic, decoupled from any host. Used by both
  * [PhotoDreamService] (the real screensaver) and [PhotoFramePreviewActivity]
@@ -199,9 +201,7 @@ class PhotoFrameController(
 
     // --- fork features layered on top of the Face overlay ---
     // Only spin up TTS when the welcome overlay will actually speak. The greeting uses the
-    // Android TTS engine (reliable, instant, no large download). Piper neural TTS was dropped
-    // from this path: its model download is unreliable on the Portal's connection and a
-    // truncated model makes onnxruntime abort natively (SIGABRT), taking the whole dream down.
+    // Android TTS service selected on the device, keeping any neural engine out-of-process.
     val welcomeCfg = WelcomeConfig.load(context)
     val ttsEnabled = showWelcome && settings.welcomeEnabled && welcomeCfg.enableTts
     if (ttsEnabled) {
@@ -219,11 +219,14 @@ class PhotoFrameController(
                 else voices
                     ?.filter { it.locale.language == Locale.US.language && !it.isNetworkConnectionRequired }
                     ?.maxByOrNull { it.quality }
-            chosen?.let { tts?.voice = it }
+            chosen?.let {
+              tts?.language = it.locale
+              tts?.voice = it
+            }
           }
           ttsReady = true
           pendingSpeech?.let { text ->
-            tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, null)
+            tts?.speak(text, TextToSpeech.QUEUE_FLUSH, welcomeTtsParams(welcomeCfg), null)
             pendingSpeech = null
           }
         }
@@ -697,7 +700,7 @@ class PhotoFrameController(
       }
       // Speak immediately if TTS is ready, otherwise queue it
       if (ttsReady) {
-        tts?.speak(fullGreeting, TextToSpeech.QUEUE_FLUSH, null, null)
+        tts?.speak(fullGreeting, TextToSpeech.QUEUE_FLUSH, welcomeTtsParams(welcomeCfg), null)
       } else {
         pendingSpeech = fullGreeting
       }
@@ -727,6 +730,13 @@ class PhotoFrameController(
         .withEndAction { welcomeOverlay.visibility = View.GONE }
         .start()
   }
+
+  private fun welcomeTtsParams(cfg: WelcomeConfig.Settings): android.os.Bundle? =
+      if (cfg.ttsVoice.isBlank()) {
+        null
+      } else {
+        android.os.Bundle().apply { putString(SHERPA_VOICE_PARAM, cfg.ttsVoice) }
+      }
 
   // --- ambient dashboard (fork) -----------------------------------------------
 

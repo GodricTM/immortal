@@ -109,7 +109,7 @@ private fun ChimeSettingsScreen() {
             ChimeConfig.setSpokenVoice(context, name)
             settings = settings.copy(spokenVoice = name)
           }
-          TestButton("Test voice") { ChimePlayer.speakTime(context) }
+          TestButton("Test voice") { ChimePlayer.testVoice(context, settings.spokenVoice) }
         }
         ChimeToggleRow("Golden-hour tone", "A sound at sunrise and sunset", settings.goldenHourOn) {
           ChimeConfig.setGoldenHour(context, it)
@@ -230,13 +230,12 @@ private fun VoicePicker(current: String, onPick: (String) -> Unit) {
     var tts: android.speech.tts.TextToSpeech? = null
     tts = android.speech.tts.TextToSpeech(context.applicationContext) { status ->
       if (status == android.speech.tts.TextToSpeech.SUCCESS) {
-        val lang = java.util.Locale.getDefault().language
         val found = runCatching {
           tts?.voices
-              ?.filter { it.locale.language == lang && !it.isNetworkConnectionRequired }
-              ?.sortedWith(compareByDescending<android.speech.tts.Voice> { it.quality }.thenBy { it.name })
+              ?.filter { !it.isNetworkConnectionRequired }
+              ?.sortedWith(chimeTtsVoiceSort())
               ?.map { it.name to prettyVoice(it) }
-              ?.distinctBy { it.second }
+              ?.distinctBy { it.first }
               ?: emptyList()
         }.getOrDefault(emptyList())
         if (found.isNotEmpty()) voices = listOf("" to "Default voice") + found
@@ -268,9 +267,49 @@ private fun VoicePicker(current: String, onPick: (String) -> Unit) {
   }
 }
 
+private fun chimeTtsVoiceSort(): Comparator<android.speech.tts.Voice> =
+    compareBy<android.speech.tts.Voice> { chimeTtsVoiceGroup(it) }
+        .thenByDescending { it.quality }
+        .thenBy { it.locale.displayLanguage }
+        .thenBy { it.name }
+
+private fun chimeTtsVoiceGroup(v: android.speech.tts.Voice): Int {
+  val n = v.name.lowercase()
+  return when {
+    n.startsWith("sherpa-kokoro-") -> 0
+    n.startsWith("sherpa-piper-ro_ro-") -> 1
+    n.startsWith("sherpa-piper-") -> 2
+    else -> 3
+  }
+}
+
+private fun chimeTtsLocaleLabel(v: android.speech.tts.Voice): String {
+  val language = v.locale.getDisplayLanguage(java.util.Locale.US).ifBlank { v.locale.language }
+  val country = v.locale.country
+  return if (country.isBlank()) language else "$language (${country.uppercase()})"
+}
+
+private fun chimeTtsQualityLabel(v: android.speech.tts.Voice): String? =
+    when {
+      v.quality >= android.speech.tts.Voice.QUALITY_VERY_HIGH -> "HQ+"
+      v.quality >= android.speech.tts.Voice.QUALITY_HIGH -> "HQ"
+      else -> null
+    }
+
 /** Turn an engine voice name like "en-us-x-sfg#female_1-local" into something readable. */
 private fun prettyVoice(v: android.speech.tts.Voice): String {
   val n = v.name.lowercase()
+  if (n.startsWith("sherpa-kokoro-")) {
+    val voice = v.name.removePrefix("sherpa-kokoro-")
+    return listOfNotNull("Kokoro $voice", chimeTtsLocaleLabel(v), chimeTtsQualityLabel(v)).joinToString(" - ")
+  }
+  if (n == "sherpa-piper-ro_ro-mihai-medium") {
+    return listOfNotNull("Romanian Mihai", chimeTtsLocaleLabel(v), chimeTtsQualityLabel(v)).joinToString(" - ")
+  }
+  if (n.startsWith("sherpa-piper-")) {
+    val voice = v.name.removePrefix("sherpa-piper-").replace('-', ' ')
+    return listOfNotNull("Piper $voice", chimeTtsLocaleLabel(v), chimeTtsQualityLabel(v)).joinToString(" - ")
+  }
   val gender = when {
     n.contains("female") -> "Female"
     n.contains("male") -> "Male"

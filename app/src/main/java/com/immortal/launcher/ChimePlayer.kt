@@ -24,7 +24,8 @@ import java.util.Locale
  * with no UI to own a player lifecycle.
  */
 object ChimePlayer {
-  private const val TAG = "ImmortalChime"
+private const val TAG = "ImmortalChime"
+private const val SHERPA_VOICE_PARAM = "sherpa_voice_name"
 
   private val ambientAttrs =
       AudioAttributes.Builder()
@@ -95,6 +96,17 @@ object ChimePlayer {
   /** Speak an arbitrary phrase (e.g. "Pasta timer done") at full volume. */
   fun announce(context: Context, text: String) = speak(context, text, volumeOverride = 1f)
 
+  /** Audition the currently selected spoken-time voice without using a clock phrase. */
+  fun testVoice(context: Context, voiceName: String = ChimeConfig.load(context).spokenVoice) {
+    val sample =
+        if (voiceName.contains("ro_RO", ignoreCase = true) || voiceName.contains("ro-ro", ignoreCase = true)) {
+          "Aceasta este vocea selectata pentru Immortal."
+        } else {
+          "This is the selected voice for Immortal."
+        }
+    speak(context, sample, voiceNameOverride = voiceName)
+  }
+
   /** Speak the current time, e.g. "It's three o'clock" / "It's half past four".
    * Uses the platform TTS (fast, always present); Piper is overkill for a chime. */
   fun speakTime(context: Context, now: Calendar = Calendar.getInstance()) {
@@ -158,7 +170,12 @@ object ChimePlayer {
     }.onFailure { Log.w(TAG, "golden-hour tone failed", it) }
   }
 
-  private fun speak(context: Context, text: String, volumeOverride: Float? = null) {
+  private fun speak(
+      context: Context,
+      text: String,
+      volumeOverride: Float? = null,
+      voiceNameOverride: String? = null,
+  ) {
     runCatching {
       val cfg = ChimeConfig.load(context)
       val vol = (volumeOverride ?: (cfg.spokenVolume / 100f)).coerceIn(0f, 1f)
@@ -167,17 +184,22 @@ object ChimePlayer {
       tts = TextToSpeech(context.applicationContext) { status ->
         if (status == TextToSpeech.SUCCESS) {
           val t = tts ?: return@TextToSpeech
-          t.language = Locale.getDefault()
+          val voiceName = voiceNameOverride ?: cfg.spokenVoice
           // Apply the chosen voice; if none chosen, pick the highest-quality voice the
           // device has so spoken time sounds as good as possible by default.
           runCatching {
             val lang = Locale.getDefault().language
             val v =
-                if (cfg.spokenVoice.isNotBlank()) t.voices?.firstOrNull { it.name == cfg.spokenVoice }
+                if (voiceName.isNotBlank()) t.voices?.firstOrNull { it.name == voiceName }
                 else t.voices
                     ?.filter { it.locale.language == lang && !it.isNetworkConnectionRequired }
                     ?.maxByOrNull { it.quality }
-            v?.let { t.voice = it }
+            if (v != null) {
+              t.language = v.locale
+              t.voice = v
+            } else {
+              t.language = Locale.getDefault()
+            }
           }
           t.setOnUtteranceProgressListener(
               object : android.speech.tts.UtteranceProgressListener() {
@@ -191,6 +213,7 @@ object ChimePlayer {
               })
           val params = android.os.Bundle().apply {
             putFloat(TextToSpeech.Engine.KEY_PARAM_VOLUME, vol)
+            if (voiceName.isNotBlank()) putString(SHERPA_VOICE_PARAM, voiceName)
           }
           t.speak(text, TextToSpeech.QUEUE_FLUSH, params, "chime_time")
         } else {

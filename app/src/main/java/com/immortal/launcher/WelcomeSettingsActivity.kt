@@ -39,6 +39,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.immortal.launcher.ui.theme.SampleAppTheme
 
+private const val SHERPA_VOICE_PARAM = "sherpa_voice_name"
+
 /**
  * Settings screen for the welcome-back overlay. Customize greeting messages,
  * colors, sizes, duration, and visibility of individual elements.
@@ -69,15 +71,12 @@ private fun WelcomeSettingsScreen() {
     var engine: android.speech.tts.TextToSpeech? = null
     engine = android.speech.tts.TextToSpeech(context.applicationContext) { status ->
       if (status == android.speech.tts.TextToSpeech.SUCCESS) {
-        val lang = java.util.Locale.getDefault().language
         val found = runCatching {
           engine?.voices
-              ?.filter { it.locale.language == lang && !it.isNetworkConnectionRequired }
-              // Highest-quality voices first so the best the device has is surfaced.
-              ?.sortedWith(compareByDescending<android.speech.tts.Voice> { it.quality }.thenBy { it.name })
+              ?.filter { !it.isNetworkConnectionRequired }
+              ?.sortedWith(ttsVoiceSort())
               ?.map { it.name to androidVoiceLabel(it) }
-              ?.distinctBy { it.second }
-              ?.take(12)
+              ?.distinctBy { it.first }
               ?: emptyList()
         }.getOrDefault(emptyList())
         if (found.isNotEmpty()) androidVoices = listOf("" to "Default voice") + found
@@ -88,12 +87,27 @@ private fun WelcomeSettingsScreen() {
   }
   fun testVoice(voiceName: String) {
     val t = ttsEngine.value ?: return
-    t.language = java.util.Locale.getDefault()
-    if (voiceName.isNotBlank()) {
-      runCatching { t.voices?.firstOrNull { it.name == voiceName }?.let { t.voice = it } }
-    }
-    t.speak("Hi, this is your welcome voice. Welcome home.",
-        android.speech.tts.TextToSpeech.QUEUE_FLUSH, null, "welcome_test")
+    val selectedVoice =
+        if (voiceName.isNotBlank()) t.voices?.firstOrNull { it.name == voiceName } else null
+    val sample =
+        if (selectedVoice != null) {
+          runCatching { t.language = selectedVoice.locale }
+          runCatching { t.voice = selectedVoice }
+          if (selectedVoice.locale.language == "ro") {
+            "Salut, aceasta este vocea romaneasca."
+          } else {
+            "Hi, this is your welcome voice. Welcome home."
+          }
+        } else {
+          t.language = java.util.Locale.getDefault()
+          "Hi, this is your welcome voice. Welcome home."
+        }
+    val params =
+        android.os.Bundle().apply {
+          if (voiceName.isNotBlank()) putString(SHERPA_VOICE_PARAM, voiceName)
+        }
+    t.speak(sample,
+        android.speech.tts.TextToSpeech.QUEUE_FLUSH, params, "welcome_test")
   }
 
   Box(modifier = Modifier.fillMaxSize()) {
@@ -290,6 +304,35 @@ private fun WelcomeSettingsScreen() {
   }
 }
 
+private fun ttsVoiceSort(): Comparator<android.speech.tts.Voice> =
+    compareBy<android.speech.tts.Voice> { ttsVoiceGroup(it) }
+        .thenByDescending { it.quality }
+        .thenBy { it.locale.displayLanguage }
+        .thenBy { it.name }
+
+private fun ttsVoiceGroup(v: android.speech.tts.Voice): Int {
+  val n = v.name.lowercase()
+  return when {
+    n.startsWith("sherpa-kokoro-") -> 0
+    n.startsWith("sherpa-piper-ro_ro-") -> 1
+    n.startsWith("sherpa-piper-") -> 2
+    else -> 3
+  }
+}
+
+private fun ttsLocaleLabel(v: android.speech.tts.Voice): String {
+  val language = v.locale.getDisplayLanguage(java.util.Locale.US).ifBlank { v.locale.language }
+  val country = v.locale.country
+  return if (country.isBlank()) language else "$language (${country.uppercase()})"
+}
+
+private fun ttsQualityLabel(v: android.speech.tts.Voice): String? =
+    when {
+      v.quality >= android.speech.tts.Voice.QUALITY_VERY_HIGH -> "HQ+"
+      v.quality >= android.speech.tts.Voice.QUALITY_HIGH -> "HQ"
+      else -> null
+    }
+
 @Composable
 private fun SectionLabel(text: String) {
   Text(
@@ -364,6 +407,17 @@ private fun AndroidVoiceRow(
 /** Turn an Android engine voice name like "en-us-x-sfg#female_1-local" into a label. */
 private fun androidVoiceLabel(v: android.speech.tts.Voice): String {
   val n = v.name.lowercase()
+  if (n.startsWith("sherpa-kokoro-")) {
+    val voice = v.name.removePrefix("sherpa-kokoro-")
+    return listOfNotNull("Kokoro $voice", ttsLocaleLabel(v), ttsQualityLabel(v)).joinToString(" - ")
+  }
+  if (n == "sherpa-piper-ro_ro-mihai-medium") {
+    return listOfNotNull("Romanian Mihai", ttsLocaleLabel(v), ttsQualityLabel(v)).joinToString(" - ")
+  }
+  if (n.startsWith("sherpa-piper-")) {
+    val voice = v.name.removePrefix("sherpa-piper-").replace('-', ' ')
+    return listOfNotNull("Piper $voice", ttsLocaleLabel(v), ttsQualityLabel(v)).joinToString(" - ")
+  }
   val gender = when {
     n.contains("female") -> "Female"
     n.contains("male") -> "Male"

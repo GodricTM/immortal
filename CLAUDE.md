@@ -76,6 +76,8 @@ CalendarFeed/CalendarUrlEntryActivity — upstream calendar widget on the frame 
  chosen in SettingsGuard.reaffirmScreensaver from DigitalClockConfig.enabled — on = digital clock
  (DigitalClockDreamService), off = photo frame (PhotoDreamService). Toggle: Clock tile → "Digital
  clock", or the home header Clock button.)
+(Voice note: Immortal does not bundle Sherpa/ONNX; an external Sherpa Android TTS engine can still
+ supply Kokoro/Romanian voices through the normal `TextToSpeech` API.)
 (Welcome-overlay TTS uses Android's built-in TextToSpeech — Piper/Sherpa-ONNX was removed)
 
 — Ambient / home-screen features (all added on the godric fork) —
@@ -408,6 +410,9 @@ Always use dark backgrounds or a semi-transparent dark scrim in that zone.
 ## Welcome-overlay TTS (Android TextToSpeech)
 
 The welcome greeting speaks through Android's built-in `TextToSpeech` engine.
+Current implementation note: Sherpa/ONNX is still **not bundled inside Immortal**. Neural voices come
+from an external Android TTS engine (`com.k2fsa.sherpa.onnx.tts.engine`) when that engine is installed
+and selected as the device default, keeping native model failures out of the launcher/dream process.
 **Piper neural TTS (Sherpa-ONNX) was removed** — its voice model is a ~63 MB download
 that the Portal's connection truncates, and a truncated `.onnx` makes onnxruntime
 abort *natively* (uncatchable `SIGABRT`), which took the whole dream/launcher process
@@ -416,13 +421,25 @@ APK from ~88 MB to ~31 MB (the bundled sherpa-onnx AAR was 56 MB).
 
 **Flow in `PhotoFrameController.start()`:** TTS is only initialized when the welcome
 overlay is shown *and* `WelcomeConfig.enableTts` is on. On init it applies the user's
-chosen voice (`WelcomeConfig.ttsVoice`); if none is chosen it auto-selects the
-**highest-quality** non-network voice the device has (`Voice.getQuality()`).
+chosen voice (`WelcomeConfig.ttsVoice`) and its locale; if none is chosen it auto-selects the
+**highest-quality** local English voice the device has (`Voice.getQuality()`).
 
-**Voice picker:** Welcome settings lists the device's installed TTS voices (sorted
-highest-quality first, with an `HQ`/`HQ+` hint), each with an instant Test button.
-The Sounds screen's spoken-time picker works the same way. No download, no native
-crash. (Quality is bounded by whatever TTS engine the Portal has installed.)
+**Voice picker:** Welcome settings lists all local non-network TTS voices, not only the
+Portal's current language, and each row has an instant Test button. This is required so
+Romanian remains visible on an English Portal. The Sounds screen's spoken-time picker
+works the same way. Sherpa voices get readable labels such as `Kokoro af_bella` and
+`Romanian Mihai`. When speaking with a selected voice, Immortal sets the TTS language
+from that voice locale before calling `speak(...)`.
+
+**Sherpa voice override:** Android may keep a stale `TextToSpeech.voice` when `setVoice(...)`
+returns `ERROR`; logcat showed Romanian test text still arriving at Sherpa as the previous Kokoro
+voice. Immortal now passes a private synthesis param `sherpa_voice_name` from Welcome tests, welcome
+greetings, and Sounds spoken-time tests. The custom Sherpa engine reads that param in
+`TtsService.onSynthesizeText()` and resolves the speaker/model directly.
+
+**Current Portal+ voice set:** Kokoro v1.0 English speakers from `kokoro-multi-lang-v1_0`,
+plus Romanian Mihai from `vits-piper-ro_RO-mihai-medium`. Kokoro does not include Romanian;
+Romanian is provided by the Piper model.
 
 **TTS is off by default.** Users enable it in Welcome settings (`WelcomeConfig.enableTts`).
 
