@@ -1247,7 +1247,7 @@ private fun List<AppEntry>.toLayoutRefs(): List<HomeLayoutModel.AppRef> =
 // (apps, folders, built-ins, the drag ghost) follows the user's size setting.
 // Standard is the original 6-column/88dp look; Large is 5 columns of 110dp tiles,
 // closer to the stock Portal launcher.
-private val LocalTileDp = compositionLocalOf { 88.dp }
+internal val LocalTileDp = compositionLocalOf { 88.dp }
 
 private fun tileDpFor(size: String): Dp =
     when (size) {
@@ -1995,7 +1995,7 @@ private data class FolderExtra(val label: String, val glyph: String, val onClick
 /** A built-in launcher tile: a rounded colour tile with a centered white vector
  * glyph, styled to sit naturally beside real app icons. */
 @Composable
-private fun BuiltInTile(
+internal fun BuiltInTile(
     label: String,
     background: Color,
     glyph: String,
