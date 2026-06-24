@@ -241,7 +241,7 @@ private fun VolumeIcon() {
 /** Bottom-right Manage / Done toggle. */
 @Composable
 
-private fun DashboardPage() {
+internal fun DashboardPage() {
   val context = androidx.compose.ui.platform.LocalContext.current
   val use24 = remember { ImmortalSettings.use24HourClock(context) }
   var now by remember { mutableStateOf(java.util.Date()) }
@@ -441,8 +441,8 @@ private fun CountdownChips(version: Int = 0) {
 
 /** Internal tab keys for the built-in "Apps" and "Tools" category chips. These
  *  are filtered out of the dynamic [tabs] list so they aren't rendered twice. */
-private const val TAB_APPS = "Apps"
-private const val TAB_TOOLS = "Tools"
+internal const val TAB_APPS = "Apps"
+internal const val TAB_TOOLS = "Tools"
 
 /** The single home control/info strip: category tabs, then countdown chips, then
  *  live kitchen timers + a "+ Timer" chip — all on one horizontally-scrolling line
@@ -1591,7 +1591,7 @@ private fun NoteTile(onClick: () -> Unit) {
 /** A pinned sticky-note card on the home screen, shown when a text and/or voice note
  * exists. Tapping the text opens the editor; the audio note plays inline. */
 @Composable
-private fun HomeNoteCard(version: Int, onEdit: () -> Unit) {
+internal fun HomeNoteCard(version: Int, onEdit: () -> Unit) {
   val context = androidx.compose.ui.platform.LocalContext.current
   val text = remember(version) { NotesConfig.loadText(context) }
   val hasAudio = remember(version) { NotesConfig.hasAudioNote(context) }
@@ -1641,7 +1641,7 @@ private fun HomeNoteCard(version: Int, onEdit: () -> Unit) {
 /** "Did you know" discoverability card — one tip a day, dismissible. Teaches the
  *  device's depth instead of hiding it. Hidden once dismissed until tomorrow's tip. */
 @Composable
-private fun DidYouKnowCard(version: Int) {
+internal fun DidYouKnowCard(version: Int) {
   val context = androidx.compose.ui.platform.LocalContext.current
   var dismissed by remember(version) { mutableStateOf(Tips.isDismissedToday(context)) }
   if (dismissed) return
@@ -2813,7 +2813,7 @@ private fun minuteOfDay(epochMillis: Long): Int {
 
 
 @Composable
-private fun QuickSettingsPanel(onDismiss: () -> Unit) {
+internal fun QuickSettingsPanel(onDismiss: () -> Unit) {
     val context = androidx.compose.ui.platform.LocalContext.current
     var brightness by remember { mutableStateOf(50) }
     var volume by remember { mutableStateOf(50) }
@@ -2980,7 +2980,7 @@ private fun QuickToggle(
 
 @Composable
 
-private fun CalendarWidget() {
+internal fun CalendarWidget() {
     val context = androidx.compose.ui.platform.LocalContext.current
     var events by remember { mutableStateOf<List<CalendarEvent>>(emptyList()) }
     var hasPermission by remember { mutableStateOf(CalendarHelper.hasPermission(context)) }

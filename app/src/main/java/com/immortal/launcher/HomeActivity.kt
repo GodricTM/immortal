@@ -388,6 +388,10 @@ private fun LauncherScreen(
   var activeToolOverlay by remember { mutableStateOf<String?>(null) }
   var backgroundType by remember { mutableStateOf(ImmortalSettings.load(context).backgroundType) }
   var showTabsSetting by remember { mutableStateOf(ImmortalSettings.load(context).showTabs) }
+  var showCalendarWidget by remember { mutableStateOf(ImmortalSettings.load(context).calendarWidget == ImmortalSettings.CALENDAR_ON) }
+  var showDashboardPage by remember { mutableStateOf(ImmortalSettings.load(context).dashboardPage) }
+  var showQuickSettings by remember { mutableStateOf(false) }
+  var selectedTab by remember { mutableStateOf<String?>(null) }
   // Whether the shared timer is currently ringing — drives the swipe-to-stop alarm overlay.
   var timerRinging by remember { mutableStateOf(TimerStore.load(context).ringing) }
   DisposableEffect(Unit) {
@@ -420,6 +424,8 @@ private fun LauncherScreen(
         weatherFahrenheit = ImmortalSettings.useFahrenheit(context)
         backgroundType = s.backgroundType
         showTabsSetting = s.showTabs
+        showCalendarWidget = s.calendarWidget == ImmortalSettings.CALENDAR_ON
+        showDashboardPage = s.dashboardPage
         widgets = loadLiveWidgets()
       }
     }
@@ -621,6 +627,22 @@ private fun LauncherScreen(
   }
   val widgetByKey = remember(widgets) { widgets.associateBy { WIDGET_KEY + it.key } }
   val appByKey = remember(ungrouped) { ungrouped.associateBy { APP_KEY + it.component.packageName } }
+  // When a category tab is selected, only show matching tiles (others become blanks
+  // so the grid layout stays stable). null = show everything.
+  val displaySlots = remember(gridSlots, selectedTab, folderNames) {
+    if (selectedTab == null) gridSlots
+    else gridSlots.map { key ->
+      val matches = when {
+        key == null -> false
+        selectedTab == TAB_APPS -> key.startsWith(APP_KEY) || key.startsWith(FOLDER_KEY)
+        selectedTab == TAB_TOOLS -> key.startsWith(TOOL_FOLDER_KEY)
+        key.startsWith(FOLDER_KEY) -> key.removePrefix(FOLDER_KEY) == selectedTab
+        key.startsWith(TOOL_FOLDER_KEY) -> key.removePrefix(TOOL_FOLDER_KEY) == selectedTab
+        else -> false
+      }
+      if (matches) key else null
+    }
+  }
   // A tile's column footprint: widgets span their width, everything else is 1.
   fun widthOf(key: String?): Int =
       if (key != null && key.startsWith(WIDGET_KEY))
@@ -671,7 +693,8 @@ private fun LauncherScreen(
 
   // --- horizontal paging (iOS-style swipeable app pages) ----------------------
   var pageCapacity by remember { mutableStateOf(1) }
-  val pageCount = ((gridSlots.size + pageCapacity - 1) / pageCapacity).coerceAtLeast(1)
+  val renderSlots = displaySlots
+  val pageCount = ((renderSlots.size + pageCapacity - 1) / pageCapacity).coerceAtLeast(1)
   val pagerState = rememberPagerState { pageCount }
   // While dragging, drift toward the screen edge auto-advances to the next/previous page.
   var edgeDir by remember { mutableStateOf(0) }
@@ -835,8 +858,8 @@ private fun LauncherScreen(
       HomeControlStrip(
           showTabs = showTabsSetting,
           tabs = folderNames + TOOL_CATEGORIES.map { it.id },
-          selectedTab = null,
-          onSelectTab = {},
+          selectedTab = selectedTab,
+          onSelectTab = { selectedTab = it },
           countdownVersion = 0,
           timerVersion = 0,
           onTimerChanged = {},
@@ -931,18 +954,18 @@ private fun LauncherScreen(
                   modifier = Modifier.fillMaxSize(),
               ) {
                 val pageStart = page * pageCapacity
-                val pageEnd = minOf(pageStart + pageCapacity, gridSlots.size)
+                val pageEnd = minOf(pageStart + pageCapacity, renderSlots.size)
                 val pageSize = (pageEnd - pageStart).coerceAtLeast(0)
                 // Free-placement grid: every cell is a slot — a tile or an intentional blank.
                 // Dragging a tile swaps slots, so blanks stay where the user left them. A long-press
                 // both enters Manage mode AND starts the drag in one gesture (see startTileDrag).
                 items(
                     count = pageSize,
-                    key = { li -> gridSlots[pageStart + li] ?: "blank:${pageStart + li}" },
-                    span = { li -> GridItemSpan(widthOf(gridSlots[pageStart + li])) },
+                    key = { li -> renderSlots[pageStart + li] ?: "blank:${pageStart + li}" },
+                    span = { li -> GridItemSpan(widthOf(renderSlots[pageStart + li])) },
                 ) { li ->
                   val i = pageStart + li
-                  val key = gridSlots[i]
+                  val key = renderSlots[i]
             val boundsMod = Modifier.onGloballyPositioned { slotBounds[i] = it.boundsInWindow() }
             if (key == null) {
               // Blank cell — an invisible drop target with the same footprint as a tile so the
@@ -1043,6 +1066,10 @@ private fun LauncherScreen(
         Spacer(Modifier.size(16.dp))
         WeatherWidget(mode = weatherWidget, fahrenheit = weatherFahrenheit)
       }
+      if (showCalendarWidget) {
+        Spacer(Modifier.size(16.dp))
+        CalendarWidget()
+      }
     }
 
     // Manage / Done toggle lives in the bottom-right corner. While managing, a
@@ -1056,6 +1083,22 @@ private fun LauncherScreen(
       if (editMode) TidyButton { tidyGrid() }
       if (editMode) AddWidgetButton { showWidgetPicker = true }
       EditButton(editMode = editMode, onClick = { editMode = !editMode })
+    }
+
+    // Quick-settings gear in the bottom-left corner.
+    Surface(
+        color = Color(0x33FFFFFF),
+        shape = androidx.compose.foundation.shape.CircleShape,
+        modifier =
+            Modifier.align(Alignment.BottomStart).padding(start = 36.dp, bottom = 32.dp)
+                .size(48.dp)
+                .tvFocusable(androidx.compose.foundation.shape.CircleShape) {
+                  showQuickSettings = true
+                },
+    ) {
+      Box(contentAlignment = Alignment.Center) {
+        Text("\u2699", color = Color.White, fontSize = 24.sp)
+      }
     }
 
     // Floating ghost of the tile being dragged — it follows the finger while the grid reflows
@@ -1118,6 +1161,34 @@ private fun LauncherScreen(
                                 Intent(context, ScreensaverSettingsActivity::class.java))
                           }
                         },
+                        FolderExtra("Chimes", ICON_BELL) {
+                          openFolder = null
+                          runCatching {
+                            context.startActivity(
+                                Intent(context, ChimeSettingsActivity::class.java))
+                          }
+                        },
+                        FolderExtra("Countdowns", ICON_STOPWATCH) {
+                          openFolder = null
+                          runCatching {
+                            context.startActivity(
+                                Intent(context, CountdownSettingsActivity::class.java))
+                          }
+                        },
+                        FolderExtra("Sleep", ICON_MOON) {
+                          openFolder = null
+                          runCatching {
+                            context.startActivity(
+                                Intent(context, SleepSettingsActivity::class.java))
+                          }
+                        },
+                        FolderExtra("World clock", ICON_GLOBE) {
+                          openFolder = null
+                          runCatching {
+                            context.startActivity(
+                                Intent(context, WorldClockActivity::class.java))
+                          }
+                        },
                         FolderExtra("Help", ICON_HELP) {
                           openFolder = null
                           onOpenHelp()
@@ -1142,6 +1213,21 @@ private fun LauncherScreen(
           toolId = toolId,
           onDismiss = { activeToolOverlay = null },
       )
+    }
+
+    if (showDashboardPage) {
+      androidx.compose.ui.window.Dialog(
+          onDismissRequest = {},
+          properties = androidx.compose.ui.window.DialogProperties(
+              usePlatformDefaultWidth = false, dismissOnClickOutside = false)) {
+        androidx.compose.foundation.layout.Box(Modifier.fillMaxSize()) { DashboardPage() }
+      }
+    }
+
+    if (showQuickSettings) {
+      androidx.compose.ui.window.Dialog(onDismissRequest = { showQuickSettings = false }) {
+        QuickSettingsPanel(onDismiss = { showQuickSettings = false })
+      }
     }
 
     // Name a new folder (created by dropping one app on another).
@@ -1347,6 +1433,9 @@ private fun HeaderBar(onScreensaver: () -> Unit) {
   // The header mini-player toggle is re-read on resume so flipping it in Immortal
   // Settings shows/hides the player the moment the user returns home.
   var showMiniPlayer by remember { mutableStateOf(ImmortalSettings.load(context).showMiniPlayer) }
+  var showSunTimes by remember { mutableStateOf(ImmortalSettings.load(context).showSunTimes) }
+  var showNameDay by remember { mutableStateOf(ImmortalSettings.load(context).showNameDay) }
+  var showFeastDay by remember { mutableStateOf(ImmortalSettings.load(context).showFeastDay) }
   // Live now-playing from the device's media session. The hub notifies off-main, so
   // hop back to the main thread before touching Compose state.
   var nowPlaying by remember { mutableStateOf(NowPlayingHub.current) }
@@ -1364,6 +1453,10 @@ private fun HeaderBar(onScreensaver: () -> Unit) {
         use24Hour = ImmortalSettings.use24HourClock(context)
         heyPkg = heyPackage(context)
         showMiniPlayer = ImmortalSettings.load(context).showMiniPlayer
+        val s = ImmortalSettings.load(context)
+        showSunTimes = s.showSunTimes
+        showNameDay = s.showNameDay
+        showFeastDay = s.showFeastDay
       }
     }
     lifecycleOwner.lifecycle.addObserver(obs)
@@ -1380,6 +1473,13 @@ private fun HeaderBar(onScreensaver: () -> Unit) {
       } else {
         delay(60L * 1000) // retry in 1 min
       }
+    }
+  }
+  val sunTimes by produceState<Weather.SunTimes?>(initialValue = null, weatherUnit, showSunTimes) {
+    if (!showSunTimes) { value = null; return@produceState }
+    while (true) {
+      val st = withContext(Dispatchers.IO) { Weather.fetchSunTimes(context) }
+      if (st != null) { value = st; delay(30L * 60 * 1000) } else { delay(60L * 1000) }
     }
   }
   val battery = batteryState()
@@ -1481,6 +1581,22 @@ private fun HeaderBar(onScreensaver: () -> Unit) {
           fontSize = 18.sp,
           modifier = Modifier.padding(top = 4.dp),
       )
+      sunTimes?.let { st ->
+        val (sr, ss) = st.formatted(use24Hour)
+        Text("↑ $sr  ↓ $ss", color = Color(0xFFB0B0B0), fontSize = 14.sp, modifier = Modifier.padding(top = 2.dp))
+      }
+      if (showNameDay) {
+        val nd = remember(now) { NameDays.todayLabel() }
+        if (nd.isNotBlank()) {
+          Text(nd, color = Color(0xFFB0B0B0), fontSize = 14.sp, modifier = Modifier.padding(top = 2.dp))
+        }
+      }
+      if (showFeastDay) {
+        val fd = remember(now) { FeastDays.forToday() }
+        if (fd.isNotBlank()) {
+          Text(fd, color = Color(0xFFB0B0B0), fontSize = 14.sp, modifier = Modifier.padding(top = 2.dp))
+        }
+      }
     }
   }
 
@@ -2033,6 +2149,14 @@ private const val ICON_HELP =
     "M11 18h2v-2h-2v2zm1-16C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm0-14c-2.21 0-4 1.79-4 4h2c0-1.1.9-2 2-2s2 .9 2 2c0 2-3 1.75-3 5h2c0-2.25 3-2.5 3-5 0-2.21-1.79-4-4-4z"
 private const val ICON_GEAR =
     "M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"
+private const val ICON_BELL =
+    "M12 22c1.1 0 2-.9 2-2h-4c0 1.1.9 2 2 2zm6-6v-5c0-3.07-1.63-5.64-4.5-6.32V4c0-.83-.67-1.5-1.5-1.5s-1.5.67-1.5 1.5v.68C7.64 5.36 6 7.92 6 11v5l-2 2v1h16v-1l-2-2z"
+private const val ICON_STOPWATCH =
+    "M15 1H9v2h6V1zm-4 13h2V8h-2v6zm8.03-6.61 1.42-1.42c-.43-.51-.9-.99-1.41-1.41l-1.42 1.42C16.07 4.74 14.12 4 12 4c-4.97 0-9 4.03-9 9s4.02 9 9 9 9-4.03 9-9c0-2.12-.74-4.07-1.97-5.61zM12 20c-3.87 0-7-3.13-7-7s3.13-7 7-7 7 3.13 7 7-3.13 7-7 7z"
+private const val ICON_MOON =
+    "M12 3c-4.97 0-9 4.03-9 9s4.03 9 9 9 9-4.03 9-9c0-.46-.04-.92-.1-1.36-.98 1.37-2.58 2.26-4.4 2.26-2.98 0-5.4-2.42-5.4-5.4 0-1.81.89-3.42 2.26-4.4-.44-.06-.9-.1-1.36-.1z"
+private const val ICON_GLOBE =
+    "M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"
 
 /** A built-in launcher tile: a rounded colour tile with a centered white vector
  *  glyph, styled to sit naturally beside real app icons. */
