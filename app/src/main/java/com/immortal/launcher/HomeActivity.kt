@@ -384,6 +384,10 @@ private fun LauncherScreen(
   var showWidgetPicker by remember { mutableStateOf(false) }
   var widgetStatus by remember { mutableStateOf<String?>(null) }
   var widgets by remember { mutableStateOf(HomeWidgetStore.load(context)) }
+  var openToolCategory by remember { mutableStateOf<String?>(null) }
+  var activeToolOverlay by remember { mutableStateOf<String?>(null) }
+  var backgroundType by remember { mutableStateOf(ImmortalSettings.load(context).backgroundType) }
+  var showTabsSetting by remember { mutableStateOf(ImmortalSettings.load(context).showTabs) }
   // Whether the shared timer is currently ringing — drives the swipe-to-stop alarm overlay.
   var timerRinging by remember { mutableStateOf(TimerStore.load(context).ringing) }
   DisposableEffect(Unit) {
@@ -414,6 +418,8 @@ private fun LauncherScreen(
         tileSize = s.tileSize
         weatherWidget = s.weatherWidget
         weatherFahrenheit = ImmortalSettings.useFahrenheit(context)
+        backgroundType = s.backgroundType
+        showTabsSetting = s.showTabs
         widgets = loadLiveWidgets()
       }
     }
@@ -596,6 +602,7 @@ private fun LauncherScreen(
         buildList {
           add(BUILTIN_CALLS)
           add(BUILTIN_STORE)
+          TOOL_CATEGORIES.forEach { add(TOOL_FOLDER_KEY + it.id) }
           widgets.forEach { add(WIDGET_KEY + it.key) }
           folderNames.forEach { add(FOLDER_KEY + it) }
           ungrouped.forEach { add(APP_KEY + it.component.packageName) }
@@ -802,7 +809,11 @@ private fun LauncherScreen(
 
   CompositionLocalProvider(LocalTileDp provides tileDpFor(tileSize)) {
   Box(modifier = Modifier.fillMaxSize()) {
-    HomeBackground(Modifier.fillMaxSize())
+    if (backgroundType == ImmortalSettings.BG_DARK) {
+      HomeBackground(Modifier.fillMaxSize())
+    } else {
+      Box(Modifier.fillMaxSize()) { ForkHomeBackground(backgroundType) }
+    }
     Column(
         modifier =
             Modifier.fillMaxHeight()
@@ -821,7 +832,16 @@ private fun LauncherScreen(
                 .padding(start = 32.dp, end = 32.dp, top = 40.dp, bottom = 24.dp)
     ) {
       HeaderBar(onScreensaver = onStartScreensaver)
-      Spacer(Modifier.size(20.dp))
+      HomeControlStrip(
+          showTabs = showTabsSetting,
+          tabs = folderNames + TOOL_CATEGORIES.map { it.id },
+          selectedTab = null,
+          onSelectTab = {},
+          countdownVersion = 0,
+          timerVersion = 0,
+          onTimerChanged = {},
+      )
+      Spacer(Modifier.size(8.dp))
       Box(
           modifier =
               Modifier.fillMaxWidth()
@@ -970,6 +990,15 @@ private fun LauncherScreen(
                           onRemove = { removeWidget(w) },
                       )
                     }
+                key.startsWith(TOOL_FOLDER_KEY) -> {
+                  val catName = key.removePrefix(TOOL_FOLDER_KEY)
+                  val cat = TOOL_CATEGORIES.firstOrNull { it.id == catName }
+                  if (cat != null) {
+                    HomeTileFrame(boundsMod, isDragged) {
+                      ToolFolderTile(label = cat.id, glyph = cat.glyph, onClick = { openToolCategory = cat.id })
+                    }
+                  }
+                }
                 key.startsWith(FOLDER_KEY) -> {
                   val name = key.removePrefix(FOLDER_KEY)
                   HomeTileFrame(boundsMod, isDragged) {
@@ -1096,6 +1125,23 @@ private fun LauncherScreen(
                 else emptyList(),
         )
       }
+    }
+
+    openToolCategory?.let { cat ->
+      ForkToolCategoryOverlay(
+          category = cat,
+          editMode = editMode,
+          onToggleEdit = { editMode = !editMode },
+          onShowOverlay = { activeToolOverlay = it },
+          onDismiss = { openToolCategory = null },
+      )
+    }
+
+    activeToolOverlay?.let { toolId ->
+      ForkToolOverlay(
+          toolId = toolId,
+          onDismiss = { activeToolOverlay = null },
+      )
     }
 
     // Name a new folder (created by dropping one app on another).
@@ -1233,6 +1279,7 @@ private fun SlideToStop(onStop: () -> Unit) {
 private const val APP_KEY = "app:"
 private const val FOLDER_KEY = "folder:"
 private const val WIDGET_KEY = "widget-tile:"
+private const val TOOL_FOLDER_KEY = "toolcat:"
 private const val BUILTIN_CALLS = "builtin:calls"
 private const val BUILTIN_STORE = "builtin:store"
 private const val BUILTIN_UPDATES = "builtin:updates"

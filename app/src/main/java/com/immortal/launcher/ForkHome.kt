@@ -449,7 +449,7 @@ private const val TAB_TOOLS = "Tools"
  *  so nothing stacks. Tapping a timer cancels it. Leans on [CountdownConfig],
  *  [TimerConfig], [ChimePlayer]. */
 @Composable
-private fun HomeControlStrip(
+internal fun HomeControlStrip(
     showTabs: Boolean,
     tabs: List<String>,
     selectedTab: String?,
@@ -2404,9 +2404,9 @@ private const val TOOLCAT_AMBIENT = "Ambient & Sleep"
 private const val TOOLCAT_HOME = "Home & LAN"
 private const val TOOLCAT_MORE = "More"
 
-private data class ToolCat(val id: String, val glyph: String)
+internal data class ToolCat(val id: String, val glyph: String)
 
-private val TOOL_CATEGORIES =
+internal val TOOL_CATEGORIES =
     listOf(
         ToolCat(TOOLCAT_SKY, ICON_SATELLITE),
         ToolCat(TOOLCAT_KITCHEN, ICON_STOPWATCH),
@@ -2437,14 +2437,14 @@ private const val TOOL_REPORTAL = "reportal"
 
 /** A built-in tool: its stable id, a label + glyph for the folder editor's static chip,
  *  and the category it lives in by default (a user override in UserLayout wins). */
-private data class ToolDef(
+internal data class ToolDef(
     val id: String,
     val label: String,
     val glyph: String,
     val defaultCat: String,
 )
 
-private val ALL_TOOLS =
+internal val ALL_TOOLS =
     listOf(
         ToolDef(TOOL_ISS, "Space station", ICON_SATELLITE, TOOLCAT_SKY),
         ToolDef(TOOL_AURORA, "Aurora", ICON_AURORA, TOOLCAT_SKY),
@@ -2471,8 +2471,7 @@ private fun toolDefOf(id: String): ToolDef? = ALL_TOOLS.firstOrNull { it.id == i
 /** Home-grid tile for a tool category. Styled like a folder (neutral slate) with the
  *  category's glyph, to read as a container rather than a single action. */
 @Composable
-
-private fun ToolFolderTile(label: String, glyph: String, onClick: () -> Unit) {
+internal fun ToolFolderTile(label: String, glyph: String, onClick: () -> Unit) {
   BuiltInTile(label = label, background = Color(0xFF3A3A3A), glyph = glyph, onClick = onClick)
 }
 
@@ -3064,6 +3063,112 @@ private fun CalendarEventRow(event: CalendarEvent) {
             Text(timeText, color = Color(0xFF9A9A9A), fontSize = 12.sp)
         }
     }
+}
+
+// ---- Fork home integration points (called from HomeActivity) -----------------
+
+@Composable
+internal fun ForkToolTile(toolId: String, onShowOverlay: (String) -> Unit) {
+  val context = androidx.compose.ui.platform.LocalContext.current
+  when (toolId) {
+    TOOL_ISS -> IssTile(onClick = { onShowOverlay(TOOL_ISS) })
+    TOOL_AURORA -> AuroraTile(onClick = { onShowOverlay(TOOL_AURORA) })
+    TOOL_TRANSIT -> TransitTile(onClick = { onShowOverlay(TOOL_TRANSIT) })
+    TOOL_STOPWATCH -> StopwatchTile(onClick = { onShowOverlay(TOOL_STOPWATCH) })
+    TOOL_CONVERTER -> ConverterTile(onClick = { onShowOverlay(TOOL_CONVERTER) })
+    TOOL_SPEEDTEST -> SpeedTestTile(onClick = { onShowOverlay(TOOL_SPEEDTEST) })
+    TOOL_LAMP -> LampTile()
+    TOOL_MYNOISE -> MyNoiseTile()
+    TOOL_BEDTIME -> BedtimeTile()
+    TOOL_SUNRISE -> SunriseTile()
+    TOOL_PING -> PingTile()
+    TOOL_NOTE -> NoteTile(onClick = { onShowOverlay(TOOL_NOTE) })
+    TOOL_NOWPLAYING -> NowPlayingTile(onClick = { onShowOverlay(TOOL_NOWPLAYING) })
+    TOOL_CAMERA -> CameraTile(onClick = {
+      runCatching { context.startActivity(Intent(context, CameraViewerActivity::class.java)) }
+    })
+    TOOL_DAILY -> {
+      val mode = remember { ImmortalSettings.load(context).dailyTileMode }
+      DailyTile(mode = mode, onClick = { onShowOverlay(TOOL_DAILY) })
+    }
+    TOOL_WHATSNEW -> WhatChangedTile(onClick = { onShowOverlay(TOOL_WHATSNEW) })
+    TOOL_REPORTAL -> ReportalTile(onClick = {
+      runCatching {
+        context.startActivity(
+            Intent(Intent.ACTION_VIEW, android.net.Uri.parse("https://reportal.dev"))
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+      }
+    })
+  }
+}
+
+@Composable
+internal fun ForkToolOverlay(toolId: String, onDismiss: () -> Unit) {
+  when (toolId) {
+    TOOL_ISS -> IssOverlay(onDismiss = onDismiss)
+    TOOL_AURORA -> AuroraOverlay(onDismiss = onDismiss)
+    TOOL_TRANSIT -> TransitOverlay(onDismiss = onDismiss)
+    TOOL_STOPWATCH -> StopwatchOverlay(onDismiss = onDismiss)
+    TOOL_CONVERTER -> ConverterOverlay(onDismiss = onDismiss)
+    TOOL_SPEEDTEST -> SpeedTestOverlay(onDismiss = onDismiss)
+    TOOL_NOTE -> NoteOverlay(onDismiss = onDismiss)
+    TOOL_NOWPLAYING -> NowPlayingOverlay(onDismiss = onDismiss)
+    TOOL_DAILY -> {
+      val context = androidx.compose.ui.platform.LocalContext.current
+      val mode = remember { ImmortalSettings.load(context).dailyTileMode }
+      DailyOverlay(mode = mode, onDismiss = onDismiss)
+    }
+    TOOL_WHATSNEW -> WhatChangedOverlay(onDismiss = onDismiss)
+  }
+}
+
+@Composable
+internal fun ForkToolCategoryOverlay(
+    category: String,
+    editMode: Boolean,
+    onToggleEdit: () -> Unit,
+    onShowOverlay: (String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+  val context = androidx.compose.ui.platform.LocalContext.current
+  val overrides = remember { UserLayout.loadToolCategories(context) }
+  val toolsInCat = remember(overrides) {
+    ALL_TOOLS.filter { (overrides[it.id] ?: it.defaultCat) == category }
+  }
+  val addable = remember(overrides) {
+    ALL_TOOLS.filter { (overrides[it.id] ?: it.defaultCat) != category }
+  }
+  val categories = TOOL_CATEGORIES.map { it.id }
+  ToolCategoryOverlay(
+      title = category,
+      toolIds = toolsInCat.map { it.id },
+      editMode = editMode,
+      onToggleEdit = onToggleEdit,
+      renderLive = { id -> ForkToolTile(id, onShowOverlay) },
+      categories = categories,
+      addable = addable,
+      onMove = { id, cat -> UserLayout.setToolCategory(context, id, cat) },
+      onDismiss = onDismiss,
+  )
+}
+
+@Composable
+internal fun ForkHomeBackground(backgroundType: String) {
+  val context = androidx.compose.ui.platform.LocalContext.current
+  when (backgroundType) {
+    ImmortalSettings.BG_GRADIENT -> {
+      val key = remember { ImmortalSettings.load(context).backgroundGradient }
+      GradientBackground(key)
+    }
+    ImmortalSettings.BG_SKY -> SkyBackground()
+    ImmortalSettings.BG_STARS -> StarFieldBackground()
+    ImmortalSettings.BG_IMAGE, ImmortalSettings.BG_BLUR -> {
+      val path = remember { ImmortalSettings.load(context).backgroundImagePath }
+      if (path != null) {
+        BackgroundImage(uriString = path, blur = backgroundType == ImmortalSettings.BG_BLUR)
+      }
+    }
+  }
 }
 
 
