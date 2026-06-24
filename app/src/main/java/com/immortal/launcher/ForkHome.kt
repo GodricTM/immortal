@@ -146,6 +146,7 @@ import androidx.compose.ui.res.painterResource
 import java.io.File
 import kotlinx.coroutines.launch
 
+@Composable
 private fun ClockIcon() {
   Canvas(modifier = Modifier.size(30.dp)) {
     val w = size.minDimension
@@ -437,6 +438,11 @@ private fun CountdownChips(version: Int = 0) {
   }
   Spacer(Modifier.size(14.dp))
 }
+
+/** Internal tab keys for the built-in "Apps" and "Tools" category chips. These
+ *  are filtered out of the dynamic [tabs] list so they aren't rendered twice. */
+private const val TAB_APPS = "Apps"
+private const val TAB_TOOLS = "Tools"
 
 /** The single home control/info strip: category tabs, then countdown chips, then
  *  live kitchen timers + a "+ Timer" chip — all on one horizontally-scrolling line
@@ -752,7 +758,7 @@ private fun NewFolderButton(modifier: Modifier = Modifier, onClick: () -> Unit) 
   }
 }
 
-private data class BatteryReading(val present: Boolean, val percent: Int, val charging: Boolean)
+internal data class BatteryReading(val present: Boolean, val percent: Int, val charging: Boolean)
 
 /** Reads the device battery, updating live. Returns present=false on devices
  * without a battery (Portal+, Portal TV, Portal Mini), so callers can hide it. */
@@ -843,6 +849,7 @@ private fun BatteryIndicator(percent: Int, charging: Boolean) {
 }
 
 
+@Composable
 private fun PortalHomeShortcutTile(onClick: () -> Unit) {
   BuiltInTile(
       label = "Portal",
@@ -2383,7 +2390,7 @@ private const val ICON_SATELLITE =
     "M11.62 1.99l-3.83 3.83c-.78.78-.78 2.05 0 2.83l1.41 1.41-1.42 1.42-1.41-1.41c-.78-.78-2.05-.78-2.83 0L1.99 13.4c-.79.78-.79 2.05 0 2.83l5.78 5.78c.78.78 2.05.78 2.83 0l3.55-3.55c.78-.78.78-2.05 0-2.83l-1.41-1.41 1.42-1.42 1.41 1.41c.78.78 2.05.78 2.83 0l3.83-3.83c.78-.78.78-2.05 0-2.83l-5.78-5.78c-.79-.78-2.06-.78-2.84 0zm-4.2 16.6l-4.4-4.4 2.13-2.13 4.4 4.4-2.13 2.13zm9.2-9.2l-4.4-4.4 2.13-2.13 4.4 4.4-2.13 2.13z"
 
 /** A non-app tile injected into a folder (e.g. the Screensaver settings entry). */
-private data class FolderExtra(val label: String, val glyph: String, val onClick: () -> Unit)
+internal data class FolderExtra(val label: String, val glyph: String, val onClick: () -> Unit)
 
 // ---- Tool category folders --------------------------------------------------
 // The built-in "tool" tiles (ISS, Aurora, Stopwatch, Lamp, Ping, …) are grouped
@@ -2636,6 +2643,7 @@ private fun AddToolTile(addable: List<ToolDef>, onAdd: (ToolDef) -> Unit) {
 /** A built-in launcher tile: a rounded colour tile with a centered white vector
  * glyph, styled to sit naturally beside real app icons. */
 
+@Composable
 private fun BackgroundImage(uriString: String, blur: Boolean) {
     val context = androidx.compose.ui.platform.LocalContext.current
     val bitmap by produceState<android.graphics.Bitmap?>(initialValue = null, uriString) {
@@ -2805,6 +2813,7 @@ private fun minuteOfDay(epochMillis: Long): Int {
 }
 
 
+@Composable
 private fun QuickSettingsPanel(onDismiss: () -> Unit) {
     val context = androidx.compose.ui.platform.LocalContext.current
     var brightness by remember { mutableStateOf(50) }
