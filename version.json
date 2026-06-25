@@ -1,6 +1,6 @@
 {
-  "versionCode": 52,
-  "versionName": "1.51",
+  "versionCode": 53,
+  "versionName": "1.52",
   "apkUrl": "https://github.com/starbrightlab/immortal/releases/latest/download/immortal.apk",
-  "notes": "Fixes overnight screensaver flicker in dark mode on some Portals, and adds the ability to view and rename a device from the phone remote."
+  "notes": "The launcher now uses the full screen width by default on the larger landscape Portals. A new \"Constrain page width\" setting (off by default) restores the previous capped, centred layout if you prefer it."
 }
