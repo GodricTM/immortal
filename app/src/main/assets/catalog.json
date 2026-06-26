@@ -251,6 +251,20 @@
           "iconUrl": "https://f-droid.org/repo/com.termux/en-US/icon.png",
           "author": "Termux",
           "homepage": "https://termux.dev"
+        },
+        {
+          "name": "Portal Overlays",
+          "packageName": "com.portal.overlays",
+          "source": "url",
+          "apkUrl": "https://github.com/GodricTM/PortalOverlays/releases/download/v1.6/PortalOverlays-v1.6-release.apk",
+          "versionCode": 8,
+          "minSdk": 28,
+          "description": "A floating HUD for sideloaded Portals - widgets, notifications, ticker, status strip, floating nav, and Now Playing.",
+          "longDescription": "Draws draggable widgets (clock, weather, battery, sticky note), mirrored notification banners, an RSS/Atom/JSON ticker, a live status strip (time, date, weather, battery, network speed, sunrise/sunset, and more), a floating Back/Home/Recents nav cluster, and a fullscreen Now Playing view with album art and transport controls - all on top of any app. Push banners via ntfy.sh or a self-hosted ntfy server. No Google Play Services required.",
+          "iconUrl": "https://raw.githubusercontent.com/GodricTM/PortalOverlays/main/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png",
+          "author": "GodricTM",
+          "homepage": "https://github.com/GodricTM/PortalOverlays",
+          "submittedBy": "GodricTM"
         }
       ]
     },
