@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Meta Platforms, Inc. and affiliates.
+ * Copyright (c) 2026 Starbright Lab.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -12,17 +12,13 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -30,7 +26,6 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -46,7 +41,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.immortal.launcher.settings.SettingsDomains
 import com.immortal.launcher.ui.theme.SampleAppTheme
+import org.json.JSONObject
 
 class ChimeSettingsActivity : ComponentActivity() {
   override fun onCreate(savedInstanceState: Bundle?) {
@@ -60,9 +57,6 @@ private fun ChimeSettingsScreen() {
   val context = LocalContext.current
   var settings by remember { mutableStateOf(ChimeConfig.load(context)) }
   val activity = context as? Activity
-
-  // Re-arm alarms to match the current config after any change.
-  fun apply() = ChimeScheduler.reschedule(context)
 
   Box(modifier = Modifier.fillMaxSize()) {
     Column(
@@ -82,108 +76,37 @@ private fun ChimeSettingsScreen() {
           textAlign = TextAlign.Center,
       )
 
-      Card {
-        ChimeToggleRow("Hourly chime", "A soft chime on the hour", settings.hourlyChimeOn) {
-          ChimeConfig.setHourlyChime(context, it)
-          settings = settings.copy(hourlyChimeOn = it)
-          apply()
-        }
-        if (settings.hourlyChimeOn) {
-          VolumeStepper("Volume", settings.chimeVolume) { v ->
-            ChimeConfig.setChimeVolume(context, v)
-            settings = settings.copy(chimeVolume = v)
-          }
-          TestButton("Play chime") { ChimePlayer.playChime(context) }
-        }
-        ChimeToggleRow("Spoken time", "\"It's three o'clock\" on the hour", settings.spokenTimeOn) {
-          ChimeConfig.setSpokenTime(context, it)
-          settings = settings.copy(spokenTimeOn = it)
-          apply()
-        }
-        if (settings.spokenTimeOn) {
-          VolumeStepper("Volume", settings.spokenVolume) { v ->
-            ChimeConfig.setSpokenVolume(context, v)
-            settings = settings.copy(spokenVolume = v)
-          }
-          VoicePicker(settings.spokenVoice) { name ->
-            ChimeConfig.setSpokenVoice(context, name)
-            settings = settings.copy(spokenVoice = name)
-          }
-          TestButton("Test voice") { ChimePlayer.testVoice(context, settings.spokenVoice) }
-        }
-        ChimeToggleRow("Golden-hour tone", "A sound at sunrise and sunset", settings.goldenHourOn) {
-          ChimeConfig.setGoldenHour(context, it)
-          settings = settings.copy(goldenHourOn = it)
-          apply()
-        }
-        if (settings.goldenHourOn) {
-          VolumeStepper("Volume", settings.goldenVolume) { v ->
-            ChimeConfig.setGoldenVolume(context, v)
-            settings = settings.copy(goldenVolume = v)
-          }
-          // Two sunrise sounds to choose between; sunset is always "Goodnight".
-          SunriseVariantPicker(settings.sunriseVariant) { v ->
-            ChimeConfig.setSunriseVariant(context, v)
-            settings = settings.copy(sunriseVariant = v)
-          }
-          TestButton("Test sunrise") { ChimePlayer.playSunriseTone(context) }
-          TestButton("Test sunset") { ChimePlayer.playSunsetTone(context) }
-        }
+      // Scalar controls (toggles, volumes, quiet times, sunrise sound) render from the `chime`
+      // registry domain - the same specs the phone remote uses. Apply routes through the domain so
+      // its onApplied (ChimeScheduler.reschedule) fires here too, not just from the remote.
+      SettingsList(SettingsDomains.chime, settings) { k, v ->
+        SettingsDomains.chime.apply(context, JSONObject().put(k, v))
+        settings = ChimeConfig.load(context)
       }
 
-      Card {
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-          Column(modifier = Modifier.weight(1f)) {
-            Text("Ping the other room", color = Color.White, fontSize = 17.sp)
-            Text("Ring + spoken name when another Portal pings this one",
-                color = Color(0xFF9A9A9A), fontSize = 13.sp)
+      // Bespoke: voice picker + test buttons the registry can't model (TTS voice enumeration is
+      // on-device only; test buttons are actions, not settings).
+      if (settings.spokenTimeOn || settings.hourlyChimeOn || settings.goldenHourOn) {
+        Card {
+          if (settings.spokenTimeOn) {
+            VoicePicker(settings.spokenVoice) { name ->
+              ChimeConfig.setSpokenVoice(context, name)
+              settings = settings.copy(spokenVoice = name)
+            }
+            TestButton("Test voice") { ChimePlayer.testVoice(context, settings.spokenVoice) }
           }
-        }
-        VolumeStepper("Volume", settings.pingVolume) { v ->
-          ChimeConfig.setPingVolume(context, v)
-          settings = settings.copy(pingVolume = v)
-        }
-        TestButton("Play ping") { ChimePlayer.playPing(context, repeats = 1) }
-      }
-
-      Card {
-        ChimeToggleRow("Quiet hours", "Silence all cues overnight", settings.quietHoursOn) {
-          ChimeConfig.setQuietHours(context, it)
-          settings = settings.copy(quietHoursOn = it)
-          apply()
-        }
-        if (settings.quietHoursOn) {
-          TimeStepper("Quiet from", settings.quietStartMin) { v ->
-            ChimeConfig.setQuietStart(context, v)
-            settings = settings.copy(quietStartMin = v)
+          if (settings.hourlyChimeOn) {
+            TestButton("Play chime") { ChimePlayer.playChime(context) }
           }
-          TimeStepper("Quiet until", settings.quietEndMin) { v ->
-            ChimeConfig.setQuietEnd(context, v)
-            settings = settings.copy(quietEndMin = v)
+          if (settings.goldenHourOn) {
+            TestButton("Test sunrise") { ChimePlayer.playSunriseTone(context) }
+            TestButton("Test sunset") { ChimePlayer.playSunsetTone(context) }
           }
+          TestButton("Play ping") { ChimePlayer.playPing(context, repeats = 1) }
         }
       }
     }
-  }
-  FolderBackButton(onClick = { activity?.finish() })
-}
-
-@Composable
-private fun ChimeToggleRow(title: String, subtitle: String, checked: Boolean, onChange: (Boolean) -> Unit) {
-  Row(
-      modifier =
-          Modifier.fillMaxWidth().tvFocusableRow { onChange(!checked) }
-              .padding(horizontal = 18.dp, vertical = 12.dp),
-      verticalAlignment = Alignment.CenterVertically,
-  ) {
-    Column(modifier = Modifier.weight(1f)) {
-      Text(title, color = Color.White, fontSize = 17.sp)
-      Text(subtitle, color = Color(0xFF9A9A9A), fontSize = 13.sp)
-    }
-    Switch(checked = checked, onCheckedChange = null)
+    FolderBackButton(onClick = { activity?.finish() })
   }
 }
 
@@ -308,90 +231,4 @@ private fun prettyVoice(v: android.speech.tts.Voice): String {
   val base = listOfNotNull(gender, num?.let { "voice $it" }).joinToString(" ").ifBlank { v.name }
   val region = v.locale.country.ifBlank { v.locale.language }.uppercase()
   return if (region.isNotBlank()) "$base · $region" else base
-}
-
-/** Two-option chooser for the sunrise sound ("Morning" / "Rooster"). */
-@Composable
-private fun SunriseVariantPicker(current: Int, onPick: (Int) -> Unit) {
-  Row(
-      modifier = Modifier.fillMaxWidth().padding(start = 18.dp, end = 18.dp, top = 2.dp, bottom = 6.dp),
-      verticalAlignment = Alignment.CenterVertically,
-  ) {
-    Text("Sunrise sound", color = Color(0xFFDDDDDD), fontSize = 15.sp, modifier = Modifier.weight(1f))
-    SunsetChip("Morning", current == 0) { onPick(0) }
-    Spacer(Modifier.size(8.dp))
-    SunsetChip("Rooster", current == 1) { onPick(1) }
-  }
-}
-
-@Composable
-private fun SunsetChip(label: String, active: Boolean, onClick: () -> Unit) {
-  Surface(
-      color = if (active) MaterialTheme.colorScheme.primary else Color(0x22FFFFFF),
-      shape = RoundedCornerShape(12.dp),
-      modifier = Modifier.tvFocusable(RoundedCornerShape(12.dp), focusScale = 1f) { onClick() },
-  ) {
-    Text(
-        label,
-        color = if (active) Color.White else Color(0xFFDADADA),
-        fontSize = 14.sp,
-        fontWeight = if (active) FontWeight.SemiBold else FontWeight.Normal,
-        modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
-    )
-  }
-}
-
-@Composable
-private fun VolumeStepper(label: String, volume: Int, onChange: (Int) -> Unit) {
-  Row(
-      modifier = Modifier.fillMaxWidth().padding(start = 18.dp, end = 6.dp, top = 2.dp, bottom = 2.dp),
-      verticalAlignment = Alignment.CenterVertically,
-  ) {
-    Text(label, color = Color(0xFFDDDDDD), fontSize = 15.sp, modifier = Modifier.weight(1f))
-    StepArrow("◀") { onChange((volume - 10).coerceIn(0, 100)) }
-    Text(
-        "$volume%",
-        color = Color.White,
-        fontSize = 15.sp,
-        fontWeight = FontWeight.SemiBold,
-        textAlign = TextAlign.Center,
-        modifier = Modifier.widthIn(min = 56.dp),
-    )
-    StepArrow("▶") { onChange((volume + 10).coerceIn(0, 100)) }
-  }
-}
-
-@Composable
-private fun TimeStepper(label: String, minuteOfDay: Int, onChange: (Int) -> Unit) {
-  fun fmt(m: Int): String {
-    val h = (m / 60) % 24
-    val mm = m % 60
-    return String.format("%02d:%02d", h, mm)
-  }
-  Row(
-      modifier = Modifier.fillMaxWidth().padding(start = 18.dp, end = 6.dp, top = 4.dp, bottom = 8.dp),
-      verticalAlignment = Alignment.CenterVertically,
-  ) {
-    Text(label, color = Color.White, fontSize = 17.sp, modifier = Modifier.weight(1f))
-    StepArrow("◀") { onChange(((minuteOfDay - 30 + 1440) % 1440)) }
-    Text(
-        fmt(minuteOfDay),
-        color = Color.White,
-        fontSize = 17.sp,
-        fontWeight = FontWeight.SemiBold,
-        textAlign = TextAlign.Center,
-        modifier = Modifier.widthIn(min = 72.dp),
-    )
-    StepArrow("▶") { onChange(((minuteOfDay + 30) % 1440)) }
-  }
-}
-
-@Composable
-private fun StepArrow(glyph: String, onClick: () -> Unit) {
-  Box(
-      modifier = Modifier.size(48.dp).clickable { onClick() },
-      contentAlignment = Alignment.Center,
-  ) {
-    Text(glyph, color = Color(0xFFDDDDDD), fontSize = 20.sp, fontWeight = FontWeight.SemiBold)
-  }
 }

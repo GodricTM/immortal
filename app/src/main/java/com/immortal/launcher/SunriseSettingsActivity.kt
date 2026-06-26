@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Meta Platforms, Inc. and affiliates.
+ * Copyright (c) 2026 Starbright Lab.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -43,7 +43,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.immortal.launcher.settings.SettingsDomains
 import com.immortal.launcher.ui.theme.SampleAppTheme
+import org.json.JSONObject
 import java.util.Calendar
 
 /** Set the sunrise alarm: time, which days, ramp length, and the optional chime. */
@@ -72,8 +74,18 @@ private fun SunriseScreen() {
   var days by remember { mutableStateOf(initial.days) }
 
   fun persist() {
-    SunriseConfig.save(context, SunriseConfig.Config(enabled, hour, minute, ramp, chime, days))
-    SunriseScheduler.reschedule(context)
+    // Set days first (bespoke — the registry models scalars, not sets), then route the scalar
+    // fields through the domain so its onApplied (SunriseScheduler.reschedule) fires once with
+    // the new days already in prefs.
+    SunriseConfig.setDays(context, days)
+    SettingsDomains.sunrise.apply(
+        context,
+        JSONObject()
+            .put("enabled", enabled)
+            .put("hour", hour)
+            .put("minute", minute)
+            .put("rampMinutes", ramp)
+            .put("chime", chime))
   }
 
   Box(modifier = Modifier.fillMaxSize().background(Color(0xFF1A1A1A)), contentAlignment = Alignment.TopCenter) {

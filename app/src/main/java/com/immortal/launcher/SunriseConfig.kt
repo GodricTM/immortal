@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Meta Platforms, Inc. and affiliates.
+ * Copyright (c) 2026 Starbright Lab.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -53,6 +53,30 @@ object SunriseConfig {
         .putStringSet("days", c.days.map { it.toString() }.toSet())
         .apply()
   }
+
+  // Per-field setters for the registry: clamping, side-effect-free, (Context, value) signature.
+  // The `days` Set<Int> has no scalar setter — it's managed by the bespoke day-picker in
+  // SunriseSettingsActivity (the registry models scalars, not sets).
+
+  fun setEnabled(c: Context, on: Boolean) =
+      prefs(c).edit().putBoolean("enabled", on).apply()
+
+  fun setHour(c: Context, h: Int) =
+      prefs(c).edit().putInt("hour", h.coerceIn(0, 23)).apply()
+
+  fun setMinute(c: Context, m: Int) =
+      prefs(c).edit().putInt("minute", m.coerceIn(0, 59)).apply()
+
+  fun setRampMinutes(c: Context, m: Int) =
+      prefs(c).edit().putInt("ramp", m.coerceIn(1, 60)).apply()
+
+  fun setChime(c: Context, on: Boolean) =
+      prefs(c).edit().putBoolean("chime", on).apply()
+
+  fun setDays(c: Context, days: Set<Int>) =
+      prefs(c).edit().putStringSet("days", days.map { it.toString() }.toSet()).apply()
+
+  private fun prefs(c: Context) = c.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
 
   private fun defaultDays(): Set<Int> =
       setOf(Calendar.MONDAY, Calendar.TUESDAY, Calendar.WEDNESDAY, Calendar.THURSDAY, Calendar.FRIDAY)

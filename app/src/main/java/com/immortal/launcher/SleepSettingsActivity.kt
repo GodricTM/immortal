@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Meta Platforms, Inc. and affiliates.
+ * Copyright (c) 2026 Starbright Lab.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -59,9 +59,11 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
+import com.immortal.launcher.settings.SettingsDomains
 import com.immortal.launcher.ui.theme.SampleAppTheme
 import kotlinx.coroutines.delay
 import kotlin.math.max
+import org.json.JSONObject
 
 class SleepSettingsActivity : ComponentActivity() {
   override fun onCreate(savedInstanceState: Bundle?) {
@@ -212,16 +214,16 @@ private fun SleepSettingsScreen() {
       }
 
       SleepToggleRow("Sleep Timer", settings.sleepTimerEnabled) {
-        ScreensaverConfig.setSleepTimerEnabled(context, it)
-        settings = settings.copy(sleepTimerEnabled = it)
+        SettingsDomains.screensaver.apply(context, JSONObject().put("sleepTimerEnabled", it))
+        settings = ScreensaverConfig.load(context)
         if (!it) stopCountdown()
       }
 
       if (settings.sleepTimerEnabled) {
         SleepMinuteStepper(settings.sleepTimerMin) { v ->
           val c = ScreensaverConfig.clampSleepTimer(v)
-          ScreensaverConfig.setSleepTimerMin(context, c)
-          settings = settings.copy(sleepTimerMin = c)
+          SettingsDomains.screensaver.apply(context, JSONObject().put("sleepTimerMin", c))
+          settings = ScreensaverConfig.load(context)
           if (running) {
             SleepScheduler.armSleepTimer(context)
             val durationMs = c * 60_000L
@@ -232,13 +234,13 @@ private fun SleepSettingsScreen() {
       }
 
       SleepToggleRow("Pause audio before sleeping", settings.pauseAudioOnSleep) {
-        ScreensaverConfig.setPauseAudioOnSleep(context, it)
-        settings = settings.copy(pauseAudioOnSleep = it)
+        SettingsDomains.screensaver.apply(context, JSONObject().put("pauseAudioOnSleep", it))
+        settings = ScreensaverConfig.load(context)
       }
 
       SleepToggleRow("Close Immortal before sleeping", settings.closeAppOnSleep) {
-        ScreensaverConfig.setCloseAppOnSleep(context, it)
-        settings = settings.copy(closeAppOnSleep = it)
+        SettingsDomains.screensaver.apply(context, JSONObject().put("closeAppOnSleep", it))
+        settings = ScreensaverConfig.load(context)
       }
 
       Spacer(Modifier.size(8.dp))

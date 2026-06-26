@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Meta Platforms, Inc. and affiliates.
+ * Copyright (c) 2026 Starbright Lab.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -97,10 +97,13 @@ object ChimeConfig {
       prefs(c).edit().putBoolean("quiet_hours_on", on).apply()
 
   fun setQuietStart(c: Context, min: Int) =
-      prefs(c).edit().putInt("quiet_start_min", min.coerceIn(0, 24 * 60 - 1)).apply()
+      prefs(c).edit().putInt("quiet_start_min", wrapMinuteOfDay(min)).apply()
 
   fun setQuietEnd(c: Context, min: Int) =
-      prefs(c).edit().putInt("quiet_end_min", min.coerceIn(0, 24 * 60 - 1)).apply()
+      prefs(c).edit().putInt("quiet_end_min", wrapMinuteOfDay(min)).apply()
+
+  /** Minutes-from-midnight wrapped into 0…1439 (matches [ScreensaverConfig.wrapMinuteOfDay]). */
+  fun wrapMinuteOfDay(min: Int): Int = ((min % 1440) + 1440) % 1440
 
   /** Is [nowMin] (minute-of-day) inside the quiet window? Pure + unit-testable.
    * Handles the usual case where the window wraps past midnight. */

@@ -10,7 +10,13 @@ package com.immortal.launcher.settings
 import android.content.Context
 import com.immortal.launcher.CalendarFeed
 import com.immortal.launcher.CalendarUrlEntryActivity
+import com.immortal.launcher.ChimeConfig
+import com.immortal.launcher.ChimeScheduler
+import com.immortal.launcher.DigitalClockConfig
 import com.immortal.launcher.DreamPolicy
+import com.immortal.launcher.SunriseConfig
+import com.immortal.launcher.SunriseScheduler
+import com.immortal.launcher.WelcomeConfig
 import com.immortal.launcher.FaceCatalog
 import com.immortal.launcher.FacePickerActivity
 import com.immortal.launcher.FleetCalendar
@@ -892,6 +898,433 @@ object SettingsDomains {
       )
 
   /**
+   * Gentle ambient audio cues — hourly chime, spoken time, golden-hour tone, "ping the other room"
+   * volume, and quiet hours ([ChimeConfig]). All off by default; nothing plays inside the quiet
+   * window. The TTS voice picker ([ChimeConfig.Settings.spokenVoice]) lives in the bespoke
+   * [ChimeSettingsActivity] (it enumerates on-device TTS voices the registry can't model), so it's
+   * accounted for in the tripwire's `managedElsewhere` rather than bound by a spec here.
+   *
+   * Scheduling side effects (re-arm the alarms) go in [onApplied], fired once per batch — not inline
+   * per toggle — so the phone-remote path re-arms too, not just the on-device screen.
+   */
+  val chime: SettingsDomain<ChimeConfig.Settings> =
+      SettingsDomain(
+          id = "chime",
+          title = "Sounds",
+          load = ChimeConfig::load,
+          specs =
+              listOf(
+                  BoolSpec(
+                      "hourlyChimeOn",
+                      "Hourly chime",
+                      get = { it.hourlyChimeOn },
+                      set = ChimeConfig::setHourlyChime,
+                      help = "A soft chime on the hour."),
+                  IntSpec(
+                      "chimeVolume",
+                      "Volume",
+                      get = { it.chimeVolume },
+                      set = ChimeConfig::setChimeVolume,
+                      min = 0,
+                      max = 100,
+                      step = 10,
+                      format = { "$it%" },
+                      visible = { _, s -> s.hourlyChimeOn }),
+                  BoolSpec(
+                      "spokenTimeOn",
+                      "Spoken time",
+                      get = { it.spokenTimeOn },
+                      set = ChimeConfig::setSpokenTime,
+                      help = "Spoken time on the hour (\"It's three o'clock\"), via TTS."),
+                  IntSpec(
+                      "spokenVolume",
+                      "Volume",
+                      get = { it.spokenVolume },
+                      set = ChimeConfig::setSpokenVolume,
+                      min = 0,
+                      max = 100,
+                      step = 10,
+                      format = { "$it%" },
+                      visible = { _, s -> s.spokenTimeOn }),
+                  BoolSpec(
+                      "goldenHourOn",
+                      "Golden-hour tone",
+                      get = { it.goldenHourOn },
+                      set = ChimeConfig::setGoldenHour,
+                      help = "A sound at sunrise and sunset."),
+                  IntSpec(
+                      "goldenVolume",
+                      "Volume",
+                      get = { it.goldenVolume },
+                      set = ChimeConfig::setGoldenVolume,
+                      min = 0,
+                      max = 100,
+                      step = 10,
+                      format = { "$it%" },
+                      visible = { _, s -> s.goldenHourOn }),
+                  IntSpec(
+                      "sunriseVariant",
+                      "Sunrise sound",
+                      get = { it.sunriseVariant },
+                      set = ChimeConfig::setSunriseVariant,
+                      min = 0,
+                      max = 1,
+                      step = 1,
+                      format = { if (it == 0) "Morning" else "Rooster" },
+                      visible = { _, s -> s.goldenHourOn }),
+                  IntSpec(
+                      "pingVolume",
+                      "Ping volume",
+                      get = { it.pingVolume },
+                      set = ChimeConfig::setPingVolume,
+                      min = 0,
+                      max = 100,
+                      step = 10,
+                      format = { "$it%" },
+                      help =
+                          "Ring volume for \"ping the other room\" - louder by default since it's a doorbell."),
+                  BoolSpec(
+                      "quietHoursOn",
+                      "Quiet hours",
+                      get = { it.quietHoursOn },
+                      set = ChimeConfig::setQuietHours,
+                      help = "Silence all cues inside a nightly window."),
+                  IntSpec(
+                      "quietStartMin",
+                      "Quiet from",
+                      get = { it.quietStartMin },
+                      set = ChimeConfig::setQuietStart,
+                      min = 0,
+                      max = 24 * 60 - 1,
+                      step = 30,
+                      wrap = true,
+                      format = ::hhmm,
+                      visible = { _, s -> s.quietHoursOn }),
+                  IntSpec(
+                      "quietEndMin",
+                      "Quiet until",
+                      get = { it.quietEndMin },
+                      set = ChimeConfig::setQuietEnd,
+                      min = 0,
+                      max = 24 * 60 - 1,
+                      step = 30,
+                      wrap = true,
+                      format = ::hhmm,
+                      visible = { _, s -> s.quietHoursOn }),
+              ),
+          sections =
+              mapOf(
+                  "chimeVolume" to "Hourly chime",
+                  "spokenVolume" to "Spoken time",
+                  "goldenVolume" to "Golden hour",
+                  "sunriseVariant" to "Golden hour",
+                  "pingVolume" to "Ping",
+                  "quietHoursOn" to "Quiet hours",
+                  "quietStartMin" to "Quiet hours",
+                  "quietEndMin" to "Quiet hours"),
+          defaults = { ChimeConfig.Settings() },
+          onApplied = { c, keys ->
+            if (keys.any {
+                  it in setOf(
+                      "hourlyChimeOn", "spokenTimeOn", "goldenHourOn", "quietHoursOn", "quietStartMin", "quietEndMin")
+                })
+                ChimeScheduler.reschedule(c)
+          },
+      )
+
+  /**
+   * The digital clock screensaver ([DigitalClockConfig]). When enabled, it replaces the photo-frame
+   * dream with a large customisable clock (style, color, font, size, layout, background, glow, date,
+   * seconds). The enum setters write the raw string straight to prefs (no normalising), so each
+   * [EnumSpec] carries a strict [EnumSpec.coerce] that rejects an unrecognised value — matching the
+   * Immortal display-enum pattern.
+   *
+   * Toggling [DigitalClockConfig.Settings.enabled] switches the active Dream between
+   * [DigitalClockDreamService] and [PhotoDreamService]; that side effect lives in [onApplied]
+   * (reaffirm the dream once per batch) rather than inline in the setter or the Activity.
+   */
+  val digitalclock: SettingsDomain<DigitalClockConfig.Settings> =
+      SettingsDomain(
+          id = "digitalclock",
+          title = "Clock",
+          load = DigitalClockConfig::load,
+          specs =
+              listOf(
+                  BoolSpec(
+                      "enabled",
+                      "Digital clock",
+                      get = { it.enabled },
+                      set = DigitalClockConfig::setEnabled,
+                      help = "Use a large clock instead of the photo frame screensaver."),
+                  EnumSpec(
+                      "style",
+                      "Clock style",
+                      get = { it.style },
+                      set = DigitalClockConfig::setStyle,
+                      options =
+                          listOf(
+                              DigitalClockConfig.STYLE_CLASSIC to "Classic",
+                              DigitalClockConfig.STYLE_FLIP to "Flip",
+                              DigitalClockConfig.STYLE_BOLD to "Bold",
+                              DigitalClockConfig.STYLE_NEON to "Neon",
+                              DigitalClockConfig.STYLE_SEGMENT to "Segment",
+                              DigitalClockConfig.STYLE_ANALOG to "Analog"),
+                      coerce = oneOf(
+                          DigitalClockConfig.STYLE_CLASSIC, DigitalClockConfig.STYLE_FLIP,
+                          DigitalClockConfig.STYLE_BOLD, DigitalClockConfig.STYLE_NEON,
+                          DigitalClockConfig.STYLE_SEGMENT, DigitalClockConfig.STYLE_ANALOG),
+                      visible = { _, s -> s.enabled }),
+                  EnumSpec(
+                      "color",
+                      "Color",
+                      get = { it.color },
+                      set = DigitalClockConfig::setColor,
+                      options =
+                          listOf(
+                              DigitalClockConfig.COLOR_WHITE to "White",
+                              DigitalClockConfig.COLOR_RED to "Red",
+                              DigitalClockConfig.COLOR_GREEN to "Green",
+                              DigitalClockConfig.COLOR_BLUE to "Blue",
+                              DigitalClockConfig.COLOR_YELLOW to "Yellow",
+                              DigitalClockConfig.COLOR_CYAN to "Cyan",
+                              DigitalClockConfig.COLOR_PINK to "Pink",
+                              DigitalClockConfig.COLOR_ORANGE to "Orange"),
+                      coerce = oneOf(
+                          DigitalClockConfig.COLOR_WHITE, DigitalClockConfig.COLOR_RED,
+                          DigitalClockConfig.COLOR_GREEN, DigitalClockConfig.COLOR_BLUE,
+                          DigitalClockConfig.COLOR_YELLOW, DigitalClockConfig.COLOR_CYAN,
+                          DigitalClockConfig.COLOR_PINK, DigitalClockConfig.COLOR_ORANGE),
+                      visible = { _, s -> s.enabled }),
+                  EnumSpec(
+                      "font",
+                      "Font",
+                      get = { it.font },
+                      set = DigitalClockConfig::setFont,
+                      options =
+                          listOf(
+                              DigitalClockConfig.FONT_LIGHT to "Light",
+                              DigitalClockConfig.FONT_NORMAL to "Normal",
+                              DigitalClockConfig.FONT_BOLD to "Bold",
+                              DigitalClockConfig.FONT_MONO to "Mono",
+                              DigitalClockConfig.FONT_SERIF to "Serif",
+                              DigitalClockConfig.FONT_SEGMENT_LED to "LED",
+                              DigitalClockConfig.FONT_DIGITAL_7 to "Digital",
+                              DigitalClockConfig.FONT_TECHNOLOGY to "Tech"),
+                      coerce = oneOf(
+                          DigitalClockConfig.FONT_LIGHT, DigitalClockConfig.FONT_NORMAL,
+                          DigitalClockConfig.FONT_BOLD, DigitalClockConfig.FONT_MONO,
+                          DigitalClockConfig.FONT_SERIF, DigitalClockConfig.FONT_SEGMENT_LED,
+                          DigitalClockConfig.FONT_DIGITAL_7, DigitalClockConfig.FONT_TECHNOLOGY),
+                      visible = { _, s -> s.enabled }),
+                  EnumSpec(
+                      "size",
+                      "Size",
+                      get = { it.size },
+                      set = DigitalClockConfig::setSize,
+                      options =
+                          listOf(
+                              DigitalClockConfig.SIZE_SMALL to "Small",
+                              DigitalClockConfig.SIZE_MEDIUM to "Medium",
+                              DigitalClockConfig.SIZE_LARGE to "Large",
+                              DigitalClockConfig.SIZE_XL to "XL"),
+                      coerce = oneOf(
+                          DigitalClockConfig.SIZE_SMALL, DigitalClockConfig.SIZE_MEDIUM,
+                          DigitalClockConfig.SIZE_LARGE, DigitalClockConfig.SIZE_XL),
+                      visible = { _, s -> s.enabled }),
+                  EnumSpec(
+                      "layout",
+                      "Position",
+                      get = { it.layout },
+                      set = DigitalClockConfig::setLayout,
+                      options =
+                          listOf(
+                              DigitalClockConfig.LAYOUT_CENTER to "Center",
+                              DigitalClockConfig.LAYOUT_TOP to "Top",
+                              DigitalClockConfig.LAYOUT_BOTTOM to "Bottom",
+                              DigitalClockConfig.LAYOUT_MINIMAL to "Minimal"),
+                      coerce = oneOf(
+                          DigitalClockConfig.LAYOUT_CENTER, DigitalClockConfig.LAYOUT_TOP,
+                          DigitalClockConfig.LAYOUT_BOTTOM, DigitalClockConfig.LAYOUT_MINIMAL),
+                      visible = { _, s -> s.enabled }),
+                  EnumSpec(
+                      "background",
+                      "Background",
+                      get = { it.background },
+                      set = DigitalClockConfig::setBackground,
+                      options =
+                          listOf(
+                              DigitalClockConfig.BG_BLACK to "Black",
+                              DigitalClockConfig.BG_GRADIENT to "Gradient",
+                              DigitalClockConfig.BG_RED to "Red"),
+                      coerce = oneOf(
+                          DigitalClockConfig.BG_BLACK, DigitalClockConfig.BG_GRADIENT,
+                          DigitalClockConfig.BG_RED),
+                      visible = { _, s -> s.enabled }),
+                  EnumSpec(
+                      "glow",
+                      "Glow",
+                      get = { it.glow },
+                      set = DigitalClockConfig::setGlow,
+                      options =
+                          listOf(
+                              DigitalClockConfig.GLOW_NONE to "None",
+                              DigitalClockConfig.GLOW_SOFT to "Soft",
+                              DigitalClockConfig.GLOW_STRONG to "Strong"),
+                      coerce = oneOf(
+                          DigitalClockConfig.GLOW_NONE, DigitalClockConfig.GLOW_SOFT,
+                          DigitalClockConfig.GLOW_STRONG),
+                      visible = { _, s -> s.enabled }),
+                  BoolSpec(
+                      "showDate",
+                      "Show date",
+                      get = { it.showDate },
+                      set = DigitalClockConfig::setShowDate,
+                      visible = { _, s -> s.enabled }),
+                  BoolSpec(
+                      "showSeconds",
+                      "Show seconds",
+                      get = { it.showSeconds },
+                      set = DigitalClockConfig::setShowSeconds,
+                      visible = { _, s -> s.enabled }),
+              ),
+          sections =
+              mapOf(
+                  "style" to "Clock style",
+                  "color" to "Appearance",
+                  "font" to "Appearance",
+                  "size" to "Appearance",
+                  "layout" to "Layout & background",
+                  "background" to "Layout & background",
+                  "glow" to "Layout & background",
+                  "showDate" to "Extras",
+                  "showSeconds" to "Extras"),
+          defaults = { DigitalClockConfig.Settings() },
+          onApplied = { c, keys ->
+            if ("enabled" in keys) SettingsGuard.reaffirmScreensaver(c)
+          },
+      )
+
+  /**
+   * Sunrise alarm / wake light ([SunriseConfig]). At the set time on the chosen days, the screen
+   * brightens gradually, optionally finishing with a chime. The scalar fields (enabled, hour,
+   * minute, ramp minutes, chime) are registry specs; the `days` Set<Int> (which days of the week)
+   * is managed by the bespoke day-picker in [SunriseSettingsActivity] — the registry models scalars,
+   * not sets. Rescheduling ([SunriseScheduler.reschedule]) goes in [onApplied], fired once per batch.
+   */
+  val sunrise: SettingsDomain<SunriseConfig.Config> =
+      SettingsDomain(
+          id = "sunrise",
+          title = "Sunrise alarm",
+          load = SunriseConfig::load,
+          specs =
+              listOf(
+                  BoolSpec(
+                      "enabled",
+                      "Sunrise alarm",
+                      get = { it.enabled },
+                      set = SunriseConfig::setEnabled,
+                      help = "Wake to a gradual screen-brightening ramp, optionally finishing with a chime."),
+                  IntSpec(
+                      "hour",
+                      "Hour",
+                      get = { it.hour },
+                      set = SunriseConfig::setHour,
+                      min = 0,
+                      max = 23,
+                      step = 1,
+                      format = { "%02d:00".format(it) },
+                      visible = { _, s -> s.enabled }),
+                  IntSpec(
+                      "minute",
+                      "Minute",
+                      get = { it.minute },
+                      set = SunriseConfig::setMinute,
+                      min = 0,
+                      max = 59,
+                      step = 5,
+                      format = { ":%02d".format(it) },
+                      visible = { _, s -> s.enabled }),
+                  IntSpec(
+                      "rampMinutes",
+                      "Ramp minutes",
+                      get = { it.rampMinutes },
+                      set = SunriseConfig::setRampMinutes,
+                      min = 1,
+                      max = 60,
+                      step = 5,
+                      format = { "$it min" },
+                      help = "How long the screen takes to brighten from ember to full daylight.",
+                      visible = { _, s -> s.enabled }),
+                  BoolSpec(
+                      "chime",
+                      "Chime at end",
+                      get = { it.chime },
+                      set = SunriseConfig::setChime,
+                      help = "Finish the ramp with a soft chime crescendo.",
+                      visible = { _, s -> s.enabled }),
+              ),
+          sections =
+              mapOf(
+                  "hour" to "Time",
+                  "minute" to "Time",
+                  "rampMinutes" to "Ramp",
+                  "chime" to "Ramp"),
+          defaults = { SunriseConfig.Config(false, 7, 0, 20, true, setOf(2, 3, 4, 5, 6)) },
+          onApplied = { c, _ -> SunriseScheduler.reschedule(c) },
+      )
+
+  /**
+   * The welcome-back overlay ([WelcomeConfig]) shown when the screensaver starts. The registry
+   * models the scalar toggles and the display duration; the Float fields (opacity, text sizes,
+   * letter spacing) and the ARGB color ints and the free-text greetings / voice picker stay in the
+   * bespoke [WelcomeSettingsActivity] — the registry has no [FloatSpec], and color pickers / text
+   * editors / TTS voice enumeration are bespoke UI it can't render. Those fields are listed in the
+   * tripwire's `managedElsewhere`.
+   */
+  val welcome: SettingsDomain<WelcomeConfig.Settings> =
+      SettingsDomain(
+          id = "welcome",
+          title = "Welcome",
+          load = WelcomeConfig::load,
+          specs =
+              listOf(
+                  IntSpec(
+                      "durationMs",
+                      "Display duration",
+                      get = { it.durationMs },
+                      set = WelcomeConfig::setDuration,
+                      min = 1000,
+                      max = 10000,
+                      step = 200,
+                      format = { "${it / 1000.0}s" },
+                      help = "How long the welcome overlay shows before auto-dismissing."),
+                  BoolSpec(
+                      "showGreeting",
+                      "Show greeting",
+                      get = { it.showGreeting },
+                      set = WelcomeConfig::setShowGreeting,
+                      help = "Show a time-of-day greeting (\"Good morning\")."),
+                  BoolSpec(
+                      "showClock",
+                      "Show clock",
+                      get = { it.showClock },
+                      set = WelcomeConfig::setShowClock),
+                  BoolSpec(
+                      "showDate",
+                      "Show date",
+                      get = { it.showDate },
+                      set = WelcomeConfig::setShowDate),
+                  BoolSpec(
+                      "enableTts",
+                      "Speak greeting",
+                      get = { it.enableTts },
+                      set = WelcomeConfig::setEnableTts,
+                      help = "Speak the greeting through Android TTS when the overlay shows."),
+              ),
+          defaults = { WelcomeConfig.Settings() },
+      )
+
+  /**
    * Device identity. One control: the Portal's display name, shown in the phone remote's device
    * switcher and used as the Home Assistant device name. HA `unique_id` and the MQTT topic path key
    * off a separate stable device id ([MqttConfig.deviceId]), so renaming is cosmetic and safe.
@@ -920,5 +1353,5 @@ object SettingsDomains {
 
   /** Every registered domain. */
   val all: List<SettingsDomain<*>> =
-      listOf(screensaver, calendar, immortal, mqtt, quickbar, fleet)
+      listOf(screensaver, calendar, immortal, mqtt, quickbar, chime, digitalclock, sunrise, welcome, fleet)
 }

@@ -259,6 +259,10 @@ class SettingsDomainTest {
             SettingsDomains.calendar to emptySet(),
             SettingsDomains.immortal to
                 setOf("multiRoomEnabled", "snapcastHost", "maPort", "maUsername", "maPassword"),
+            SettingsDomains.chime to emptySet(),
+            SettingsDomains.digitalclock to emptySet(),
+            SettingsDomains.sunrise to emptySet(),
+            SettingsDomains.welcome to emptySet(),
         )
     rendered.forEach { (dom, exclude) ->
       val blank =
@@ -294,6 +298,81 @@ class SettingsDomainTest {
             .toSet()
     val specKeys = SettingsDomains.quickbar.specs.map { it.key }.toSet()
     assertEquals(fields, specKeys)
+  }
+
+  @Test
+  fun chimeRegistry_coversEveryPersistedField_orExplicitlyAccountsForIt() {
+    // The on-device Chime screen renders its scalar controls from this domain, so a new
+    // ChimeConfig.Settings field that nobody adds a spec for would silently never appear on-device
+    // or on the remote. spokenVoice is set by the bespoke TTS voice picker in ChimeSettingsActivity
+    // (it enumerates on-device voices the registry can't model) — a new field must get a spec or be
+    // listed here, a deliberate gate.
+    val fields =
+        com.immortal.launcher.ChimeConfig.Settings::class.java.declaredFields
+            .filter { !java.lang.reflect.Modifier.isStatic(it.modifiers) }
+            .map { it.name }
+            .toSet()
+    val specKeys = SettingsDomains.chime.specs.map { it.key }.toSet()
+    val managedElsewhere = setOf("spokenVoice")
+    val uncovered = fields - specKeys - managedElsewhere
+    assertTrue(
+        "ChimeConfig.Settings has persisted fields neither in the registry nor accounted for: $uncovered",
+        uncovered.isEmpty())
+  }
+
+  @Test
+  fun digitalClockRegistry_coversEveryPersistedField() {
+    // The on-device Clock screen renders its controls from this domain. Every field is a scalar
+    // bound by a spec — no managedElsewhere exceptions.
+    val fields =
+        com.immortal.launcher.DigitalClockConfig.Settings::class.java.declaredFields
+            .filter { !java.lang.reflect.Modifier.isStatic(it.modifiers) }
+            .map { it.name }
+            .toSet()
+    val specKeys = SettingsDomains.digitalclock.specs.map { it.key }.toSet()
+    assertEquals(fields, specKeys)
+  }
+
+  @Test
+  fun sunriseRegistry_coversEveryPersistedField_orExplicitlyAccountsForIt() {
+    // `days` is a Set<Int> (which days of the week) managed by the bespoke day-picker in
+    // SunriseSettingsActivity — the registry models scalars, not sets. The 5 scalar fields
+    // are all bound by specs.
+    val fields =
+        com.immortal.launcher.SunriseConfig.Config::class.java.declaredFields
+            .filter { !java.lang.reflect.Modifier.isStatic(it.modifiers) }
+            .map { it.name }
+            .toSet()
+    val specKeys = SettingsDomains.sunrise.specs.map { it.key }.toSet()
+    val managedElsewhere = setOf("days")
+    val uncovered = fields - specKeys - managedElsewhere
+    assertTrue(
+        "SunriseConfig.Config has persisted fields neither in the registry nor accounted for: $uncovered",
+        uncovered.isEmpty())
+  }
+
+  @Test
+  fun welcomeRegistry_coversEveryPersistedField_orExplicitlyAccountsForIt() {
+    // The registry has no FloatSpec, so the Float fields (opacity, text sizes, letter spacing) stay
+    // in the bespoke WelcomeSettingsActivity. The ARGB color ints use bespoke color pickers, the
+    // greeting texts are free-text editors, and the TTS voice is an on-device voice picker — all
+    // managed by the Activity. The 5 registry-ready fields (duration + 4 toggles) are spec'd.
+    val fields =
+        com.immortal.launcher.WelcomeConfig.Settings::class.java.declaredFields
+            .filter { !java.lang.reflect.Modifier.isStatic(it.modifiers) }
+            .map { it.name }
+            .toSet()
+    val specKeys = SettingsDomains.welcome.specs.map { it.key }.toSet()
+    val managedElsewhere =
+        setOf(
+            "greetingNight", "greetingMorning", "greetingAfternoon", "greetingEvening",
+            "userName", "greetingColor", "clockColor", "dateColor",
+            "backgroundOpacity", "greetingSize", "clockSize", "dateSize",
+            "greetingLetterSpacing", "ttsVoice")
+    val uncovered = fields - specKeys - managedElsewhere
+    assertTrue(
+        "WelcomeConfig.Settings has persisted fields neither in the registry nor accounted for: $uncovered",
+        uncovered.isEmpty())
   }
 
   @Test

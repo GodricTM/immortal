@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Meta Platforms, Inc. and affiliates.
+ * Copyright (c) 2026 Starbright Lab.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -37,7 +37,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.immortal.launcher.settings.SettingsDomains
 import com.immortal.launcher.ui.theme.SampleAppTheme
+import org.json.JSONObject
 
 private const val SHERPA_VOICE_PARAM = "sherpa_voice_name"
 
@@ -136,23 +138,23 @@ private fun WelcomeSettingsScreen() {
 
         Card {
           ToggleRow("Show greeting message", settings.showGreeting) {
-            WelcomeConfig.setShowGreeting(context, it)
-            settings = settings.copy(showGreeting = it)
+            SettingsDomains.welcome.apply(context, JSONObject().put("showGreeting", it))
+            settings = WelcomeConfig.load(context)
           }
           Divider()
           ToggleRow("Show clock", settings.showClock) {
-            WelcomeConfig.setShowClock(context, it)
-            settings = settings.copy(showClock = it)
+            SettingsDomains.welcome.apply(context, JSONObject().put("showClock", it))
+            settings = WelcomeConfig.load(context)
           }
           Divider()
           ToggleRow("Show date", settings.showDate) {
-            WelcomeConfig.setShowDate(context, it)
-            settings = settings.copy(showDate = it)
+            SettingsDomains.welcome.apply(context, JSONObject().put("showDate", it))
+            settings = WelcomeConfig.load(context)
           }
           Divider()
           ToggleRow("Speak greeting (TTS)", settings.enableTts) {
-            WelcomeConfig.setEnableTts(context, it)
-            settings = settings.copy(enableTts = it)
+            SettingsDomains.welcome.apply(context, JSONObject().put("enableTts", it))
+            settings = WelcomeConfig.load(context)
           }
         }
 
@@ -217,8 +219,8 @@ private fun WelcomeSettingsScreen() {
         Card {
           DurationStepper(settings.durationMs / 1000) { sec ->
             val ms = WelcomeConfig.clampDuration(sec * 1000)
-            WelcomeConfig.setDuration(context, ms)
-            settings = settings.copy(durationMs = ms)
+            SettingsDomains.welcome.apply(context, JSONObject().put("durationMs", ms))
+            settings = WelcomeConfig.load(context)
           }
         }
         Text(
