@@ -169,7 +169,16 @@ class MqttPublisher(private val appContext: Context) {
               val pkt = c.readPacket() ?: break
               if (pkt.type == 0x30) {
                 val (t, p) = c.parsePublish(pkt)
-                handleCommand(t, String(p, Charsets.UTF_8))
+                // Drop retained set-topic deliveries — both the broker's protocol-mandated
+                // replay on (re)subscribe AND any future producer publish with retain=true.
+                // Command topics should never be retained; if one is, dropping it avoids
+                // replaying stale doorbells on every reconnect.
+                val retained = (pkt.flags and 0x01) != 0
+                if (retained) {
+                  Log.i(TAG, "ignoring retained set-topic message: $t")
+                } else {
+                  handleCommand(t, String(p, Charsets.UTF_8))
+                }
               }
             }
           }
@@ -252,6 +261,17 @@ class MqttPublisher(private val appContext: Context) {
           "media_play_pause" -> NowPlayingHub.playPause()
           "media_next" -> NowPlayingHub.next()
           "media_previous" -> NowPlayingHub.previous()
+          "notify" -> handleNotify(payload)
+          // Show the photo frame on demand — the same surface the launcher's header
+          // screensaver button launches (HomeActivity.onStartScreensaver). This is the
+          // in-app photo frame as a foreground Activity, not the system dream, so it stays
+          // consistent with the header button: screen/state remains "interactive", and the
+          // go_home command dismisses it. We don't try to start the system dream (no public
+          // API; Somnambulator/IDreamManager reflection is device-fragile on Portal).
+          "screensaver" ->
+              appContext.startActivity(
+                  Intent(appContext, PhotoFramePreviewActivity::class.java)
+                      .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
           else -> Log.w(TAG, "unknown command $obj")
         }
       }
@@ -265,8 +285,21 @@ class MqttPublisher(private val appContext: Context) {
    * Reuses [ScreensaverDismiss]'s HA helpers so the behaviour matches the screensaver picker.
    */
   private fun openTarget(payload: String) {
+    if (!routeTarget(payload)) return
+    // Echo the last target so the text entity shows what it was set to. Only the "Open"
+    // entity echoes; notify taps route via routeTarget() directly so a doorbell tap doesn't
+    // rewrite this entity's retained state.
+    client?.publish("$base/open/state", payload.trim(), retain = true)
+  }
+
+  /**
+   * Dispatch a target string without touching any entity state. Same grammar as [openTarget]
+   * (full URL, installed package name, or bare HA dashboard path). Returns true when a target
+   * was launched, false for a blank or unroutable input (e.g. no HA app installed for a path).
+   */
+  private fun routeTarget(payload: String): Boolean {
     val t = payload.trim()
-    if (t.isBlank()) return
+    if (t.isBlank()) return false
     val pm = appContext.packageManager
     when {
       t.startsWith("http://") || t.startsWith("https://") || t.startsWith("homeassistant://") ->
@@ -275,15 +308,44 @@ class MqttPublisher(private val appContext: Context) {
       pm.getLaunchIntentForPackage(t) != null ->
           appContext.startActivity(pm.getLaunchIntentForPackage(t)!!.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
       else -> {
-        val pkg = ScreensaverDismiss.installedHaPackage(appContext) ?: return
+        val pkg = ScreensaverDismiss.installedHaPackage(appContext) ?: return false
         appContext.startActivity(
             Intent(Intent.ACTION_VIEW, Uri.parse(ScreensaverDismiss.haDeepLink(t)))
                 .setPackage(pkg)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
       }
     }
-    // Echo the last target so the text entity shows what it was set to.
-    client?.publish("$base/open/state", t, retain = true)
+    return true
+  }
+
+  /**
+   * Render a notify payload (toast + optional sound). Schema: [NotifyPayload]; behavior
+   * rules: `docs/design/mqtt-notifications.md`. The handler is forgiving — malformed JSON
+   * is a silent no-op; partial payloads use defaults.
+   */
+  private fun handleNotify(raw: String) {
+    val spec = NotifyPayload.parse(raw) ?: return // empty/malformed/no-op
+    if (spec.hasVisual) {
+      // wake_screen defaults to true. Always call wake when requested — idempotent if the
+      // device is already interactive, dismisses the photo dream if it's in front (PowerManager
+      // reports isInteractive=true while dreaming, so a screen-on check alone misses it; and
+      // PresenceHub.current.screen only reflects THIS process's dream service, which doesn't
+      // help if a sibling package owns the active dream). 3s auto-release wake lock, no harm.
+      if (spec.wakeScreen) ScreenControl.wake(appContext)
+      val tap: (() -> Unit)? = spec.onTap?.let { target -> { routeTarget(target) } }
+      NotificationOverlay.show(spec, tap)
+    }
+    if (!spec.sound.isNullOrBlank()) {
+      val nm =
+          appContext.getSystemService(Context.NOTIFICATION_SERVICE)
+              as? android.app.NotificationManager
+      val dndOff =
+          nm == null ||
+              nm.currentInterruptionFilter ==
+                  android.app.NotificationManager.INTERRUPTION_FILTER_ALL
+      if (dndOff) SoundPlayer.play(appContext, spec.sound, spec.volume)
+      else Log.i(TAG, "DND active; suppressing notify sound")
+    }
   }
 
   // --- state (device → broker) ------------------------------------------------
@@ -395,7 +457,9 @@ class MqttPublisher(private val appContext: Context) {
     button(c, "media_previous", "Previous track", icon = "mdi:skip-previous")
 
     button(c, "go_home", "Home", icon = "mdi:home")
+    button(c, "screensaver", "Screensaver", icon = "mdi:image-multiple")
     textEntity(c, "open", "Open", icon = "mdi:open-in-app")
+    notifyEntity(c, "notify", "Notify")
     button(c, "identify", "Identify", icon = "mdi:bullhorn")
     sensor(c, "ip", "IP address", icon = "mdi:ip-network", diagnostic = true)
   }
@@ -415,7 +479,9 @@ class MqttPublisher(private val appContext: Context) {
           "button" to "media_next",
           "button" to "media_previous",
           "button" to "go_home",
+          "button" to "screensaver",
           "text" to "open",
+          "notify" to "notify",
           "button" to "identify",
           "sensor" to "ip",
           "button" to "screen_off", // legacy (pre-1.41)
@@ -521,6 +587,22 @@ class MqttPublisher(private val appContext: Context) {
             .put("entity_category", "config")
             .put("icon", icon)
     publishConfig(c, "text", obj, cfg)
+  }
+
+  /**
+   * The MQTT `notify` discovery component (HA 2024.7+ `NotifyEntity`). HA exposes the
+   * entity as a target for the `notify.send_message` action; only `message` reaches the
+   * `command_template`, so Track 1 ships `{"message": "..."}` to the device. Rich payloads
+   * use Track 2 (raw `mqtt.publish` to `<base>/notify/set`). See
+   * `docs/design/mqtt-notifications.md` § *Home Assistant integration*.
+   */
+  private fun notifyEntity(c: MqttClient, obj: String, name: String) {
+    val cfg =
+        base(obj, name)
+            .put("command_topic", "$base/$obj/set")
+            .put("command_template", "{\"message\": {{ value|tojson }}}")
+            .put("availability_topic", "$base/availability")
+    publishConfig(c, "notify", obj, cfg)
   }
 
   /** Publish (or, when [cfg] is null, clear) a retained discovery config. */

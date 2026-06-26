@@ -1,6 +1,6 @@
 {
-  "versionCode": 51,
-  "versionName": "1.50",
+  "versionCode": 53,
+  "versionName": "1.52",
   "apkUrl": "https://github.com/starbrightlab/immortal/releases/latest/download/immortal.apk",
-  "notes": "Immortal 1.50 — merges upstream 1.44–1.49 (full phone web remote / PWA with media + touchpad, declarative settings registry driving remote control, home-screen widget host + free-placement grid + wallpapers, screensaver Ken Burns motion & EXIF captions, fleet management, Music Assistant multi-room port/auth fix) into the @GodricTM feature fork (ISS, aurora, sunrise, lamp, kitchen timers, room ping, chimes, external Sherpa/Kokoro/Romanian TTS voices, system-wide touch & keypress sounds and more)."
+  "notes": "The launcher now uses the full screen width by default on the larger landscape Portals. A new \"Constrain page width\" setting (off by default) restores the previous capped, centred layout if you prefer it."
 }

@@ -32,6 +32,11 @@ class RemoteRoutes(private val context: Context) {
         // Public (LAN-guarded only): the page itself carries no secrets, and pairing
         // is gated by the PIN shown on the Portal's screen.
         "/remote/ui" -> requireMethod("GET", req) { html(RemoteHtml.PAGE) }
+        // PWA install surface: the manifest + app icon let the remote be added to the phone's
+        // home screen as a standalone app, whose storage isn't evicted like a browser tab's —
+        // the durable home for the synced roster. Public (no secrets), like the page itself.
+        "/remote/manifest.webmanifest" -> requireMethod("GET", req) { manifest() }
+        "/remote/app-icon" -> requireMethod("GET", req) { appIcon(req) }
         "/remote/pair" -> requireMethod("POST", req) { pair(req) }
         // App icons aren't sensitive; serving them unauthenticated keeps the token out
         // of <img> URLs. Still behind the server's LAN-only peer guard.
@@ -54,6 +59,7 @@ class RemoteRoutes(private val context: Context) {
         "/remote/presets" -> authed(req) { presets(req) }
         "/remote/preset" -> authed(req) { runPreset(req) }
         "/remote/devices" -> authed(req) { devices() }
+        "/remote/roster" -> authed(req) { roster(req) }
         "/remote/sources" -> authed(req) { sources(req) }
         "/remote/settings" -> authed(req) { settings(req) }
         else -> json(404, err("not_found"))
@@ -73,6 +79,55 @@ class RemoteRoutes(private val context: Context) {
   private fun icon(req: FleetHttpServer.Request): FleetHttpServer.Response {
     val pkg = req.queryParam("pkg") ?: return json(400, err("pkg_required"))
     val png = RemoteApps.iconPng(context, pkg) ?: return json(404, err("no_icon"))
+    return FleetHttpServer.Response.stream(200, "image/png", png.size.toLong()) { it.write(png) }
+  }
+
+  /**
+   * The PWA web app manifest. Installing the remote to the home screen makes it a standalone app
+   * and — crucially for "stay connected between sessions" — gives its storage the durable lifetime
+   * an installed app gets, instead of the ~7-day eviction a plain browser tab faces. Served as
+   * `application/manifest+json`; icons point at [appIcon] (Immortal's own launcher icon).
+   */
+  private fun manifest(): FleetHttpServer.Response {
+    val obj =
+        JSONObject()
+            .put("name", "Immortal Remote")
+            .put("short_name", "Immortal")
+            .put("description", "Control your Immortal Portal from your phone.")
+            .put("start_url", "/remote/ui")
+            .put("scope", "/remote/")
+            .put("display", "standalone")
+            .put("orientation", "portrait")
+            .put("background_color", "#0e0e10")
+            .put("theme_color", "#0e0e10")
+            .put(
+                "icons",
+                JSONArray()
+                    .put(iconEntry(192, "any"))
+                    .put(iconEntry(512, "any"))
+                    .put(iconEntry(512, "maskable")))
+    val bytes = obj.toString().toByteArray(Charsets.UTF_8)
+    return FleetHttpServer.Response.stream(
+        200, "application/manifest+json; charset=utf-8", bytes.size.toLong()) {
+          it.write(bytes)
+        }
+  }
+
+  private fun iconEntry(size: Int, purpose: String) =
+      JSONObject()
+          .put("src", "/remote/app-icon?size=$size")
+          .put("sizes", "${size}x${size}")
+          .put("type", "image/png")
+          .put("purpose", purpose)
+
+  /**
+   * Immortal's own launcher icon as PNG, for the manifest icons and the iOS apple-touch-icon.
+   * Public like [icon] (an app icon isn't a secret), and rendered at the requested (clamped) size
+   * from our adaptive launcher icon — so the installed remote wears the same face as the app.
+   */
+  private fun appIcon(req: FleetHttpServer.Request): FleetHttpServer.Response {
+    val size = (req.queryParam("size")?.toIntOrNull() ?: 192).coerceIn(48, 1024)
+    val png = RemoteApps.iconPng(context, context.packageName, size) ?: return json(404, err("no_icon"))
     return FleetHttpServer.Response.stream(200, "image/png", png.size.toLong()) { it.write(png) }
   }
 
@@ -276,6 +331,29 @@ class RemoteRoutes(private val context: Context) {
                           .put("applied", JSONArray(applied.toList()))
                           .put("domain", SettingsRegistry.domain(domainId)!!.schemaJson(context)))
             }
+          }
+        }
+        else -> json(405, err("method_not_allowed"))
+      }
+
+  /**
+   * The phone's device roster, backed up here so any paired Portal's page can rehydrate the whole
+   * fleet — pair one device and the rest come back, instead of re-pairing all of them after a
+   * browser wipes its storage. GET returns the stored roster; POST replaces it with the phone's
+   * current `[{name, base, token}]`. Auth-gated like every input route: the on-screen PIN that
+   * mints a session is the same gate that releases the roster, so only someone who paired in
+   * person can read it. See [RemoteRoster] for the storage + sanitisation.
+   */
+  private fun roster(req: FleetHttpServer.Request): FleetHttpServer.Response =
+      when (req.method) {
+        "GET" -> json(200, ok().put("roster", RemoteRoster.load(context)))
+        "POST" -> {
+          val body = parseJson(req.bodyText())
+          val arr = body?.optJSONArray("roster")
+          if (arr == null) json(400, err("roster_required"))
+          else {
+            RemoteRoster.save(context, arr.toString())
+            json(200, ok().put("roster", RemoteRoster.load(context)))
           }
         }
         else -> json(405, err("method_not_allowed"))

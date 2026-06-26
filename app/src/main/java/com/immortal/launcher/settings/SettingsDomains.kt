@@ -14,6 +14,7 @@ import com.immortal.launcher.DreamPolicy
 import com.immortal.launcher.FaceCatalog
 import com.immortal.launcher.FacePickerActivity
 import com.immortal.launcher.FleetCalendar
+import com.immortal.launcher.FleetConfig
 import com.immortal.launcher.FleetScreensaver
 import com.immortal.launcher.FrameMode
 import com.immortal.launcher.PhotoFramePreviewActivity
@@ -509,6 +510,13 @@ object SettingsDomains {
                       help =
                           "Hidden by default for a cleaner full-screen look. Swipe down from the top to reveal it briefly."),
                   BoolSpec(
+                      "constrainPageWidth",
+                      "Constrain page width",
+                      get = { it.constrainPageWidth },
+                      set = ImmortalSettings::setConstrainPageWidth,
+                      help =
+                          "Cap the home screen width on large landscape displays instead of filling the whole panel. Off by default."),
+                  BoolSpec(
                       "multiRoomEnabled",
                       "Multi-room audio",
                       get = { it.multiRoomEnabled },
@@ -731,6 +739,7 @@ object SettingsDomains {
                   "tileSize" to "Home screen",
                   "showMiniPlayer" to "Home screen",
                   "hideStatusBar" to "Home screen",
+                  "constrainPageWidth" to "Home screen",
                   "clockFormat" to "Clock",
                   "multiRoomEnabled" to "Audio",
                   "snapcastHost" to "Audio",
@@ -882,6 +891,34 @@ object SettingsDomains {
           },
       )
 
+  /**
+   * Device identity. One control: the Portal's display name, shown in the phone remote's device
+   * switcher and used as the Home Assistant device name. HA `unique_id` and the MQTT topic path key
+   * off a separate stable device id ([MqttConfig.deviceId]), so renaming is cosmetic and safe.
+   * Bound to [FleetConfig], whose setter also rewrites the shell-readable fleet manifest.
+   */
+  val fleet: SettingsDomain<Context> =
+      SettingsDomain(
+          id = "fleet",
+          title = "Device",
+          load = { it },
+          specs =
+              listOf(
+                  StringSpec(
+                      "name",
+                      "Device name",
+                      get = { FleetConfig.name(it) },
+                      // Trim surrounding whitespace before storing. Any printable characters are
+                      // allowed (HA device name and the mDNS service name tolerate them).
+                      set = { c, v -> FleetConfig.setName(c, v.trim()) },
+                      // Reject blank or over-long names; the trimmed form must be 1..48 chars.
+                      applyWhen = { it.trim().length in 1..48 },
+                      help = "Shown in the phone remote and in Home Assistant.",
+                  ),
+              ),
+      )
+
   /** Every registered domain. */
-  val all: List<SettingsDomain<*>> = listOf(screensaver, calendar, immortal, mqtt, quickbar)
+  val all: List<SettingsDomain<*>> =
+      listOf(screensaver, calendar, immortal, mqtt, quickbar, fleet)
 }
