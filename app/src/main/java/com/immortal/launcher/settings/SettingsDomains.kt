@@ -572,7 +572,7 @@ object SettingsDomains {
                       "Category tabs",
                       get = { it.showTabs },
                       set = ImmortalSettings::setShowTabs,
-                      help = "Show All + folder tabs above the grid for quick filtering."),
+                      help = "Show All, Apps, Tools, and Settings tabs above the grid for quick filtering."),
                   BoolSpec(
                       "dashboardPage",
                       "Dashboard page",

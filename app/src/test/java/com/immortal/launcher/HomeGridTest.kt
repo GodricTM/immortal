@@ -13,12 +13,12 @@ import org.junit.Test
 class HomeGridTest {
 
   @Test
-  fun normalize_keepsBlanksAndOrder_appendsNew_padsTrailingRow() {
+  fun normalize_keepsOrder_fillsBlanksWithNewTiles_padsTrailingRow() {
     // 2 columns; saved has a gap (null) between a and b; c is new.
     val saved = listOf<String?>("a", null, "b")
     val result = HomeGrid.normalizeSlots(saved, listOf("a", "b", "c"), cols = 2)
-    // The gap is preserved, c appended, then padded to fill the row + one spare row (2 cols).
-    assertEquals(listOf("a", null, "b", "c", null, null), result)
+    // c fills the old gap, then the list is padded with one spare row (2 cols).
+    assertEquals(listOf("a", "c", "b", null, null, null), result)
   }
 
   @Test

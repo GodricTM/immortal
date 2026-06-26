@@ -262,7 +262,7 @@ class PhotoFrameController(
           }
           ttsReady = true
           pendingSpeech?.let { text ->
-            tts?.speak(text, TextToSpeech.QUEUE_FLUSH, welcomeTtsParams(welcomeCfg), null)
+            speakWelcome(text, welcomeCfg)
             pendingSpeech = null
           }
         }
@@ -757,7 +757,7 @@ class PhotoFrameController(
       }
       // Speak immediately if TTS is ready, otherwise queue it
       if (ttsReady) {
-        tts?.speak(fullGreeting, TextToSpeech.QUEUE_FLUSH, welcomeTtsParams(welcomeCfg), null)
+        speakWelcome(fullGreeting, welcomeCfg)
       } else {
         pendingSpeech = fullGreeting
       }
@@ -778,14 +778,18 @@ class PhotoFrameController(
 
   private fun dismissWelcomeAnimated() {
     welcomeVisible = false
-    // Stop ongoing speech but leave pendingSpeech intact so it fires if TTS wasn't
-    // ready before the overlay auto-dismissed. User tap (dismissWelcome) cancels it.
-    tts?.stop()
     welcomeOverlay.animate()
         .alpha(0f)
         .setDuration(600)
         .withEndAction { welcomeOverlay.visibility = View.GONE }
         .start()
+  }
+
+  private fun speakWelcome(text: String, cfg: WelcomeConfig.Settings) {
+    val params = welcomeTtsParams(cfg)
+    runCatching {
+      tts?.speak(text, TextToSpeech.QUEUE_FLUSH, params, "welcome_greeting")
+    }.onFailure { Log.w(TAG, "Welcome TTS speak failed", it) }
   }
 
   private fun welcomeTtsParams(cfg: WelcomeConfig.Settings): android.os.Bundle? =

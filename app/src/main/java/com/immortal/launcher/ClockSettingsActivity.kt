@@ -516,16 +516,16 @@ private fun ClockSettingsScreen() {
 
       // System-wide back shortcut via accessibility service
       Spacer(Modifier.size(26.dp))
-      SectionLabel("Back shortcut")
+      SectionLabel("Back gesture")
       Card {
         Row(
             modifier = Modifier.fillMaxWidth().padding(18.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
           Column(modifier = Modifier.weight(1f)) {
-            Text("Immortal Back", color = Color.White, fontSize = 17.sp)
+            Text("Immortal Back service", color = Color.White, fontSize = 17.sp)
             Text(
-                "Enables Immortal's accessibility BACK service. The Portal Settings app may hide third-party accessibility services, so the Enable button writes the secure setting directly.",
+                "Required for the right-edge back gesture. This replaces the old on-screen back buttons on Immortal pages.",
                 color = Color(0xFF9A9A9A),
                 fontSize = 13.sp,
                 modifier = Modifier.padding(top = 2.dp),
@@ -559,7 +559,7 @@ private fun ClockSettingsScreen() {
                       android.provider.Settings.Secure.ACCESSIBILITY_ENABLED,
                       1
                   )
-                  Toast.makeText(context, "Enabled Immortal Back. Swipe-from-right still needs overlay permission.", Toast.LENGTH_LONG).show()
+                  Toast.makeText(context, "Enabled Immortal Back. Turn on the swipe gesture below to use it.", Toast.LENGTH_LONG).show()
                 }
               },
           ) {
@@ -619,10 +619,9 @@ private fun ClockSettingsScreen() {
             verticalAlignment = Alignment.CenterVertically,
         ) {
           Column(modifier = Modifier.weight(1f)) {
-            Text("Swipe-from-right back", color = Color.White, fontSize = 17.sp)
+            Text("Right-edge back gesture", color = Color.White, fontSize = 17.sp)
             Text(
-                "Swipe left from the right edge of the screen in any app to go back. Requires " +
-                    "\"Draw over other apps\" permission (granted below).",
+                "Enable or disable the gesture here. When enabled, swipe left from the right edge in any app to go back.",
                 color = Color(0xFF9A9A9A),
                 fontSize = 13.sp,
                 modifier = Modifier.padding(top = 2.dp),

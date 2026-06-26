@@ -181,7 +181,7 @@ internal fun Segmented(
     options.forEach { (label, value) ->
       val on = value == selected
       Surface(
-          color = if (on) Color(0xFF2E6BE6) else Color.Transparent,
+          color = if (on) MaterialTheme.colorScheme.primary else Color.Transparent,
           shape = RoundedCornerShape(10.dp),
           modifier = Modifier.tvFocusable(RoundedCornerShape(10.dp)) { onSelect(value) },
       ) {
@@ -224,7 +224,7 @@ internal fun Stepper(label: String, valueText: String, widthMin: Dp = 64.dp, onM
                 else false
               }
               .focusable(interactionSource = src)
-              .background(if (focused) Color(0x402E6BE6) else Color.Transparent)
+              .background(if (focused) MaterialTheme.colorScheme.primary.copy(alpha = 0.25f) else Color.Transparent)
               .padding(start = 18.dp, end = 6.dp, top = 6.dp, bottom = 6.dp),
       verticalAlignment = Alignment.CenterVertically,
   ) {
@@ -242,45 +242,6 @@ internal fun Stepper(label: String, valueText: String, widthMin: Dp = 64.dp, onM
   }
 }
 
-/** Circular bottom-right back button used by the fork's full-screen settings / tool screens. */
+/** Back is handled by the system/gesture path; keep this no-op for older call sites. */
 @Composable
-fun FolderBackButton(onClick: () -> Unit, modifier: Modifier = Modifier) {
-  val buttonColor = MaterialTheme.colorScheme.primary
-  Box(
-      modifier =
-          modifier
-              .fillMaxSize()
-              .padding(end = 36.dp, bottom = 32.dp)
-              .wrapContentSize(Alignment.BottomEnd),
-  ) {
-    Surface(
-        color = buttonColor,
-        shape = CircleShape,
-        onClick = onClick,
-        modifier = Modifier.size(64.dp),
-    ) {
-      Box(contentAlignment = Alignment.Center) {
-        Canvas(modifier = Modifier.size(36.dp)) {
-          val strokeWidth = 4.dp.toPx()
-          val path = Path().apply {
-            moveTo(size.width * 0.72f, size.height * 0.20f)
-            lineTo(size.width * 0.28f, size.height * 0.50f)
-            lineTo(size.width * 0.72f, size.height * 0.80f)
-          }
-          drawPath(
-              path = path,
-              color = Color.Black,
-              style = Stroke(width = strokeWidth, cap = StrokeCap.Round, join = StrokeJoin.Round),
-          )
-          drawLine(
-              color = Color.Black,
-              start = Offset(size.width * 0.68f, size.height * 0.50f),
-              end = Offset(size.width * 0.28f, size.height * 0.50f),
-              strokeWidth = strokeWidth,
-              cap = StrokeCap.Round,
-          )
-        }
-      }
-    }
-  }
-}
+fun FolderBackButton(onClick: () -> Unit, modifier: Modifier = Modifier) {}

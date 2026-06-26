@@ -23,7 +23,11 @@ object HomeGrid {
     for (s in saved) {
       if (s != null && s in keySet && seen.add(s)) out.add(s) else out.add(null)
     }
-    for (k in keys) if (seen.add(k)) out.add(k)
+    val missing = keys.filter { seen.add(it) }.toMutableList()
+    for (i in out.indices) {
+      if (out[i] == null && missing.isNotEmpty()) out[i] = missing.removeAt(0)
+    }
+    out.addAll(missing)
     while (out.isNotEmpty() && out.last() == null) out.removeAt(out.lastIndex)
     return out
   }

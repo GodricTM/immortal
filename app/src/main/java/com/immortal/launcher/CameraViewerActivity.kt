@@ -11,6 +11,7 @@ import android.app.Activity
 import android.os.Bundle
 import android.widget.MediaController
 import android.widget.VideoView
+import androidx.activity.compose.BackHandler
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.background
@@ -71,6 +72,7 @@ private fun CameraViewerScreen() {
 
   val current = playing
   if (current != null) {
+    BackHandler { playing = null }
     // Full-screen live player.
     Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
       AndroidView(
@@ -84,15 +86,6 @@ private fun CameraViewerScreen() {
           },
           modifier = Modifier.fillMaxSize(),
       )
-      Surface(
-          color = Color(0x88000000),
-          shape = RoundedCornerShape(12.dp),
-          modifier = Modifier.padding(20.dp)
-              .tvFocusable(RoundedCornerShape(12.dp), focusScale = 1f) { playing = null },
-      ) {
-        Text("‹ Back", color = Color.White, fontSize = 16.sp,
-            modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp))
-      }
     }
     return
   }

@@ -11,6 +11,7 @@ import android.os.Bundle
 import android.speech.tts.TextToSpeech
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -110,6 +111,11 @@ private fun BedtimeScreen() {
         }
       }
     } else {
+      BackHandler {
+        runCatching { tts?.stop() }
+        speaking = false
+        selected = null
+      }
       // Reader.
       Column(
           modifier = Modifier.widthIn(max = 720.dp).padding(32.dp)
@@ -122,11 +128,8 @@ private fun BedtimeScreen() {
           Text(p, color = Color(0xFFEDEDED), fontSize = 23.sp, lineHeight = 34.sp)
         }
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
-          StoryButton(if (speaking) "Stop" else "Read aloud", Color(0xFF512DA8), Modifier.weight(1f)) {
+          StoryButton(if (speaking) "Stop" else "Read aloud", Color(0xFF512DA8), Modifier.fillMaxWidth()) {
             if (speaking) { runCatching { tts?.stop() }; speaking = false } else readAloud(story)
-          }
-          StoryButton("Back to list", Color(0xFF37474F), Modifier.weight(1f)) {
-            runCatching { tts?.stop() }; speaking = false; selected = null
           }
         }
       }

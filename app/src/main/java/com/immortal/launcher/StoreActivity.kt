@@ -493,14 +493,6 @@ private fun AppDetailScreen(
               .focusGroup(),
   ) {
     Spacer(Modifier.height(56.dp))
-    Text(
-        "←  App Store",
-        color = Color(0xFF8AB4F8),
-        fontSize = 16.sp,
-        modifier =
-            Modifier.focusRequester(backFocus).tvFocusable(RoundedCornerShape(8.dp)) { onBack() },
-    )
-    Spacer(Modifier.height(22.dp))
 
     Row(verticalAlignment = Alignment.CenterVertically) {
       AppIcon(app, 96.dp)

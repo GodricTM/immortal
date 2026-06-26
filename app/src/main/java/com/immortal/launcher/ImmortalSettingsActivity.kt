@@ -12,7 +12,9 @@ import android.content.Context
 import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -20,6 +22,7 @@ import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -30,6 +33,7 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
@@ -72,6 +76,14 @@ import androidx.compose.ui.unit.sp
 import androidx.core.graphics.drawable.toBitmap
 import com.immortal.launcher.settings.SettingsDomains
 import com.immortal.launcher.ui.theme.SampleAppTheme
+import com.immortal.launcher.ui.theme.accentColorFromString
+import com.immortal.launcher.settings.BoolSpec
+import com.immortal.launcher.settings.EnumSpec
+import com.immortal.launcher.settings.IntSpec
+import com.immortal.launcher.settings.NavSpec
+import com.immortal.launcher.settings.SettingSpec
+import com.immortal.launcher.settings.SettingsDomain
+import com.immortal.launcher.settings.StringSpec
 import java.util.Locale
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -85,22 +97,43 @@ import org.json.JSONObject
 class ImmortalSettingsActivity : ComponentActivity() {
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
-    setContent { SampleAppTheme(darkTheme = true) { ImmortalSettingsScreen() } }
+    setContent {
+      var accentKey by remember {
+        mutableStateOf(ImmortalSettings.load(this@ImmortalSettingsActivity).accentColor)
+      }
+      SampleAppTheme(darkTheme = true, accentKey = accentKey) {
+        ImmortalSettingsScreen(onAccentChanged = { accentKey = it })
+      }
+    }
   }
 }
 
 @Composable
-private fun ImmortalSettingsScreen() {
+private fun ImmortalSettingsScreen(onAccentChanged: (String) -> Unit) {
   // The sub-screens (multi-room, MQTT, device health, boot apps, world clock) are now their own
   // Activities, reached by launching them from the nav rows below — one nav model.
   val context = LocalContext.current
   var settings by remember { mutableStateOf(ImmortalSettings.load(context)) }
 
+  // File picker for the custom home-screen background image (used when Background = Image /
+  // Blurred image). Restored: the 1.49 merge dropped this picker, leaving those two background
+  // options with no way to choose the photo.
+  val imagePickerLauncher =
+      rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri: android.net.Uri? ->
+        uri?.let {
+          ImmortalSettings.setBackgroundImagePath(context, it.toString())
+          settings = ImmortalSettings.load(context)
+        }
+      }
+
   // Re-read on resume so values changed in a sub-screen Activity reflect when we come back.
   val resumeOwner = LocalLifecycleOwner.current
   DisposableEffect(resumeOwner) {
     val obs = LifecycleEventObserver { _, e ->
-      if (e == Lifecycle.Event.ON_RESUME) settings = ImmortalSettings.load(context)
+      if (e == Lifecycle.Event.ON_RESUME) {
+        settings = ImmortalSettings.load(context)
+        onAccentChanged(settings.accentColor)
+      }
     }
     resumeOwner.lifecycle.addObserver(obs)
     onDispose { resumeOwner.lifecycle.removeObserver(obs) }
@@ -116,6 +149,7 @@ private fun ImmortalSettingsScreen() {
   fun apply(key: String, value: Any) {
     SettingsDomains.immortal.apply(context, JSONObject().put(key, value))
     settings = ImmortalSettings.load(context)
+    if (key == "accentColor") onAccentChanged(settings.accentColor)
   }
 
   Column(
@@ -140,15 +174,69 @@ private fun ImmortalSettingsScreen() {
           modifier = Modifier.padding(top = 6.dp),
       )
       Spacer(Modifier.size(26.dp))
+      SettingsSearchPanel()
+      Spacer(Modifier.size(26.dp))
 
       // Top-level controls render from the `immortal` domain (the same registry that drives the
       // remote). The multi-room fields are excluded here — they live behind the Multi-room sub-screen.
       SettingsList(
           SettingsDomains.immortal,
           settings,
-          exclude = setOf("multiRoomEnabled", "snapcastHost", "maPort", "maUsername", "maPassword"),
+          exclude =
+              setOf(
+                  "multiRoomEnabled",
+                  "snapcastHost",
+                  "maPort",
+                  "maUsername",
+                  "maPassword",
+                  "accentColor"),
       ) { k, v ->
         apply(k, v)
+      }
+
+      AccentColorSection(
+          selected = settings.accentColor,
+          onSelect = { apply("accentColor", it) },
+      )
+
+      // The registry's Background enum offers "Image" and "Blurred image", but choosing the
+      // actual photo is a file-picker action the generic registry can't host — so the picker
+      // lives here, shown only for those two modes. (Restored after the 1.49 merge dropped it.)
+      if (settings.backgroundType == ImmortalSettings.BG_IMAGE ||
+          settings.backgroundType == ImmortalSettings.BG_BLUR) {
+        Spacer(Modifier.size(20.dp))
+        Card {
+          Row(
+              modifier = Modifier.fillMaxWidth().padding(18.dp),
+              verticalAlignment = Alignment.CenterVertically,
+          ) {
+            Column(modifier = Modifier.weight(1f)) {
+              Text("Background image", color = Color.White, fontSize = 17.sp)
+              Text(
+                  if (settings.backgroundImagePath != null) "Image selected — tap Choose to replace it"
+                  else "No image selected yet",
+                  color = Color(0xFF9A9A9A),
+                  fontSize = 13.sp,
+                  modifier = Modifier.padding(top = 2.dp),
+              )
+            }
+            Surface(
+                color = MaterialTheme.colorScheme.primary,
+                shape = RoundedCornerShape(10.dp),
+                modifier =
+                    Modifier.tvFocusable(RoundedCornerShape(10.dp)) {
+                      imagePickerLauncher.launch("image/*")
+                    },
+            ) {
+              Text(
+                  "Choose",
+                  color = Color.White,
+                  fontSize = 15.sp,
+                  modifier = Modifier.padding(horizontal = 20.dp, vertical = 10.dp),
+              )
+            }
+          }
+        }
       }
 
       WallpaperSection()
@@ -200,6 +288,223 @@ private fun ImmortalSettingsScreen() {
     }
   }
 }
+
+private data class SettingsSearchResult(
+    val title: String,
+    val screen: String,
+    val section: String?,
+    val help: String?,
+    val activity: Class<*>,
+) {
+  fun matches(query: String): Boolean {
+    val q = query.trim().lowercase(Locale.getDefault())
+    if (q.isBlank()) return false
+    return listOf(title, screen, section.orEmpty(), help.orEmpty()).any {
+      it.lowercase(Locale.getDefault()).contains(q)
+    }
+  }
+}
+
+@Composable
+private fun SettingsSearchPanel() {
+  val context = LocalContext.current
+  var query by remember { mutableStateOf("") }
+  val allResults = remember { buildSettingsSearchIndex(context) }
+  val results = remember(query, allResults) {
+    if (query.trim().length < 2) emptyList()
+    else allResults.filter { it.matches(query) }.take(12)
+  }
+
+  Card {
+    Column(modifier = Modifier.fillMaxWidth().padding(18.dp)) {
+      Text("Search settings", color = Color.White, fontSize = 17.sp)
+      Text(
+          "Find launcher, screensaver, remote, audio, and tool settings.",
+          color = Color(0xFF9A9A9A),
+          fontSize = 13.sp,
+          modifier = Modifier.padding(top = 2.dp, bottom = 12.dp),
+      )
+      OutlinedTextField(
+          value = query,
+          onValueChange = { query = it },
+          singleLine = true,
+          placeholder = { Text("Search all settings") },
+          keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+          modifier = Modifier.fillMaxWidth(),
+      )
+      if (query.trim().length >= 2) {
+        Spacer(Modifier.size(12.dp))
+        if (results.isEmpty()) {
+          Text("No matching settings", color = Color(0xFF9A9A9A), fontSize = 14.sp)
+        } else {
+          results.forEachIndexed { i, result ->
+            if (i > 0) Divider()
+            SearchResultRow(result) {
+              context.startActivity(Intent(context, result.activity))
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+@Composable
+private fun SearchResultRow(result: SettingsSearchResult, onOpen: () -> Unit) {
+  Row(
+      modifier =
+          Modifier.fillMaxWidth().tvFocusableRow { onOpen() }
+              .padding(top = 12.dp, bottom = 12.dp),
+      verticalAlignment = Alignment.CenterVertically,
+  ) {
+    Column(modifier = Modifier.weight(1f)) {
+      Text(result.title, color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+      Text(
+          listOfNotNull(result.screen, result.section).joinToString(" - "),
+          color = MaterialTheme.colorScheme.primary,
+          fontSize = 13.sp,
+          modifier = Modifier.padding(top = 2.dp),
+      )
+      result.help?.takeIf { it.isNotBlank() }?.let {
+        Text(
+            it,
+            color = Color(0xFF9A9A9A),
+            fontSize = 12.sp,
+            maxLines = 2,
+            modifier = Modifier.padding(top = 2.dp),
+        )
+      }
+    }
+    Text("›", color = Color(0xFF7C7C7C), fontSize = 24.sp)
+  }
+}
+
+private fun buildSettingsSearchIndex(context: Context): List<SettingsSearchResult> =
+    buildList {
+      addDomain(SettingsDomains.immortal, ImmortalSettingsActivity::class.java, context)
+      addDomain(SettingsDomains.screensaver, ScreensaverSettingsActivity::class.java, context)
+      addDomain(SettingsDomains.calendar, ScreensaverSettingsActivity::class.java, context)
+      addDomain(SettingsDomains.quickbar, ImmortalSettingsActivity::class.java, context)
+      addDomain(SettingsDomains.mqtt, MqttActivity::class.java, context)
+      add(SettingsSearchResult("Clock screensaver", "Clock", "Clock", "Digital clock, flip clock, and activation settings.", ClockSettingsActivity::class.java))
+      add(SettingsSearchResult("Back gesture", "Clock", "Back gesture", "Enable or disable the right-edge back gesture that replaces on-screen back buttons.", ClockSettingsActivity::class.java))
+      add(SettingsSearchResult("Welcome overlay", "Welcome", "Screensaver", "Greeting, voice, TTS, text size, and overlay timing.", WelcomeSettingsActivity::class.java))
+      add(SettingsSearchResult("Sleep schedule", "Sleep", "Screensaver", "Overnight sleep and wake behaviour.", SleepSettingsActivity::class.java))
+      add(SettingsSearchResult("Ambient sounds", "Sounds", "Audio", "Chimes and sound settings.", ChimeSettingsActivity::class.java))
+      add(SettingsSearchResult("Countdowns", "Countdowns", "Home screen", "Countdown event chips shown on the launcher and dashboard.", CountdownSettingsActivity::class.java))
+      add(SettingsSearchResult("World clock locations", "Immortal", "World clock", "Pick which cities the World Clock widget shows.", WorldClockActivity::class.java))
+      add(SettingsSearchResult("Phone remote", "Remote", "Remote", "Pair a phone remote and control the Portal from a browser.", RemotePairActivity::class.java))
+      add(SettingsSearchResult("Start on boot", "Immortal", "Start on boot", "Choose apps Immortal relaunches after reboot.", BootAppsActivity::class.java))
+      add(SettingsSearchResult("Device health", "Immortal", "Device", "Diagnostics, permissions, and setup status.", DeviceHealthActivity::class.java))
+      add(SettingsSearchResult("Multi-room audio", "Immortal", "Audio", "Snapcast and Music Assistant settings.", MultiRoomActivity::class.java))
+    }.distinctBy { "${it.screen}:${it.section}:${it.title}" }
+
+private fun <S> MutableList<SettingsSearchResult>.addDomain(
+    domain: SettingsDomain<S>,
+    activity: Class<*>,
+    context: Context,
+) {
+  domain.specs.forEach { spec ->
+    val info = spec.searchInfo() ?: return@forEach
+    val section = domain.sections[spec.key]
+    add(
+        SettingsSearchResult(
+            title = info.first,
+            screen = domain.title,
+            section = section,
+            help = info.second,
+            activity = activity,
+        ))
+  }
+}
+
+private fun <S> SettingSpec<S>.searchInfo(): Pair<String, String?>? =
+    when (this) {
+      is BoolSpec<*> -> title to help
+      is IntSpec<*> -> title to help
+      is EnumSpec<*> -> title to help
+      is StringSpec<*> -> title to help
+      is NavSpec<*> -> title to help
+      else -> null
+    }
+
+@Composable
+private fun AccentColorSection(selected: String, onSelect: (String) -> Unit) {
+  Spacer(Modifier.size(4.dp))
+  SectionLabel("Accent colour")
+  Card {
+    Column(modifier = Modifier.fillMaxWidth().padding(18.dp)) {
+      Text("Theme accent", color = Color.White, fontSize = 17.sp)
+      Text(
+          "Used for active controls, settings buttons, and launcher highlights.",
+          color = Color(0xFF9A9A9A),
+          fontSize = 13.sp,
+          modifier = Modifier.padding(top = 2.dp, bottom = 14.dp),
+      )
+      FlowRow(
+          horizontalArrangement = Arrangement.spacedBy(12.dp),
+          verticalArrangement = Arrangement.spacedBy(12.dp),
+      ) {
+        accentOptions().forEach { (key, label) ->
+          AccentSwatch(
+              label = label,
+              color = accentColorFromString(key),
+              selected = key == selected,
+              onClick = { onSelect(key) },
+          )
+        }
+      }
+    }
+  }
+  Spacer(Modifier.size(22.dp))
+}
+
+@Composable
+private fun AccentSwatch(label: String, color: Color, selected: Boolean, onClick: () -> Unit) {
+  Column(
+      horizontalAlignment = Alignment.CenterHorizontally,
+      modifier = Modifier.widthIn(min = 72.dp).tvFocusable(RoundedCornerShape(14.dp)) { onClick() },
+  ) {
+    androidx.compose.foundation.layout.Box(
+        modifier =
+            Modifier.size(48.dp)
+                .clip(RoundedCornerShape(14.dp))
+                .background(color)
+                .border(
+                    width = if (selected) 3.dp else 1.dp,
+                    color = if (selected) Color.White else Color(0x33FFFFFF),
+                    shape = RoundedCornerShape(14.dp),
+                ),
+    )
+    Text(
+        label,
+        color = if (selected) Color.White else Color(0xFFBBBBBB),
+        fontSize = 12.sp,
+        maxLines = 1,
+        modifier = Modifier.padding(top = 6.dp),
+    )
+  }
+}
+
+private fun accentOptions(): List<Pair<String, String>> =
+    listOf(
+        ImmortalSettings.ACCENT_BLUE to "Blue",
+        ImmortalSettings.ACCENT_GREEN to "Green",
+        ImmortalSettings.ACCENT_PURPLE to "Purple",
+        ImmortalSettings.ACCENT_ORANGE to "Orange",
+        ImmortalSettings.ACCENT_PINK to "Pink",
+        ImmortalSettings.ACCENT_TEAL to "Teal",
+        ImmortalSettings.ACCENT_RED to "Red",
+        ImmortalSettings.ACCENT_YELLOW to "Yellow",
+        ImmortalSettings.ACCENT_INDIGO to "Indigo",
+        ImmortalSettings.ACCENT_CYAN to "Cyan",
+        ImmortalSettings.ACCENT_LIME to "Lime",
+        ImmortalSettings.ACCENT_AMBER to "Amber",
+        ImmortalSettings.ACCENT_DEEP_PURPLE to "Deep",
+        ImmortalSettings.ACCENT_BROWN to "Brown",
+        ImmortalSettings.ACCENT_CORAL to "Coral",
+        ImmortalSettings.ACCENT_MINT to "Mint",
+    )
 
 /**
  * Nav row on the main settings page that opens the Multi-room audio subpage. Install-
@@ -287,20 +592,6 @@ internal fun MultiRoomScreen(onBack: () -> Unit) {
               .padding(horizontal = 28.dp, vertical = 32.dp),
   ) {
     Column(modifier = Modifier.widthIn(max = 1100.dp).focusGroup()) {
-      Surface(
-          color = Color(0xFF1C1C1E),
-          shape = RoundedCornerShape(12.dp),
-          modifier =
-              Modifier.focusRequester(firstFocus).tvFocusable(RoundedCornerShape(12.dp)) { onBack() },
-      ) {
-        Text(
-            "‹  Back",
-            color = Color.White,
-            fontSize = 16.sp,
-            modifier = Modifier.padding(horizontal = 18.dp, vertical = 10.dp),
-        )
-      }
-      Spacer(Modifier.size(18.dp))
 
       Text(
           "Multi-room audio",
@@ -381,7 +672,7 @@ internal fun MultiRoomScreen(onBack: () -> Unit) {
                 modifier = Modifier.weight(1f),
             )
             Surface(
-                color = Color(0xFF2E6BE6),
+                color = MaterialTheme.colorScheme.primary,
                 shape = RoundedCornerShape(10.dp),
                 modifier =
                     Modifier.padding(start = 12.dp).tvFocusable(RoundedCornerShape(10.dp)) {
@@ -456,7 +747,7 @@ internal fun MultiRoomScreen(onBack: () -> Unit) {
               verticalAlignment = Alignment.CenterVertically,
           ) {
             Surface(
-                color = Color(0xFF2E6BE6),
+                color = MaterialTheme.colorScheme.primary,
                 shape = RoundedCornerShape(10.dp),
                 modifier =
                     Modifier.tvFocusable(RoundedCornerShape(10.dp)) { MaControl.testLogin(context) },
@@ -504,7 +795,7 @@ internal fun MultiRoomScreen(onBack: () -> Unit) {
           modifier = Modifier.padding(top = 10.dp, start = 4.dp, end = 4.dp),
       )
     }
-  }
+    }
 }
 
 /**
@@ -651,20 +942,6 @@ internal fun MqttScreen(onBack: () -> Unit) {
               .padding(horizontal = 28.dp, vertical = 32.dp),
   ) {
     Column(modifier = Modifier.widthIn(max = 1100.dp).focusGroup()) {
-      Surface(
-          color = Color(0xFF1C1C1E),
-          shape = RoundedCornerShape(12.dp),
-          modifier =
-              Modifier.focusRequester(firstFocus).tvFocusable(RoundedCornerShape(12.dp)) { onBack() },
-      ) {
-        Text(
-            "‹  Back",
-            color = Color.White,
-            fontSize = 16.sp,
-            modifier = Modifier.padding(horizontal = 18.dp, vertical = 10.dp),
-        )
-      }
-      Spacer(Modifier.size(18.dp))
 
       Text("Home Assistant", color = Color.White, fontSize = 34.sp, fontWeight = FontWeight.SemiBold)
       Text(
@@ -735,7 +1012,7 @@ internal fun MqttScreen(onBack: () -> Unit) {
                 modifier = Modifier.weight(1f),
             )
             Surface(
-                color = Color(0xFF2E6BE6),
+                color = MaterialTheme.colorScheme.primary,
                 shape = RoundedCornerShape(10.dp),
                 modifier =
                     Modifier.padding(start = 12.dp).tvFocusable(RoundedCornerShape(10.dp)) { apply() },
@@ -869,7 +1146,7 @@ internal fun MqttScreen(onBack: () -> Unit) {
           modifier = Modifier.padding(top = 10.dp, start = 4.dp, end = 4.dp),
       )
     }
-  }
+    }
 }
 
 /** A curated set of cities for the world-clock picker (label → IANA tz id). */
@@ -913,20 +1190,6 @@ internal fun WorldClockScreen(onBack: () -> Unit) {
               .padding(horizontal = 28.dp, vertical = 32.dp),
   ) {
     Column(modifier = Modifier.widthIn(max = 1100.dp).focusGroup()) {
-      Surface(
-          color = Color(0xFF1C1C1E),
-          shape = RoundedCornerShape(12.dp),
-          modifier =
-              Modifier.focusRequester(firstFocus).tvFocusable(RoundedCornerShape(12.dp)) { onBack() },
-      ) {
-        Text(
-            "‹  Back",
-            color = Color.White,
-            fontSize = 16.sp,
-            modifier = Modifier.padding(horizontal = 18.dp, vertical = 10.dp),
-        )
-      }
-      Spacer(Modifier.size(18.dp))
       Text("World clock", color = Color.White, fontSize = 34.sp, fontWeight = FontWeight.SemiBold)
       Text(
           "Choose locations for the World Clock widget. The first four (in the order you pick them) are shown.",
@@ -981,7 +1244,7 @@ internal fun WorldClockScreen(onBack: () -> Unit) {
           modifier = Modifier.padding(top = 10.dp, start = 4.dp, end = 4.dp),
       )
     }
-  }
+    }
 }
 
 private data class BootAppOption(val pkg: String, val label: String, val icon: ImageBitmap)
@@ -1063,19 +1326,6 @@ internal fun DeviceHealthScreen(onBack: () -> Unit) {
               .padding(horizontal = 28.dp, vertical = 32.dp),
   ) {
     Column(modifier = Modifier.widthIn(max = 1100.dp).focusGroup()) {
-      Surface(
-          color = Color(0xFF1C1C1E),
-          shape = RoundedCornerShape(12.dp),
-          modifier = Modifier.tvFocusable(RoundedCornerShape(12.dp)) { onBack() },
-      ) {
-        Text(
-            "‹  Back",
-            color = Color.White,
-            fontSize = 16.sp,
-            modifier = Modifier.padding(horizontal = 18.dp, vertical = 10.dp),
-        )
-      }
-      Spacer(Modifier.size(18.dp))
 
       Text("Device health", color = Color.White, fontSize = 34.sp, fontWeight = FontWeight.SemiBold)
       Text(
@@ -1165,7 +1415,7 @@ internal fun DeviceHealthScreen(onBack: () -> Unit) {
         )
       }
     }
-  }
+    }
 }
 
 @Composable
@@ -1279,19 +1529,6 @@ internal fun BootAppsScreen(
               .padding(horizontal = 28.dp, vertical = 32.dp),
   ) {
     Column(modifier = Modifier.widthIn(max = 1100.dp).focusGroup()) {
-      Surface(
-          color = Color(0xFF1C1C1E),
-          shape = RoundedCornerShape(12.dp),
-          modifier =
-              Modifier.focusRequester(firstFocus).tvFocusable(RoundedCornerShape(12.dp)) { onBack() },
-      ) {
-        Text(
-            "‹  Back",
-            color = Color.White,
-            fontSize = 16.sp,
-            modifier = Modifier.padding(horizontal = 18.dp, vertical = 10.dp),
-        )
-      }
       Spacer(Modifier.size(18.dp))
 
       Text("Start on boot", color = Color.White, fontSize = 34.sp, fontWeight = FontWeight.SemiBold)
@@ -1350,7 +1587,7 @@ internal fun BootAppsScreen(
           modifier = Modifier.padding(top = 10.dp, start = 4.dp, end = 4.dp),
       )
     }
-  }
+    }
 }
 
 @Composable
@@ -1464,7 +1701,7 @@ private fun WallpaperSwatch(
                 .clip(RoundedCornerShape(16.dp))
                 .border(
                     width = if (selected) 3.dp else 1.dp,
-                    color = if (selected) Color(0xFF2E6BE6) else Color(0x33FFFFFF),
+                    color = if (selected) MaterialTheme.colorScheme.primary else Color(0x33FFFFFF),
                     shape = RoundedCornerShape(16.dp),
                 ),
     ) {

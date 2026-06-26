@@ -147,7 +147,7 @@ import java.io.File
 import kotlinx.coroutines.launch
 
 @Composable
-private fun ClockIcon() {
+internal fun ClockIcon() {
   Canvas(modifier = Modifier.size(30.dp)) {
     val w = size.minDimension
     val s = w * 0.075f
@@ -185,7 +185,7 @@ private fun ClockIcon() {
 
 /** White crescent moon glyph for the header sleep button. */
 @Composable
-private fun MoonIcon() {
+internal fun MoonIcon() {
   val path = remember { PathParser().parsePathString(ICON_MOON).toPath() }
   Canvas(modifier = Modifier.size(28.dp)) {
     scale(size.minDimension / 24f) {
@@ -196,7 +196,7 @@ private fun MoonIcon() {
 
 /** White sun glyph for the header brightness button. */
 @Composable
-private fun SunIcon() {
+internal fun SunIcon() {
   Canvas(modifier = Modifier.size(28.dp)) {
     val w = size.minDimension
     val s = w * 0.08f
@@ -216,7 +216,7 @@ private fun SunIcon() {
 
 /** White speaker glyph for the header volume button. */
 @Composable
-private fun VolumeIcon() {
+internal fun VolumeIcon() {
   Canvas(modifier = Modifier.size(28.dp)) {
     val w = size.minDimension
     val s = w * 0.08f
@@ -241,7 +241,8 @@ private fun VolumeIcon() {
 /** Bottom-right Manage / Done toggle. */
 @Composable
 
-internal fun DashboardPage() {
+internal fun DashboardPage(onDismiss: () -> Unit = {}) {
+  BackHandler { onDismiss() }
   val context = androidx.compose.ui.platform.LocalContext.current
   val use24 = remember { ImmortalSettings.use24HourClock(context) }
   var now by remember { mutableStateOf(java.util.Date()) }
@@ -267,6 +268,15 @@ internal fun DashboardPage() {
               .padding(horizontal = 8.dp),
       horizontalAlignment = Alignment.CenterHorizontally,
   ) {
+    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+      Surface(
+          color = Color(0x33FFFFFF),
+          shape = androidx.compose.foundation.shape.CircleShape,
+          modifier = Modifier.size(40.dp).tvFocusable(androidx.compose.foundation.shape.CircleShape) { onDismiss() },
+      ) {
+          Box(contentAlignment = Alignment.Center) { Text("X", color = Color.White, fontSize = 18.sp) }
+      }
+    }
     Spacer(Modifier.size(8.dp))
     if (clockOn) {
       Text(timeFmt.format(now), color = Color.White, fontSize = 96.sp, fontWeight = FontWeight.Bold)
@@ -373,8 +383,8 @@ private fun WidgetToggleChip(label: String, active: Boolean, onClick: () -> Unit
   }
 }
 
-/** Category filter tabs: "All" plus each folder. Selecting one filters the grid to
- * that folder's apps; "All" restores the normal home view. */
+/** Category filter tabs. The launcher uses the fork's top-level set:
+ * All, Apps, Tools, and Settings. */
 @Composable
 
 private fun CategoryTabs(categories: List<String>, selected: String?, onSelect: (String?) -> Unit) {
@@ -411,7 +421,7 @@ private fun TabChip(label: String, active: Boolean, onClick: () -> Unit) {
 @Composable
 private fun CountdownChips(version: Int = 0) {
   val context = androidx.compose.ui.platform.LocalContext.current
-  val events = remember(version) { CountdownConfig.loadSorted(context) }
+  val events = remember(version) { CountdownConfig.loadSorted(context).filter { it.daysUntil() >= 0 } }
   if (events.isEmpty()) return
   Row(
       modifier =
@@ -461,7 +471,9 @@ internal fun HomeControlStrip(
   val context = androidx.compose.ui.platform.LocalContext.current
   var nowTick by remember { mutableStateOf(System.currentTimeMillis()) }
   LaunchedEffect(Unit) { while (true) { nowTick = System.currentTimeMillis(); delay(1000) } }
-  val countdowns = remember(countdownVersion) { CountdownConfig.loadSorted(context) }
+  val countdowns = remember(countdownVersion) {
+    CountdownConfig.loadSorted(context).filter { it.daysUntil() >= 0 }
+  }
   // Re-read once per second so timers the background receiver removed disappear too.
   val timers = remember(timerVersion, nowTick / 1000) {
     TimerConfig.load(context).sortedBy { it.endAtMillis }
@@ -532,7 +544,7 @@ private fun formatTimerRemaining(ms: Long): String {
 /** Modal to add a named kitchen timer: preset names (each with a sensible default
  *  duration) + a minute picker. */
 @Composable
-private fun AddTimerOverlay(onDismiss: () -> Unit, onAdd: (String, Long) -> Unit) {
+internal fun AddTimerOverlay(onDismiss: () -> Unit, onAdd: (String, Long) -> Unit) {
   var label by remember { mutableStateOf("") }
   var minutes by remember { mutableStateOf(5) }
   // Common kitchen presets → (name, default minutes).
@@ -743,7 +755,7 @@ private fun SystemStatsWidget() {
 }
 
 @Composable
-private fun NewFolderButton(modifier: Modifier = Modifier, onClick: () -> Unit) {
+internal fun NewFolderButton(modifier: Modifier = Modifier, onClick: () -> Unit) {
   Surface(
       color = MaterialTheme.colorScheme.primary,
       shape = androidx.compose.foundation.shape.CircleShape,
@@ -2708,7 +2720,7 @@ private fun SkyBackground() {
  *  we are (midnight → midnight). The fill is tinted with the current sky colour so it
  *  matches the Sky background — pink at dawn, blue midday, orange at dusk, dim at night. */
 @Composable
-private fun DayProgressBar(modifier: Modifier = Modifier) {
+internal fun DayProgressBar(modifier: Modifier = Modifier) {
   val context = androidx.compose.ui.platform.LocalContext.current
   val sun by produceState<Weather.SunTimes?>(initialValue = null) {
     value = withContext(Dispatchers.IO) { Weather.fetchSunTimes(context) }
@@ -2806,7 +2818,7 @@ private fun currentMinuteOfDay(): Int {
   return c.get(java.util.Calendar.HOUR_OF_DAY) * 60 + c.get(java.util.Calendar.MINUTE)
 }
 
-private fun minuteOfDay(epochMillis: Long): Int {
+internal fun minuteOfDay(epochMillis: Long): Int {
   val c = java.util.Calendar.getInstance().apply { timeInMillis = epochMillis }
   return c.get(java.util.Calendar.HOUR_OF_DAY) * 60 + c.get(java.util.Calendar.MINUTE)
 }
@@ -3068,7 +3080,11 @@ private fun CalendarEventRow(event: CalendarEvent) {
 // ---- Fork home integration points (called from HomeActivity) -----------------
 
 @Composable
-internal fun ForkToolTile(toolId: String, onShowOverlay: (String) -> Unit) {
+internal fun ForkToolTile(
+    toolId: String,
+    dailyTileMode: String? = null,
+    onShowOverlay: (String) -> Unit,
+) {
   val context = androidx.compose.ui.platform.LocalContext.current
   when (toolId) {
     TOOL_ISS -> IssTile(onClick = { onShowOverlay(TOOL_ISS) })
@@ -3088,10 +3104,11 @@ internal fun ForkToolTile(toolId: String, onShowOverlay: (String) -> Unit) {
       runCatching { context.startActivity(Intent(context, CameraViewerActivity::class.java)) }
     })
     TOOL_DAILY -> {
-      val mode = remember { ImmortalSettings.load(context).dailyTileMode }
+      val mode = dailyTileMode ?: ImmortalSettings.load(context).dailyTileMode
       DailyTile(mode = mode, onClick = { onShowOverlay(TOOL_DAILY) })
     }
     TOOL_WHATSNEW -> WhatChangedTile(onClick = { onShowOverlay(TOOL_WHATSNEW) })
+    TOOL_REQUEST -> RequestAppTile()
     TOOL_REPORTAL -> ReportalTile(onClick = {
       runCatching {
         context.startActivity(
@@ -3103,7 +3120,11 @@ internal fun ForkToolTile(toolId: String, onShowOverlay: (String) -> Unit) {
 }
 
 @Composable
-internal fun ForkToolOverlay(toolId: String, onDismiss: () -> Unit) {
+internal fun ForkToolOverlay(
+    toolId: String,
+    dailyTileMode: String? = null,
+    onDismiss: () -> Unit,
+) {
   when (toolId) {
     TOOL_ISS -> IssOverlay(onDismiss = onDismiss)
     TOOL_AURORA -> AuroraOverlay(onDismiss = onDismiss)
@@ -3115,7 +3136,7 @@ internal fun ForkToolOverlay(toolId: String, onDismiss: () -> Unit) {
     TOOL_NOWPLAYING -> NowPlayingOverlay(onDismiss = onDismiss)
     TOOL_DAILY -> {
       val context = androidx.compose.ui.platform.LocalContext.current
-      val mode = remember { ImmortalSettings.load(context).dailyTileMode }
+      val mode = dailyTileMode ?: ImmortalSettings.load(context).dailyTileMode
       DailyOverlay(mode = mode, onDismiss = onDismiss)
     }
     TOOL_WHATSNEW -> WhatChangedOverlay(onDismiss = onDismiss)
@@ -3127,6 +3148,7 @@ internal fun ForkToolCategoryOverlay(
     category: String,
     editMode: Boolean,
     onToggleEdit: () -> Unit,
+    dailyTileMode: String? = null,
     onShowOverlay: (String) -> Unit,
     onDismiss: () -> Unit,
 ) {
@@ -3144,7 +3166,7 @@ internal fun ForkToolCategoryOverlay(
       toolIds = toolsInCat.map { it.id },
       editMode = editMode,
       onToggleEdit = onToggleEdit,
-      renderLive = { id -> ForkToolTile(id, onShowOverlay) },
+      renderLive = { id -> ForkToolTile(id, dailyTileMode = dailyTileMode, onShowOverlay = onShowOverlay) },
       categories = categories,
       addable = addable,
       onMove = { id, cat -> UserLayout.setToolCategory(context, id, cat) },
@@ -3170,5 +3192,3 @@ internal fun ForkHomeBackground(backgroundType: String) {
     }
   }
 }
-
-
