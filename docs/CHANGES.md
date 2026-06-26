@@ -225,3 +225,88 @@ and clear it before the new debug build could install.
   issue tile, `Tips` daily card.
 - **Wave to advance (experimental)** — `GestureCamera` Camera2 frame-differencing wired
   into `PhotoFrameController` behind `ScreensaverConfig.gestureWave` (off by default).
+
+## 19. Chimes, soundscape, and welcome overlay (1.45+)
+
+**Files:** `ChimeConfig.kt`, `ChimePlayer.kt`, `ChimeScheduler.kt`,
+`ChimeReceiver.kt`, `ChimeSettingsActivity.kt`, `SoundscapePlayer.kt`,
+`WelcomeConfig.kt`, `WelcomeSettingsActivity.kt`, `res/raw/chime.mp3`,
+`res/raw/golden_sunrise.mp3`, `res/raw/golden_sunrise_2.mp3`,
+`res/raw/golden_sunset.mp3`, `res/raw/ping.mp3`
+
+- **Hourly chimes** — soft chime on the hour, spoken time via TTS, golden-hour
+  tone at sunrise/sunset, per-cue volume, quiet hours. 5 sound assets bundled.
+- **Ambient soundscape** — procedural rain/ocean/fireplace/white/pink/brown
+  noise (no audio assets, synthesized on-device).
+- **Welcome-back overlay** — time-of-day greeting with TTS, customizable text
+  sizes/colors/opacity, voice picker.
+
+## 20. Timers, countdowns, sleep, camera, intercom (1.45+)
+
+**Files:** `TimerConfig.kt`, `TimerScheduler.kt`, `TimerReceiver.kt`,
+`CountdownConfig.kt`, `CountdownSettingsActivity.kt`, `SleepSettingsActivity.kt`,
+`CameraConfig.kt`, `CameraViewerActivity.kt`, `CameraPreviewActivity.kt`,
+`IntercomActivity.kt`, `LanAudio.kt`, `NotesConfig.kt`, `AudioNote.kt`,
+`res/drawable/timer_icon.png`
+
+- **Kitchen timers** — named multi-timers as home chips, re-armed on boot.
+- **Countdowns** — countdown event chips (birthdays, trips).
+- **Sleep timer** — turn off after a set time, with live countdown.
+- **RTSP camera viewer** — saved camera streams via MediaPlayer.
+- **LAN intercom** — one-way PCM-over-TCP audio between Portals.
+- **Audio notes** — typed sticky note + voice memo on the home screen.
+
+## 21. Home tools and content (1.45+)
+
+**Files:** `Transit.kt`, `LampActivity.kt`, `DailyContent.kt`,
+`TimeProgress.kt`, `Stories.kt`, `BedtimeStoryActivity.kt`,
+`res/drawable/alexa_icon.png`
+
+- **Dublin transit departures** — SmartDublin RTPI, keyless.
+- **Lamp mode** — full-screen warm-white panel.
+- **Daily content tile** — bundled daily quote/word/trivia.
+- **Time progress** — week/month/year progress bars + year dots.
+- **Bedtime stories** — public-domain tales with TTS narration.
+
+## 22. Registry migration — all fork features (1.52)
+
+**Files:** `settings/SettingsDomains.kt`, `ChimeConfig.kt`,
+`DigitalClockConfig.kt`, `SunriseConfig.kt`, `WelcomeConfig.kt`,
+`ChimeSettingsActivity.kt`, `ClockSettingsActivity.kt`,
+`SunriseSettingsActivity.kt`, `WelcomeSettingsActivity.kt`,
+`SleepSettingsActivity.kt`, `settings/SettingsDomainTest.kt`,
+`ImmortalSettingsActivity.kt`
+
+Adopted upstream's declarative settings registry for all fork features:
+
+- **4 new domains** added to `SettingsDomains.kt`: `chime` (11 specs),
+  `digitalclock` (10 specs), `sunrise` (5 specs), `welcome` (5 specs).
+- **4 tripwire tests** added: `*Registry_coversEveryPersistedField` for each
+  new domain — breaks the build if a new field ships without a spec.
+- **Side effects moved to `onApplied`** — `ChimeScheduler.reschedule`,
+  `SettingsGuard.reaffirmScreensaver`, `SunriseScheduler.reschedule` fire once
+  per batch, not inline per toggle.
+- **Activities refactored** — `ChimeSettingsActivity`, `ClockSettingsActivity`,
+  `WelcomeSettingsActivity`, `SleepSettingsActivity` now route writes through
+  `domain.apply()` instead of direct `SharedPreferences` calls.
+- **Per-field clamping setters** added to `SunriseConfig` (was bulk `save()`);
+  `ChimeConfig` quiet-time setters changed from clamp to wrap.
+- **Copyright headers fixed** — 47 files corrected from Meta to Starbright Lab
+  per AGENTS.md hard rule.
+
+## 23. Portal Overlays added to catalog (1.52)
+
+**Files:** `catalog.json`, `app/src/main/assets/catalog.json`
+
+Added Portal Overlays (com.portal.overlays) to the Utilities & Power Tools
+category. A floating HUD companion app: widgets, notifications, ticker, status
+strip, floating nav, Now Playing. Links to GitHub release APK.
+
+## 24. Companion TTS engine repo (1.52)
+
+**Repo:** https://github.com/GodricTM/sherpa-onnx-tts-engine
+
+Published the Sherpa-ONNX TTS engine as a standalone companion app. 14 Kotlin
+source files + ARM64 native libs (onnxruntime + sherpa-onnx-jni). 28 English
+Kokoro voices + Romanian Piper voice, fully offline. Registers as a standard
+Android TTS engine.

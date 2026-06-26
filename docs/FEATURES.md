@@ -406,3 +406,254 @@ hardware is unverified — keep it opt-in.
 The always-on digital clock screensaver now drifts along a slow, invisible
 Lissajous path (`AntiBurnIn.kt`) so the lit pixels of a screen that's never off
 share the load over time and don't ghost in. Pure and unit-tested.
+
+---
+
+## 24. Hourly Chimes
+
+**Where:** Settings folder → "Sounds"
+
+Gentle ambient audio cues, all off by default:
+
+- **Hourly chime** — a soft chime on the hour (`res/raw/chime.mp3`)
+- **Spoken time** — "It's three o'clock" on the hour, via TTS
+- **Golden-hour tone** — a single sound at sunrise and sunset
+- **Per-cue volume** — each cue has its own volume slider (0-100%)
+- **Quiet hours** — silence all cues inside a nightly window (default 22:00-08:00)
+- **Ping the other room** — ring volume for the LAN ping feature
+
+**How it works:** `ChimeConfig` holds the settings (persisted as a `Settings`
+snapshot in the declarative registry — 11 specs in the `chime` domain).
+`ChimeScheduler` arms `AlarmManager` exact alarms for the next hourly/golden
+cue; `ChimeReceiver` fires and calls `ChimePlayer`. The TTS voice picker
+enumerates installed voices (including the companion sherpa-onnx engine).
+Settings render on-device via `SettingsList` from the registry, and side
+effects (re-arm) fire once per batch in `onApplied`.
+
+---
+
+## 25. Ambient Soundscape
+
+**Where:** Settings → Screensaver → "Ambient sound"
+
+Procedurally synthesized ambient sound played while the screensaver shows —
+no audio assets, no streaming, fully offline:
+
+- Rain, Ocean waves, Fireplace, White noise, Pink noise, Brown noise
+- Independent volume slider (0-100%)
+
+**How it works:** `SoundscapePlayer.kt` generates the audio in real-time using
+filtered noise and oscillators. The setting (`soundscape` enum + volume int)
+lives in the `screensaver` registry domain.
+
+---
+
+## 26. Welcome-Back Overlay
+
+**Where:** Settings folder → "Welcome" (also toggled in Screensaver settings)
+
+When the screensaver starts (presence detected, room wakes), a brief overlay
+shows a time-of-day greeting, the current time, and the date before fading into
+the photos. Tap to dismiss early.
+
+- **Customizable greetings** per time-of-day (night/morning/afternoon/evening)
+- **User name** appended to the greeting
+- **TTS** — speak the greeting through Android TTS (with voice picker)
+- **Text sizes, colors, opacity, letter spacing** — all customizable
+- **Show/hide** individual elements (greeting, clock, date)
+
+**How it works:** `WelcomeConfig` holds 19 settings. The 5 scalar fields
+(duration, show greeting/clock/date, enable TTS) are registry specs in the
+`welcome` domain; the Float/Color/String fields stay in the bespoke
+`WelcomeSettingsActivity` (no `FloatSpec` in the registry, and color pickers /
+text editors / voice pickers are bespoke UI).
+
+---
+
+## 27. Kitchen Timers
+
+**Where:** Home grid → Tools → timer chips appear on the home screen
+
+Named multi-timer support — pasta, oven, tea — each running simultaneously as
+a chip on the home screen. When a timer elapses it rings through the chime
+system. Running timers survive the launcher being killed or the device
+rebooting.
+
+**How it works:** `TimerConfig` stores timers as JSON in SharedPrefs.
+`TimerScheduler` arms `AlarmManager` alarms; `TimerReceiver` fires and plays
+the chime. Timers are re-armed on boot via `TimerConfig.rearmAll()`.
+
+---
+
+## 28. Countdown Event Chips
+
+**Where:** Settings folder → "Countdowns"
+
+User-defined countdown events shown as chips on the home screen ("Birthday -
+12 days"). Events can repeat yearly (birthdays, anniversaries) or be one-off
+(a trip). Add/remove from the countdown settings screen.
+
+**How it works:** `CountdownConfig` stores events as a JSON array in
+SharedPrefs. Each `Event` computes `daysUntil` from the current date. The
+collection type stays bespoke (the registry models scalars, not lists).
+
+---
+
+## 29. Sleep Timer
+
+**Where:** Settings folder → "Sleep"
+
+Turn the screensaver off after a set time. A live countdown shows the remaining
+time, with start/stop buttons. When the timer reaches zero, Immortal pauses
+audio, closes itself, disables the screensaver, and locks the screen.
+
+- **Sleep after** — 1-240 minutes (stepper)
+- **Pause audio before sleeping** — toggle
+- **Close Immortal before sleeping** — toggle
+
+**How it works:** `SleepSettingsActivity` routes all writes through the
+`screensaver` registry domain (the sleep fields live in `ScreensaverConfig`).
+`SleepScheduler` arms the countdown; on fire, it executes the configured
+shutdown sequence.
+
+---
+
+## 30. RTSP Camera Viewer
+
+**Where:** Home grid → Tools → "Cameras"
+
+Saved RTSP camera streams for a kitchen Portal showing the driveway or door cam.
+URLs are plain `rtsp://user:pass@host:554/path` strings, played by Android's
+built-in MediaPlayer (which supports RTSP natively — no extra library or GMS
+needed).
+
+**How it works:** `CameraConfig` stores cameras as a JSON array. The collection
+type stays bespoke. `CameraViewerActivity` lists saved cameras;
+`CameraPreviewActivity` plays the selected stream.
+
+---
+
+## 31. LAN Intercom
+
+**Where:** Home grid → Tools → "Intercom"
+
+One-way audio intercom / baby monitor over the local network. PCM audio
+streamed over TCP from one Portal to another. No server, no cloud, no account.
+
+**How it works:** `LanAudio.kt` handles the TCP socket and PCM capture/playback.
+`IntercomActivity` provides the UI.
+
+---
+
+## 32. Daily Content Tile
+
+**Where:** Settings → Immortal → "Daily tile"
+
+A home-screen tile that cycles through bundled daily content:
+
+- **Quote** — a daily inspirational quote
+- **Word** — a daily word definition
+- **Trivia** — a daily trivia fact
+
+All content is bundled in the app — no network needed.
+
+---
+
+## 33. Dublin Transit Departures
+
+**Where:** Home grid → Tools → "Transit"
+
+Live Dublin bus/Luas/train departures from SmartDublin RTPI. Enter a stop
+number, see the next departures with route, destination, and due time.
+
+**How it works:** `Transit.kt` fetches from the SmartDublin RTPI API (keyless).
+
+---
+
+## 34. Time Progress Cards
+
+**Where:** Settings → Immortal → Dashboard → "Year progress card"
+
+Visual progress bars showing how far through the week, month, and year we are,
+plus a year-in-dots grid. The header SunArc shows the day's sun path.
+
+---
+
+## 35. Sky-Driven Background
+
+**Where:** Settings → Immortal → Background → "Sky"
+
+A time-of-day sky gradient that shifts with the sun's position — warm dawn,
+blue midday, golden afternoon, deep twilight. `SkyColors.kt` computes the
+gradient from the current solar position.
+
+---
+
+## 36. Audio Notes / Fridge Notes
+
+**Where:** Home grid → Tools → "Note"
+
+The home-screen "fridge notes": one typed sticky note and one recorded voice
+memo that sit on the launcher for whoever walks up next. Contact-free and local
+— the text lives in SharedPrefs, the audio in a single file.
+
+**How it works:** `NotesConfig` stores the text note; `AudioNote.kt` handles
+voice memo recording/playback.
+
+---
+
+## 37. Name Days and Feast Days
+
+**Where:** Settings → Immortal → "Name day" / "Orthodox feast day"
+
+- **Name Days** — Romanian name-day table (`NameDays.kt`), shown in the header
+- **Feast Days** — Orthodox feast calendar with computed Pascha (`FeastDays.kt`)
+
+---
+
+## 38. Portal Overlays (App Store)
+
+**Where:** App Store → Utilities & Power Tools → "Portal Overlays"
+
+A companion app (not part of Immortal itself) listed in the app catalog. A
+floating HUD for sideloaded Portals — widgets, notifications, ticker, status
+strip, floating nav, and Now Playing. Push banners via ntfy.sh.
+
+**Repo:** https://github.com/GodricTM/PortalOverlays
+
+---
+
+## 39. Sherpa-ONNX TTS Engine (Companion App)
+
+A standalone Android TTS engine built on sherpa-onnx that provides offline
+neural text-to-speech on Portal devices (no Google Play Services required).
+Registers as a standard Android TTS engine so any app on the Portal can use it.
+
+- **Kokoro multilingual v1.0** — 28 English voices (US + GB), VERY_HIGH quality
+- **Piper Romanian Mihai** — Romanian voice, HIGH quality
+- Fully offline (ONNX runtime, no network after model install)
+- ARM64 native libs (Portal hardware)
+
+**Repo:** https://github.com/GodricTM/sherpa-onnx-tts-engine
+
+The chime spoken-time and welcome-overlay greeting both use it. Works with any
+TTS engine though — the voice picker enumerates whatever's installed.
+
+---
+
+## 40. Registry-Native Settings
+
+All fork features now flow through upstream's declarative settings registry
+(`SettingSpec` / `SettingsDomain`). Four new domains added:
+
+| Domain | Config | Specs | Bespoke (managed elsewhere) |
+|--------|--------|-------|----------------------------|
+| `chime` | ChimeConfig | 11 (toggles, volumes, quiet times, sunrise sound) | `spokenVoice` (TTS voice picker) |
+| `digitalclock` | DigitalClockConfig | 10 (style/color/font/size/layout/background/glow/date/seconds) | none |
+| `sunrise` | SunriseConfig | 5 (enabled, hour, minute, ramp, chime) | `days` (day-of-week picker) |
+| `welcome` | WelcomeConfig | 5 (duration, show greeting/clock/date, enable TTS) | Float/Color/String fields + voice picker |
+
+Each domain has a tripwire test (`*Registry_coversEveryPersistedField`) that
+breaks the build if a new field ships without a spec. Side effects (scheduler
+re-arm, dream reaffirm) fire once per batch in `onApplied`, not inline per
+toggle.

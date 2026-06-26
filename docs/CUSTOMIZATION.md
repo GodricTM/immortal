@@ -48,16 +48,31 @@ minimal runtime cost.
 
 ## Adding a new setting
 
-1. Add the field to the `Settings` data class in the appropriate
-   `Config.kt` file (`ImmortalSettings`, `DigitalClockConfig`, or
-   `ScreensaverConfig`)
-2. Add the key name to the `load()` function
-3. Add a `setX()` setter function
-4. Add UI in the appropriate `*SettingsActivity.kt` — the activity
-   should read the setting via `load()` and call the setter on change
-5. If the setting needs to affect the home screen, update `HomeActivity`
-   to read it on resume (see `ImmortalSettings.load(context)` in
-   `HomeActivity.onResume`)
+All settings now flow through the declarative registry
+(`SettingSpec` / `SettingsDomain`). The old pattern of adding a field +
+getter/setter + UI row is replaced by:
+
+1. Add the field to the `Settings` data class in the appropriate `*Config.kt`
+   file (`ImmortalSettings`, `DigitalClockConfig`, `ChimeConfig`,
+   `SunriseConfig`, `WelcomeConfig`, `ScreensaverConfig`)
+2. Add the key name to the `load()` function (with any clamping)
+3. Add a `setX(c: Context, value: T)` setter function — clamping goes here,
+   not in the UI
+4. Add a `SettingSpec` to the matching domain in `SettingsDomains.kt` —
+   a `BoolSpec`, `IntSpec`, `EnumSpec`, or `StringSpec` bound to the
+   getter/setter. This single declaration then appears on-device (via
+   `SettingsList`), on the phone-remote PWA, and in the legacy wire format.
+5. If the setting needs a side effect (re-arm an alarm, reaffirm the dream),
+   add it to the domain's `onApplied` hook, not inline in the setter.
+6. If the setting needs genuinely custom UI (a color picker, a voice picker,
+   a day-of-week picker), keep that in the bespoke `*SettingsActivity.kt`
+   and add the field to the tripwire's `managedElsewhere` set.
+7. The tripwire test (`*Registry_coversEveryPersistedField`) will break the
+   build if you forget to add a spec — a deliberate gate.
+
+**Never read/write prefs directly from UI or routes** — it silently skips the
+remote, the validation, and the side-effect hook. Always route through
+`domain.apply(context, JSONObject().put(key, value))`.
 
 ## Adding a new clock style that needs its own view
 
