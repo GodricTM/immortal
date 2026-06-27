@@ -31,7 +31,10 @@ import java.net.Socket
  */
 class LanAudio {
   private val TAG = "ImmortalIntercom"
-  val PORT = 8723
+  // Distinct from FleetConfig.DEFAULT_PORT (8723): on provisioned/remote-paired
+  // devices FleetAgentService already binds that port at launch, so reusing it
+  // here would make ServerSocket(PORT) in startBroadcast() fail to bind.
+  val PORT = 8724
   private val SAMPLE_RATE = 16000
 
   @Volatile private var running = false
@@ -42,14 +45,24 @@ class LanAudio {
 
   val isActive: Boolean get() = running
 
-  /** Capture the mic and stream it to every device that connects to this port. */
-  fun startBroadcast() {
+  /** Capture the mic and stream it to every device that connects to this port.
+   * [onState] reports whether the listening socket bound, so the UI doesn't claim
+   * it's broadcasting when the port couldn't be opened (e.g. already in use). */
+  fun startBroadcast(onState: (Boolean) -> Unit = {}) {
     stop()
     running = true
     serverThread = Thread {
+      val server = runCatching { ServerSocket(PORT) }
+          .onFailure { Log.w(TAG, "broadcast bind failed on :$PORT", it) }
+          .getOrNull()
+      if (server == null) {
+        running = false
+        onState(false)
+        return@Thread
+      }
+      serverSocket = server
+      onState(true)
       runCatching {
-        val server = ServerSocket(PORT)
-        serverSocket = server
         server.soTimeout = 0
         while (running) {
           val socket = runCatching { server.accept() }.getOrNull() ?: continue

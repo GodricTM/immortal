@@ -69,16 +69,26 @@ private fun IntercomScreen() {
   var status by remember { mutableStateOf("") }
   val myIp = remember { localIp(context) }
 
+  // Kick off the broadcast and reflect whether the port actually bound, so the UI
+  // never claims it's broadcasting when the socket couldn't open.
+  fun beginBroadcast() {
+    status = "Starting…"
+    lan.startBroadcast { ok ->
+      if (ok) { mode = "broadcasting"; status = "Broadcasting this room's audio" }
+      else { mode = "idle"; status = "Couldn't start — the broadcast port is in use" }
+    }
+  }
+
   val permLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
       androidx.activity.result.contract.ActivityResultContracts.RequestPermission()) { granted ->
-    if (granted) { lan.startBroadcast(); mode = "broadcasting"; status = "Broadcasting this room's audio" }
+    if (granted) beginBroadcast()
     else status = "Microphone permission is needed to broadcast"
   }
 
   fun startBroadcast() {
     val granted = android.content.pm.PackageManager.PERMISSION_GRANTED ==
         context.checkSelfPermission(android.Manifest.permission.RECORD_AUDIO)
-    if (granted) { lan.startBroadcast(); mode = "broadcasting"; status = "Broadcasting this room's audio" }
+    if (granted) beginBroadcast()
     else permLauncher.launch(android.Manifest.permission.RECORD_AUDIO)
   }
 
