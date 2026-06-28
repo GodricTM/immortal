@@ -257,6 +257,7 @@ class SettingsDomainTest {
             SettingsDomains.calendar to emptySet(),
             SettingsDomains.immortal to
                 setOf("multiRoomEnabled", "snapcastHost", "maPort", "maUsername", "maPassword"),
+            SettingsDomains.digitalclock to emptySet(),
         )
     rendered.forEach { (dom, exclude) ->
       val blank =
@@ -269,6 +270,19 @@ class SettingsDomainTest {
           "domain '${dom.id}' renders Entry.Inline StringSpec(s) on-device that show nothing: $blank",
           blank.isEmpty())
     }
+  }
+
+  @Test
+  fun digitalClockRegistry_coversEveryPersistedField() {
+    // The on-device Clock screen renders its controls from this domain. Every field is a scalar
+    // bound by a spec — no managedElsewhere exceptions.
+    val fields =
+        com.immortal.launcher.DigitalClockConfig.Settings::class.java.declaredFields
+            .filter { !java.lang.reflect.Modifier.isStatic(it.modifiers) }
+            .map { it.name }
+            .toSet()
+    val specKeys = SettingsDomains.digitalclock.specs.map { it.key }.toSet()
+    assertEquals(fields, specKeys)
   }
 
   @Test
