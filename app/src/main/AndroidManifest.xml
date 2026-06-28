@@ -20,6 +20,11 @@
     <uses-permission android:name="android.permission.WRITE_SECURE_SETTINGS"
         tools:ignore="ProtectedPermissions" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <!-- LAN intercom / "ping the other room": broadcast audio over the local network. -->
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <!-- Fleet Agent: a foreground service so WiFi device management survives a
          reboot on these non-root Portals (where adb-over-WiFi can't). -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
@@ -179,6 +184,13 @@
             android:name=".ChimeSettingsActivity"
             android:exported="false"
             android:label="Sounds"
+            android:theme="@style/Theme.SampleApp" />
+
+        <!-- "Intercom": LAN one-way intercom / baby monitor (LanAudio). -->
+        <activity
+            android:name=".IntercomActivity"
+            android:exported="false"
+            android:label="Intercom"
             android:theme="@style/Theme.SampleApp" />
 
         <!-- Connect a self-hosted Immich server as the screensaver source. -->
