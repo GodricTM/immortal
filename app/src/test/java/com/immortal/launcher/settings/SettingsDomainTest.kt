@@ -257,6 +257,7 @@ class SettingsDomainTest {
             SettingsDomains.calendar to emptySet(),
             SettingsDomains.immortal to
                 setOf("multiRoomEnabled", "snapcastHost", "maPort", "maUsername", "maPassword"),
+            SettingsDomains.chime to emptySet(),
         )
     rendered.forEach { (dom, exclude) ->
       val blank =
@@ -269,6 +270,26 @@ class SettingsDomainTest {
           "domain '${dom.id}' renders Entry.Inline StringSpec(s) on-device that show nothing: $blank",
           blank.isEmpty())
     }
+  }
+
+  @Test
+  fun chimeRegistry_coversEveryPersistedField_orExplicitlyAccountsForIt() {
+    // The on-device Chime screen renders its scalar controls from this domain, so a new
+    // ChimeConfig.Settings field that nobody adds a spec for would silently never appear on-device
+    // or on the remote. spokenVoice is set by the bespoke TTS voice picker in ChimeSettingsActivity
+    // (it enumerates on-device voices the registry can't model) — a new field must get a spec or be
+    // listed here, a deliberate gate.
+    val fields =
+        com.immortal.launcher.ChimeConfig.Settings::class.java.declaredFields
+            .filter { !java.lang.reflect.Modifier.isStatic(it.modifiers) }
+            .map { it.name }
+            .toSet()
+    val specKeys = SettingsDomains.chime.specs.map { it.key }.toSet()
+    val managedElsewhere = setOf("spokenVoice")
+    val uncovered = fields - specKeys - managedElsewhere
+    assertTrue(
+        "ChimeConfig.Settings has persisted fields neither in the registry nor accounted for: $uncovered",
+        uncovered.isEmpty())
   }
 
   @Test
