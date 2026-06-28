@@ -247,7 +247,7 @@ class HomeActivity : ComponentActivity() {
     super.onResume()
     // The user is back on Immortal, so any stock-launcher call handoff is over:
     // allow the photo frame to resume its normal screensaver behaviour.
-    DreamPolicy.inStockHandoff = false
+    DreamPolicy.clearBridge(this)
     SettingsGuard.reaffirmScreensaver(this)
     // The user is back on the launcher: end the idle session and, inside the overnight window,
     // arm the touch-renewed "you have the device" session. SleepScheduler owns that policy.
@@ -295,8 +295,9 @@ class HomeActivity : ComponentActivity() {
     // Suppress the screensaver-relaunch race while the stock home comes forward, and
     // keep suppressing the holding-frame relaunch until the user returns to Immortal
     // (cleared in onResume) so the frame can't slam over an in-progress call.
-    DreamPolicy.bridgeAt = System.currentTimeMillis()
-    DreamPolicy.inStockHandoff = true
+    // Persisted to SharedPreferences so new Immortal processes spawned after Android
+    // kills our process also see the bridge and return SUPPRESSED (not REDREAM).
+    DreamPolicy.markBridge(this)
 
     // Preferred path: a short burst of system Back presses reliably surfaces Meta's stock
     // launcher (verified on the Portal TV) — unlike the portal:// deep link or a HOME launch,

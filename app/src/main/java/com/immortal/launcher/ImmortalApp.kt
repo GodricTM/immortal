@@ -26,6 +26,12 @@ class ImmortalApp : Application() {
     // default-home role (→ "Select Home app" chooser). This relaunches us straight back so the
     // user never sees it. Installed up front so a crash during the rest of onCreate is covered too.
     CrashGuard.install(this)
+    // Restore bridge state persisted by HomeActivity.launchStockHome. If Android killed our
+    // process while the stock Portal home was in the foreground and a new process is now
+    // starting to handle a PhotoDreamService instance, DreamPolicy would otherwise see
+    // default (zeroed) values and classify the dream-stop as REDREAM — relaunching the photo
+    // frame over the in-progress call. Must run before the DREAMING_STOPPED receiver below.
+    DreamPolicy.initFromPrefs(this)
     // The shared presence source of truth: owns DREAMING_STARTED / SCREEN_OFF / POWER and
     // exposes one PresenceState for the screensaver (in-process) and the Snapcast companion
     // (broadcast). DREAMING_STOPPED stays here because it also drives the frame relaunch, and

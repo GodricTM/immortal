@@ -37,6 +37,9 @@ import android.util.Log
  */
 object DreamPolicy {
   private const val TAG = "ImmortalDream"
+  private const val PREFS = "dream_bridge"
+  private const val KEY_BRIDGE_AT = "bridge_at"
+  private const val KEY_IN_STOCK_HANDOFF = "in_stock_handoff"
 
   /** Set by [PhotoDreamService] just before finish() on a user tap. */
   @Volatile var userExitAt: Long = 0L
@@ -48,6 +51,11 @@ object DreamPolicy {
    * make us relaunch our photo frame over the top of the stock home and trap the
    * user there (the reported "Calls kicks me back into Immortal"). While a bridge
    * is in flight we suppress that relaunch.
+   *
+   * Persisted to SharedPreferences via [markBridge]/[clearBridge] so that if the
+   * Immortal process is killed while the stock home is in the foreground (Android
+   * reclaims it as a non-foreground launcher), a freshly-spawned process still sees
+   * the bridge and returns SUPPRESSED instead of REDREAM.
    */
   @Volatile var bridgeAt: Long = 0L
 
@@ -59,6 +67,42 @@ object DreamPolicy {
    * idle as usual — we only skip the aggressive "permanent frame" relaunch.
    */
   @Volatile var inStockHandoff: Boolean = false
+
+  /**
+   * Called from [ImmortalApp.onCreate] to restore bridge state after a process restart.
+   * Without this, a new process spawned for a dream-service invocation sees default
+   * (zeroed) values and classifies the dream stop as REDREAM, relaunching the photo
+   * frame over the in-progress call.
+   */
+  fun initFromPrefs(context: Context) {
+    val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+    bridgeAt = prefs.getLong(KEY_BRIDGE_AT, 0L)
+    inStockHandoff = prefs.getBoolean(KEY_IN_STOCK_HANDOFF, false)
+    if (inStockHandoff) Log.i(TAG, "restored bridge from prefs: bridgeAt=$bridgeAt inStockHandoff=true")
+  }
+
+  /** Called by [HomeActivity.launchStockHome] — persists bridge so new processes see it. */
+  fun markBridge(context: Context) {
+    val now = System.currentTimeMillis()
+    bridgeAt = now
+    inStockHandoff = true
+    context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        .edit()
+        .putLong(KEY_BRIDGE_AT, now)
+        .putBoolean(KEY_IN_STOCK_HANDOFF, true)
+        .apply()
+  }
+
+  /** Called by [HomeActivity.onResume] when the user returns — clears persisted bridge. */
+  fun clearBridge(context: Context) {
+    inStockHandoff = false
+    bridgeAt = 0L
+    context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        .edit()
+        .remove(KEY_BRIDGE_AT)
+        .remove(KEY_IN_STOCK_HANDOFF)
+        .apply()
+  }
 
   fun hasBattery(context: Context): Boolean =
       runCatching {
