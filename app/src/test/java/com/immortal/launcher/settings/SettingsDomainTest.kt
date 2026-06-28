@@ -258,6 +258,7 @@ class SettingsDomainTest {
             SettingsDomains.immortal to
                 setOf("multiRoomEnabled", "snapcastHost", "maPort", "maUsername", "maPassword"),
             SettingsDomains.chime to emptySet(),
+            SettingsDomains.sunrise to emptySet(),
         )
     rendered.forEach { (dom, exclude) ->
       val blank =
@@ -289,6 +290,24 @@ class SettingsDomainTest {
     val uncovered = fields - specKeys - managedElsewhere
     assertTrue(
         "ChimeConfig.Settings has persisted fields neither in the registry nor accounted for: $uncovered",
+        uncovered.isEmpty())
+  }
+
+  @Test
+  fun sunriseRegistry_coversEveryPersistedField_orExplicitlyAccountsForIt() {
+    // `days` is a Set<Int> (which days of the week) managed by the bespoke day-picker in
+    // SunriseSettingsActivity — the registry models scalars, not sets. The 5 scalar fields
+    // are all bound by specs.
+    val fields =
+        com.immortal.launcher.SunriseConfig.Config::class.java.declaredFields
+            .filter { !java.lang.reflect.Modifier.isStatic(it.modifiers) }
+            .map { it.name }
+            .toSet()
+    val specKeys = SettingsDomains.sunrise.specs.map { it.key }.toSet()
+    val managedElsewhere = setOf("days")
+    val uncovered = fields - specKeys - managedElsewhere
+    assertTrue(
+        "SunriseConfig.Config has persisted fields neither in the registry nor accounted for: $uncovered",
         uncovered.isEmpty())
   }
 
