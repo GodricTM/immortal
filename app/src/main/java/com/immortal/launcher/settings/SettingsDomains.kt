@@ -10,6 +10,8 @@ package com.immortal.launcher.settings
 import android.content.Context
 import com.immortal.launcher.CalendarFeed
 import com.immortal.launcher.CalendarUrlEntryActivity
+import com.immortal.launcher.ChimeConfig
+import com.immortal.launcher.ChimeScheduler
 import com.immortal.launcher.DreamPolicy
 import com.immortal.launcher.FaceCatalog
 import com.immortal.launcher.FacePickerActivity
@@ -638,6 +640,141 @@ object SettingsDomains {
       )
 
   /** Every registered domain. */
+  /**
+   * Gentle ambient audio cues — hourly chime, spoken time, golden-hour tone, "ping the other room"
+   * volume, and quiet hours ([ChimeConfig]). All off by default; nothing plays inside the quiet
+   * window. The TTS voice picker ([ChimeConfig.Settings.spokenVoice]) lives in the bespoke
+   * [ChimeSettingsActivity] (it enumerates on-device TTS voices the registry can't model), so it's
+   * accounted for in the tripwire's `managedElsewhere` rather than bound by a spec here.
+   *
+   * Scheduling side effects (re-arm the alarms) go in [onApplied], fired once per batch — not inline
+   * per toggle — so the phone-remote path re-arms too, not just the on-device screen.
+   */
+  val chime: SettingsDomain<ChimeConfig.Settings> =
+      SettingsDomain(
+          id = "chime",
+          title = "Sounds",
+          load = ChimeConfig::load,
+          specs =
+              listOf(
+                  BoolSpec(
+                      "hourlyChimeOn",
+                      "Hourly chime",
+                      get = { it.hourlyChimeOn },
+                      set = ChimeConfig::setHourlyChime,
+                      help = "A soft chime on the hour."),
+                  IntSpec(
+                      "chimeVolume",
+                      "Volume",
+                      get = { it.chimeVolume },
+                      set = ChimeConfig::setChimeVolume,
+                      min = 0,
+                      max = 100,
+                      step = 10,
+                      format = { "$it%" },
+                      visible = { _, s -> s.hourlyChimeOn }),
+                  BoolSpec(
+                      "spokenTimeOn",
+                      "Spoken time",
+                      get = { it.spokenTimeOn },
+                      set = ChimeConfig::setSpokenTime,
+                      help = "Spoken time on the hour (\"It's three o'clock\"), via TTS."),
+                  IntSpec(
+                      "spokenVolume",
+                      "Volume",
+                      get = { it.spokenVolume },
+                      set = ChimeConfig::setSpokenVolume,
+                      min = 0,
+                      max = 100,
+                      step = 10,
+                      format = { "$it%" },
+                      visible = { _, s -> s.spokenTimeOn }),
+                  BoolSpec(
+                      "goldenHourOn",
+                      "Golden-hour tone",
+                      get = { it.goldenHourOn },
+                      set = ChimeConfig::setGoldenHour,
+                      help = "A sound at sunrise and sunset."),
+                  IntSpec(
+                      "goldenVolume",
+                      "Volume",
+                      get = { it.goldenVolume },
+                      set = ChimeConfig::setGoldenVolume,
+                      min = 0,
+                      max = 100,
+                      step = 10,
+                      format = { "$it%" },
+                      visible = { _, s -> s.goldenHourOn }),
+                  IntSpec(
+                      "sunriseVariant",
+                      "Sunrise sound",
+                      get = { it.sunriseVariant },
+                      set = ChimeConfig::setSunriseVariant,
+                      min = 0,
+                      max = 1,
+                      step = 1,
+                      format = { if (it == 0) "Morning" else "Rooster" },
+                      visible = { _, s -> s.goldenHourOn }),
+                  IntSpec(
+                      "pingVolume",
+                      "Ping volume",
+                      get = { it.pingVolume },
+                      set = ChimeConfig::setPingVolume,
+                      min = 0,
+                      max = 100,
+                      step = 10,
+                      format = { "$it%" },
+                      help =
+                          "Ring volume for \"ping the other room\" - louder by default since it's a doorbell."),
+                  BoolSpec(
+                      "quietHoursOn",
+                      "Quiet hours",
+                      get = { it.quietHoursOn },
+                      set = ChimeConfig::setQuietHours,
+                      help = "Silence all cues inside a nightly window."),
+                  IntSpec(
+                      "quietStartMin",
+                      "Quiet from",
+                      get = { it.quietStartMin },
+                      set = ChimeConfig::setQuietStart,
+                      min = 0,
+                      max = 24 * 60 - 1,
+                      step = 30,
+                      wrap = true,
+                      format = ::hhmm,
+                      visible = { _, s -> s.quietHoursOn }),
+                  IntSpec(
+                      "quietEndMin",
+                      "Quiet until",
+                      get = { it.quietEndMin },
+                      set = ChimeConfig::setQuietEnd,
+                      min = 0,
+                      max = 24 * 60 - 1,
+                      step = 30,
+                      wrap = true,
+                      format = ::hhmm,
+                      visible = { _, s -> s.quietHoursOn }),
+              ),
+          sections =
+              mapOf(
+                  "chimeVolume" to "Hourly chime",
+                  "spokenVolume" to "Spoken time",
+                  "goldenVolume" to "Golden hour",
+                  "sunriseVariant" to "Golden hour",
+                  "pingVolume" to "Ping",
+                  "quietHoursOn" to "Quiet hours",
+                  "quietStartMin" to "Quiet hours",
+                  "quietEndMin" to "Quiet hours"),
+          defaults = { ChimeConfig.Settings() },
+          onApplied = { c, keys ->
+            if (keys.any {
+                  it in setOf(
+                      "hourlyChimeOn", "spokenTimeOn", "goldenHourOn", "quietHoursOn", "quietStartMin", "quietEndMin")
+                })
+                ChimeScheduler.reschedule(c)
+          },
+      )
+
   val all: List<SettingsDomain<*>> =
-      listOf(screensaver, calendar, immortal, mqtt, quickbar, fleet)
+      listOf(screensaver, calendar, immortal, mqtt, quickbar, fleet, chime)
 }

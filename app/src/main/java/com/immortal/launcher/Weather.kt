@@ -82,6 +82,33 @@ object Weather {
     return null
   }
 
+  /** Today's sunrise/sunset as epoch millis (location-local, which on a fixed Portal
+   * equals the device zone). [formatted] gives "HH:mm" / "h:mm a" per the clock setting. */
+  data class SunTimes(val sunriseMillis: Long, val sunsetMillis: Long) {
+    fun formatted(use24Hour: Boolean): Pair<String, String> {
+      val fmt = SimpleDateFormat(if (use24Hour) "HH:mm" else "h:mm a", Locale.getDefault())
+      return fmt.format(java.util.Date(sunriseMillis)) to fmt.format(java.util.Date(sunsetMillis))
+    }
+  }
+
+  /** Today's sunrise + sunset from Open-Meteo (keyless). `timezone=auto` returns the
+   * location's local times, parsed in the device's default zone. Null on failure. */
+  fun fetchSunTimes(context: Context): SunTimes? =
+      runCatching {
+            val (lat, lon) = location(context) ?: return null
+            val daily =
+                JSONObject(
+                        httpGet(
+                            "https://api.open-meteo.com/v1/forecast?latitude=$lat&longitude=$lon" +
+                                "&daily=sunrise,sunset&timezone=auto&forecast_days=1"))
+                    .getJSONObject("daily")
+            val iso = SimpleDateFormat("yyyy-MM-dd'T'HH:mm", Locale.US)
+            val sr = iso.parse(daily.getJSONArray("sunrise").getString(0))!!.time
+            val ss = iso.parse(daily.getJSONArray("sunset").getString(0))!!.time
+            SunTimes(sr, ss)
+          }
+          .getOrNull()
+
   /** Last known city name (empty until geolocation has succeeded once). */
   fun cachedCity(context: Context): String =
       context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString("city", "") ?: ""

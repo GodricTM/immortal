@@ -231,3 +231,7 @@ internal fun Stepper(label: String, valueText: String, widthMin: Dp = 64.dp, onM
     ArrowButton("▶", focused) { onPlus() } // right-pointing triangle
   }
 }
+
+/** Back is handled by the system/gesture path; keep this no-op for older call sites. */
+@Composable
+fun FolderBackButton(onClick: () -> Unit, modifier: Modifier = Modifier) {}
