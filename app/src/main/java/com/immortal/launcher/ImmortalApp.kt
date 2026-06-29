@@ -62,12 +62,14 @@ class ImmortalApp : Application() {
 
     // Arm the overnight screen-off window (and apply it if we're inside it now).
     SleepScheduler.applyOvernightNow(this)
-
     // Arm the ambient chime / spoken-time / golden-hour alarms per the user's config.
     ChimeScheduler.reschedule(this)
-
+    // Re-arm any kitchen timers that were still running (and drop expired ones).
+    TimerConfig.rearmAll(this)
     // Arm the next sunrise wake-light alarm per the user's config.
     SunriseScheduler.reschedule(this)
+    // Start listening for "ping the other room" tones from other Portals on the LAN.
+    PingService.start(this)
 
     // Bring up the WiFi fleet agent if provisioning enabled it (no-op otherwise).
     FleetAgentService.ensureRunning(this)

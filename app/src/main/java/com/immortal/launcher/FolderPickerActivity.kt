@@ -32,6 +32,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -309,7 +310,7 @@ private fun IconBox(icon: String) {
 @Composable
 private fun PrimaryButton(label: String, subtitle: String?, onClick: () -> Unit) {
   Surface(
-      color = Color(0xFF2E6BE6),
+      color = MaterialTheme.colorScheme.primary,
       shape = RoundedCornerShape(14.dp),
       modifier =
           Modifier.fillMaxWidth().tvFocusable(RoundedCornerShape(14.dp), focusScale = 1f) {

@@ -66,13 +66,16 @@ object SettingsGuard {
         Settings.Secure.putInt(resolver, "screensaver_enabled", 0)
         return@runCatching
       }
-      // Use the digital-clock screensaver if enabled, otherwise the photo frame.
-      val dreamServiceClass =
-          if (DigitalClockConfig.load(context).enabled) {
-            DigitalClockDreamService::class.java
-          } else {
-            PhotoDreamService::class.java
-          }
+      // Re-apply the user's activation preferences (on sleep / on dock) in case
+      // a stock-launcher reset overwrote them.
+      applyActivationSettings(context)
+      // Use digital clock screensaver if enabled, otherwise photo frame
+      val clockConfig = DigitalClockConfig.load(context)
+      val dreamServiceClass = if (clockConfig.enabled) {
+        DigitalClockDreamService::class.java
+      } else {
+        PhotoDreamService::class.java
+      }
       val ours = ComponentName(context, dreamServiceClass).flattenToShortString()
       if (Settings.Secure.getString(resolver, "screensaver_components") != ours) {
         Settings.Secure.putString(resolver, "screensaver_components", ours)
@@ -111,6 +114,27 @@ object SettingsGuard {
       val resolver = context.contentResolver
       Settings.Global.putInt(resolver, "adb_enabled", 1)
       Settings.Global.putInt(resolver, "development_settings_enabled", 1)
+    }
+  }
+
+  /**
+   * Apply the user's screensaver activation preferences (on sleep / on dock)
+   * to the system settings. Called when the user toggles these in Immortal
+   * settings, and on resume so a stock-launcher reset doesn't stick.
+   */
+  fun applyActivationSettings(context: Context) {
+    runCatching {
+      val s = ImmortalSettings.load(context)
+      Settings.Secure.putInt(
+          context.contentResolver,
+          "screensaver_activate_on_sleep",
+          if (s.activateOnSleep) 1 else 0
+      )
+      Settings.Secure.putInt(
+          context.contentResolver,
+          "screensaver_activate_on_dock",
+          if (s.activateOnDock) 1 else 0
+      )
     }
   }
 

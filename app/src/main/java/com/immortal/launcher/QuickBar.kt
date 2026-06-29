@@ -42,6 +42,10 @@ object QuickBar {
   private var wm: WindowManager? = null
   private var view: View? = null
   @Volatile private var barVisible = false
+  private val hideTransient = Runnable {
+    barVisible = false
+    refresh()
+  }
 
   /** Add the (initially evaluated) cluster overlay, hosted by the accessibility service. */
   fun attach(service: AccessibilityService) {
@@ -83,7 +87,13 @@ object QuickBar {
   /** Called by [BarWatchService] when the system top bar is revealed / hidden. */
   fun setBarVisible(visible: Boolean) {
     barVisible = visible
-    main.post { refresh() }
+    main.post {
+      main.removeCallbacks(hideTransient)
+      refresh()
+      if (visible && host?.let { !QuickBarConfig.alwaysShow(it) } == true) {
+        main.postDelayed(hideTransient, 3000L)
+      }
+    }
   }
 
   /** Re-evaluate visibility after a config change (e.g. the always-show toggle). */

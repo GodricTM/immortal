@@ -35,6 +35,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -317,7 +318,7 @@ private fun PageContent(p: HelpPage) {
 private fun PillButton(
     label: String,
     filled: Boolean,
-    accent: Color = Color(0xFF2E6BE6),
+    accent: Color = MaterialTheme.colorScheme.primary,
     focusRequester: FocusRequester? = null,
     onClick: () -> Unit,
 ) {

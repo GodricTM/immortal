@@ -42,6 +42,7 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusGroup
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
@@ -91,6 +92,8 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
+import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.coroutines.launch
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -106,8 +109,8 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
-import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.scale
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.ImageBitmap
@@ -177,6 +180,7 @@ private data class PendingWidgetAdd(
 private const val STOCK_HOME_BACK_PRESSES = 5
 private const val STOCK_HOME_BACK_INTERVAL_MS = 300L
 private const val HOME_APP_WIDGET_HOST_ID = 0x4611
+private const val CLOSE_CURRENT_APP_ACTION = "com.immortal.launcher.CLOSE_CURRENT_APP"
 
 /**
  * The custom Portal home launcher. Replaces the stock Aloha home (selected via
@@ -199,12 +203,17 @@ class HomeActivity : ComponentActivity() {
       SampleAppTheme(darkTheme = true) {
         LauncherScreen(
             onLaunch = { cn ->
+              UserLayout.recordLaunch(this, cn.packageName)
               runCatching {
-                startActivity(
-                    Intent(Intent.ACTION_MAIN)
-                        .addCategory(Intent.CATEGORY_LAUNCHER)
-                        .setComponent(cn)
-                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                val customAction = Curation.customLaunchAction[cn.packageName]
+                val intent = if (customAction != null)
+                  Intent(customAction).setComponent(cn).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                else
+                  Intent(Intent.ACTION_MAIN)
+                      .addCategory(Intent.CATEGORY_LAUNCHER)
+                      .setComponent(cn)
+                      .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                startActivity(intent)
               }
             },
             onOpenStore = {
@@ -241,10 +250,16 @@ class HomeActivity : ComponentActivity() {
     if (hasFocus) enterImmersive()
   }
 
+  override fun onNewIntent(intent: Intent) {
+    super.onNewIntent(intent)
+    if (intent.action == CLOSE_CURRENT_APP_ACTION) moveTaskToBack(true)
+  }
+
   // Self-heal: if anything (e.g. the stock launcher) reset our screensaver
   // settings, put them back every time Immortal comes to the foreground.
   override fun onResume() {
     super.onResume()
+    if (intent?.action == CLOSE_CURRENT_APP_ACTION) moveTaskToBack(true)
     // The user is back on Immortal, so any stock-launcher call handoff is over:
     // allow the photo frame to resume its normal screensaver behaviour.
     DreamPolicy.clearBridge(this)
@@ -387,6 +402,32 @@ private fun LauncherScreen(
   var showWidgetPicker by remember { mutableStateOf(false) }
   var widgetStatus by remember { mutableStateOf<String?>(null) }
   var widgets by remember { mutableStateOf(HomeWidgetStore.load(context)) }
+  var pageCapacity by remember { mutableStateOf(1) }
+  var gridSlots by remember { mutableStateOf(UserLayout.loadGridSlots(context)) }
+  var openToolCategory by remember { mutableStateOf<String?>(null) }
+  var activeToolOverlay by remember { mutableStateOf<String?>(null) }
+  var backgroundType by remember { mutableStateOf(ImmortalSettings.load(context).backgroundType) }
+  var showTabsSetting by remember { mutableStateOf(ImmortalSettings.load(context).showTabs) }
+  var showCalendarWidget by remember { mutableStateOf(ImmortalSettings.load(context).calendarWidget == ImmortalSettings.CALENDAR_ON) }
+  var showDashboardPage by remember { mutableStateOf(ImmortalSettings.load(context).dashboardPage) }
+  var showQuickSettings by remember { mutableStateOf(false) }
+  var selectedTab by remember { mutableStateOf<String?>(null) }
+  var showTimerAdd by remember { mutableStateOf(false) }
+  var showNote by remember { mutableStateOf(false) }
+  var showHiddenPanel by remember { mutableStateOf(false) }
+  var creatingFolder by remember { mutableStateOf(false) }
+  var timerVersion by remember { mutableStateOf(0) }
+  var noteVersion by remember { mutableStateOf(0) }
+  var homeResumeVersion by remember { mutableStateOf(0) }
+  var hiddenPkgs by remember { mutableStateOf(UserLayout.loadHiddenPackages(context)) }
+  var sortMode by remember { mutableStateOf(ImmortalSettings.load(context).sortMode) }
+  var showDayProgress by remember { mutableStateOf(ImmortalSettings.load(context).showDayProgress) }
+  var dailyTileMode by remember { mutableStateOf(ImmortalSettings.load(context).dailyTileMode) }
+  val emptyFolders = remember { mutableStateOf<Set<String>>(emptySet()) }
+  val isPortrait = androidx.compose.ui.platform.LocalConfiguration.current.orientation == android.content.res.Configuration.ORIENTATION_PORTRAIT
+  var bottomWidgetsHeight by remember { mutableStateOf(0.dp) }
+  val bottomButtonLift = if (isPortrait) bottomWidgetsHeight else 0.dp
+  var heyPkg by remember { mutableStateOf(heyPackage(context)) }
   // Whether the shared timer is currently ringing — drives the swipe-to-stop alarm overlay.
   var timerRinging by remember { mutableStateOf(TimerStore.load(context).ringing) }
   DisposableEffect(Unit) {
@@ -420,6 +461,18 @@ private fun LauncherScreen(
         constrainPageWidth = s.constrainPageWidth
         weatherWidget = s.weatherWidget
         weatherFahrenheit = ImmortalSettings.useFahrenheit(context)
+        backgroundType = s.backgroundType
+        showTabsSetting = s.showTabs
+        showCalendarWidget = s.calendarWidget == ImmortalSettings.CALENDAR_ON
+        showDashboardPage = s.dashboardPage
+        sortMode = s.sortMode
+        showDayProgress = s.showDayProgress
+        dailyTileMode = s.dailyTileMode
+        hiddenPkgs = UserLayout.loadHiddenPackages(context)
+        emptyFolders.value = UserLayout.loadEmptyFolders(context)
+        heyPkg = heyPackage(context)
+        homeResumeVersion++
+        noteVersion++
         widgets = loadLiveWidgets()
       }
     }
@@ -450,6 +503,26 @@ private fun LauncherScreen(
     HomeWidgetStore.save(context, next)
   }
 
+  fun placeTileOnFreshPage(tileKey: String) {
+    val cap = pageCapacity.coerceAtLeast(1)
+    val next = gridSlots.toMutableList()
+    for (i in next.indices) {
+      if (next[i] == tileKey) next[i] = null
+    }
+    val rem = next.size % cap
+    if (rem != 0) repeat(cap - rem) { next.add(null) }
+    val start =
+        if (next.size >= cap && next.takeLast(cap).all { it == null }) next.size - cap
+        else {
+          val s = next.size
+          repeat(cap) { next.add(null) }
+          s
+        }
+    next[start] = tileKey
+    gridSlots = next
+    UserLayout.saveGridSlots(context, next)
+  }
+
   fun removeWidget(widget: HomeWidgetStore.HomeWidget) {
     if (widget.isAppWidget) runCatching { appWidgetHost.deleteAppWidgetId(widget.appWidgetId) }
     saveWidgets(HomeWidgetStore.without(widgets, widget.key))
@@ -463,6 +536,7 @@ private fun LauncherScreen(
           else -> HomeWidgetStore.custom(kind, spanX = 2, spanY = 2)
         }
     saveWidgets(HomeWidgetStore.withAdded(widgets, widget))
+    placeTileOnFreshPage(WIDGET_KEY + widget.key)
     showWidgetPicker = false
     widgetStatus = "Added ${customWidgetLabel(kind)}"
   }
@@ -477,9 +551,10 @@ private fun LauncherScreen(
             providerClass = info.provider.className,
             spanX = provider.spanX,
             spanY = provider.spanY,
-        )
+    )
     updateWidgetSizeOptions(appWidgetManager, record, tileDpFor(tileSize))
     saveWidgets(HomeWidgetStore.withAdded(widgets, record))
+    placeTileOnFreshPage(WIDGET_KEY + record.key)
     showWidgetPicker = false
     widgetStatus = "Added ${provider.label}"
   }
@@ -583,16 +658,54 @@ private fun LauncherScreen(
   // curated defaults: a user override wins over Curation.folderFor(). An empty
   // string is an explicit "ungrouped" override (used when dragging out of a
   // folder), so it beats a curated default too.
+  // Eager load (upstream): assignments are populated at first composition so a Calls
+  // handoff never flashes an unsorted grid. emptyFolders is the fork's addition.
   val assignments =
       remember { mutableStateMapOf<String, String>().apply { putAll(UserLayout.load(context)) } }
+  LaunchedEffect(Unit) { emptyFolders.value = UserLayout.loadEmptyFolders(context) }
   val appsEff =
       remember(apps, assignments.toMap()) {
         val effective = HomeLayoutModel.effectiveApps(apps.toLayoutRefs(), assignments)
         val foldersByPackage = effective.associate { it.packageName to it.folder }
         apps.map { it.copy(folder = foldersByPackage[it.component.packageName]) }
       }
-  val ungrouped = remember(appsEff) { appsEff.filter { it.folder == null } }
-  val folderNames = remember(appsEff) { HomeLayoutModel.folderNames(appsEff.toLayoutRefs()) }
+  val launchCounts = remember(sortMode) {
+    if (sortMode == ImmortalSettings.SORT_USED) UserLayout.loadLaunchCounts(context) else emptyMap()
+  }
+  val installTimes = remember(sortMode, appsEff) {
+    if (sortMode == ImmortalSettings.SORT_RECENT) {
+      val pm = context.packageManager
+      appsEff.associate { app ->
+        app.component.packageName to
+            runCatching { pm.getPackageInfo(app.component.packageName, 0).firstInstallTime }.getOrDefault(0L)
+      }
+    } else emptyMap()
+  }
+  val visibleApps = remember(appsEff, hiddenPkgs, sortMode, launchCounts, installTimes) {
+    val base = appsEff.filter { it.component.packageName !in hiddenPkgs }
+    when (sortMode) {
+      ImmortalSettings.SORT_AZ -> base.sortedBy { it.label.lowercase(java.util.Locale.getDefault()) }
+      ImmortalSettings.SORT_USED -> base.sortedByDescending { launchCounts[it.component.packageName] ?: 0 }
+      ImmortalSettings.SORT_RECENT -> base.sortedByDescending { installTimes[it.component.packageName] ?: 0L }
+      else -> base
+    }
+  }
+  val ungrouped = remember(visibleApps) { visibleApps.filter { it.folder == null } }
+  val hiddenAppsEff = remember(appsEff, hiddenPkgs) { appsEff.filter { it.component.packageName in hiddenPkgs } }
+  val folderNames = remember(appsEff, emptyFolders.value) {
+    (appsEff.mapNotNull { it.folder } + emptyFolders.value).distinct().sorted()
+  }
+  fun hideApp(pkg: String) { UserLayout.hidePackage(context, pkg); hiddenPkgs = hiddenPkgs + pkg }
+  fun unhideApp(pkg: String) { UserLayout.unhidePackage(context, pkg); hiddenPkgs = hiddenPkgs - pkg }
+  fun createEmptyFolder(name: String) {
+    val n = name.trim().ifEmpty { "Folder" }
+    val existing = folderNames.toSet()
+    var finalName = n; var counter = 1
+    while (existing.contains(finalName)) { finalName = "$n $counter"; counter++ }
+    UserLayout.saveEmptyFolder(context, finalName)
+    emptyFolders.value = emptyFolders.value + finalName
+    openFolder = finalName
+  }
 
   // --- unified, fully-reorderable home grid -----------------------------------
   // Every top-level tile — built-ins, widgets, folders, and ungrouped apps — has a stable key and
@@ -602,13 +715,13 @@ private fun LauncherScreen(
         buildList {
           add(BUILTIN_CALLS)
           add(BUILTIN_STORE)
+          TOOL_CATEGORIES.forEach { add(TOOL_FOLDER_KEY + it.id) }
           widgets.forEach { add(WIDGET_KEY + it.key) }
           folderNames.forEach { add(FOLDER_KEY + it) }
           ungrouped.forEach { add(APP_KEY + it.component.packageName) }
           add(BUILTIN_UPDATES)
         }
       }
-  var gridSlots by remember { mutableStateOf(UserLayout.loadGridSlots(context)) }
   val gridColumns = gridColumnsFor(tileSize)
   // Keep the saved slot list in step with what's actually present, preserving the user's blanks.
   LaunchedEffect(allTileKeys, gridColumns, appsLoaded) {
@@ -621,7 +734,19 @@ private fun LauncherScreen(
     }
   }
   val widgetByKey = remember(widgets) { widgets.associateBy { WIDGET_KEY + it.key } }
-  val appByKey = remember(ungrouped) { ungrouped.associateBy { APP_KEY + it.component.packageName } }
+  val appByKey = remember(visibleApps) { visibleApps.associateBy { APP_KEY + it.component.packageName } }
+  // Home tabs intentionally stay at the fork's four top-level views:
+  // All, Apps, Tools, and Settings. Apps/Settings flatten their contents like the pre-merge home.
+  val displaySlots = remember(gridSlots, selectedTab, visibleApps, folderNames) {
+    when (selectedTab) {
+      null -> gridSlots
+      TAB_APPS -> visibleApps.map { APP_KEY + it.component.packageName }
+      TAB_TOOLS -> gridSlots.map { key -> if (key?.startsWith(TOOL_FOLDER_KEY) == true) key else null }
+      "Settings" ->
+          visibleApps.filter { it.folder == "Settings" }.map { APP_KEY + it.component.packageName }
+      else -> emptyList()
+    }
+  }
   // A tile's column footprint: widgets span their width, everything else is 1.
   fun widthOf(key: String?): Int =
       if (key != null && key.startsWith(WIDGET_KEY))
@@ -671,9 +796,15 @@ private fun LauncherScreen(
       slotBounds.entries.firstOrNull { it.value.contains(pos) }?.key
 
   // --- horizontal paging (iOS-style swipeable app pages) ----------------------
-  var pageCapacity by remember { mutableStateOf(1) }
-  val pageCount = ((gridSlots.size + pageCapacity - 1) / pageCapacity).coerceAtLeast(1)
+  val renderSlots = displaySlots
+  val gridPageCount = ((renderSlots.size + pageCapacity - 1) / pageCapacity).coerceAtLeast(1)
+  // When enabled (and not while managing the grid), a glanceable Dashboard rides as one extra
+  // page at the end of the app pages — swipe past the last app page to reach it. This restores
+  // the pre-1.49 "apps ⟷ dashboard" swipe behaviour (the 1.49 merge dropped its rendering).
+  val dashboardActive = showDashboardPage && !editMode
+  val pageCount = gridPageCount + if (dashboardActive) 1 else 0
   val pagerState = rememberPagerState { pageCount }
+  val pagerScope = rememberCoroutineScope()
   // While dragging, drift toward the screen edge auto-advances to the next/previous page.
   var edgeDir by remember { mutableStateOf(0) }
 
@@ -810,7 +941,14 @@ private fun LauncherScreen(
 
   CompositionLocalProvider(LocalTileDp provides tileDpFor(tileSize)) {
   Box(modifier = Modifier.fillMaxSize()) {
-    HomeBackground(Modifier.fillMaxSize())
+    if (backgroundType == ImmortalSettings.BG_DARK) {
+      HomeBackground(Modifier.fillMaxSize())
+    } else {
+      Box(Modifier.fillMaxSize()) { ForkHomeBackground(backgroundType) }
+    }
+    if (backgroundType == ImmortalSettings.BG_SKY && showDayProgress) {
+      DayProgressBar(modifier = Modifier.align(Alignment.TopCenter))
+    }
     Column(
         modifier =
             Modifier.fillMaxHeight()
@@ -829,8 +967,28 @@ private fun LauncherScreen(
                 // so header action buttons stay tappable.
                 .padding(start = 32.dp, end = 32.dp, top = 40.dp, bottom = 24.dp)
     ) {
-      HeaderBar(onScreensaver = onStartScreensaver)
-      Spacer(Modifier.size(20.dp))
+      HeaderBar(
+          onScreensaver = onStartScreensaver,
+          onClock = {
+            DigitalClockConfig.setEnabled(context, true)
+            SettingsGuard.reaffirmScreensaver(context)
+            val previewIntent = Intent(context, DigitalClockPreviewActivity::class.java)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            runCatching { context.startActivity(previewIntent) }
+          },
+          onSleep = { ScreenControl.sleep(context) },
+      )
+      HomeControlStrip(
+          showTabs = showTabsSetting,
+          tabs = if ("Settings" in folderNames) listOf("Settings") else emptyList(),
+          selectedTab = selectedTab,
+          onSelectTab = { selectedTab = it },
+          countdownVersion = homeResumeVersion,
+          timerVersion = timerVersion + homeResumeVersion,
+          onTimerChanged = { timerVersion++ },
+      )
+      HomeNoteCard(version = noteVersion, onEdit = { showNote = true })
+      Spacer(Modifier.size(8.dp))
       Box(
           modifier =
               Modifier.fillMaxWidth()
@@ -889,7 +1047,9 @@ private fun LauncherScreen(
           val rowH = tileDp + 42.dp
           val dotsReserve = 30.dp
           val avail = (maxHeight - dotsReserve).coerceAtLeast(rowH)
-          val rows = ((avail.value + 20f) / (rowH.value + 20f)).toInt().coerceAtLeast(1)
+          val rows =
+              if (isPortrait) ((avail.value + 20f) / (rowH.value + 20f)).toInt().coerceAtLeast(1)
+              else 4
           val cap = (gridColumns * rows).coerceAtLeast(1)
           LaunchedEffect(cap) { pageCapacity = cap }
           LaunchedEffect(allTileKeys, cap, dragKey != null, appsLoaded) {
@@ -918,26 +1078,31 @@ private fun LauncherScreen(
                 beyondViewportPageCount = 1,
                 modifier = Modifier.weight(1f).focusRequester(homeGridFocus).focusGroup(),
             ) { page ->
+              if (dashboardActive && page == gridPageCount) {
+                // The trailing Dashboard page. Its back/X swipes back to the first app page.
+                DashboardPage(onDismiss = { pagerScope.launch { pagerState.animateScrollToPage(0) } })
+                return@HorizontalPager
+              }
               LazyVerticalGrid(
                   columns = GridCells.Fixed(gridColumns),
                   horizontalArrangement = Arrangement.spacedBy(16.dp),
                   verticalArrangement = Arrangement.spacedBy(20.dp),
-                  userScrollEnabled = false,
+                  userScrollEnabled = dragKey == null,
                   modifier = Modifier.fillMaxSize(),
               ) {
                 val pageStart = page * pageCapacity
-                val pageEnd = minOf(pageStart + pageCapacity, gridSlots.size)
+                val pageEnd = minOf(pageStart + pageCapacity, renderSlots.size)
                 val pageSize = (pageEnd - pageStart).coerceAtLeast(0)
                 // Free-placement grid: every cell is a slot — a tile or an intentional blank.
                 // Dragging a tile swaps slots, so blanks stay where the user left them. A long-press
                 // both enters Manage mode AND starts the drag in one gesture (see startTileDrag).
                 items(
                     count = pageSize,
-                    key = { li -> gridSlots[pageStart + li] ?: "blank:${pageStart + li}" },
-                    span = { li -> GridItemSpan(widthOf(gridSlots[pageStart + li])) },
+                    key = { li -> renderSlots[pageStart + li] ?: "blank:${pageStart + li}" },
+                    span = { li -> GridItemSpan(widthOf(renderSlots[pageStart + li])) },
                 ) { li ->
                   val i = pageStart + li
-                  val key = gridSlots[i]
+                  val key = renderSlots[i]
             val boundsMod = Modifier.onGloballyPositioned { slotBounds[i] = it.boundsInWindow() }
             if (key == null) {
               // Blank cell — an invisible drop target with the same footprint as a tile so the
@@ -985,6 +1150,15 @@ private fun LauncherScreen(
                           onRemove = { removeWidget(w) },
                       )
                     }
+                key.startsWith(TOOL_FOLDER_KEY) -> {
+                  val catName = key.removePrefix(TOOL_FOLDER_KEY)
+                  val cat = TOOL_CATEGORIES.firstOrNull { it.id == catName }
+                  if (cat != null) {
+                    HomeTileFrame(boundsMod, isDragged) {
+                      ToolFolderTile(label = cat.id, glyph = cat.glyph, onClick = { openToolCategory = cat.id })
+                    }
+                  }
+                }
                 key.startsWith(FOLDER_KEY) -> {
                   val name = key.removePrefix(FOLDER_KEY)
                   HomeTileFrame(boundsMod, isDragged) {
@@ -1003,8 +1177,10 @@ private fun LauncherScreen(
                           editMode = editMode,
                           dimmed = isDragged,
                           modifier = boundsMod.alpha(if (isDragged) 0f else 1f),
-                          onClick = { onLaunch(app.component) },
                           onDelete = { onUninstall(app.component.packageName) },
+                          onHide = { hideApp(app.component.packageName) },
+                          onAppInfo = { openAppInfo(context, app.component.packageName) },
+                          onClick = { onLaunch(app.component) },
                       )
                     }
                   }
@@ -1043,6 +1219,94 @@ private fun LauncherScreen(
       if (editMode) TidyButton { tidyGrid() }
       if (editMode) AddWidgetButton { showWidgetPicker = true }
       EditButton(editMode = editMode, onClick = { editMode = !editMode })
+    }
+
+    // Alexa/"Hey" shortcut: bottom-left corner, always visible.
+    heyPkg?.let { pkg ->
+      Box(
+          contentAlignment = Alignment.Center,
+          modifier =
+              Modifier.align(Alignment.BottomStart)
+                  .padding(start = 36.dp, bottom = 28.dp + bottomButtonLift)
+                  .size(96.dp)
+                  .tvFocusable(
+                      shape = androidx.compose.foundation.shape.CircleShape,
+                      onLongClick = { openHeyPicker(context, pkg) },
+                  ) { fireHey(context, pkg) },
+      ) {
+        Image(
+            painter = painterResource(R.drawable.alexa_icon),
+            contentDescription = "Alexa",
+            contentScale = ContentScale.Fit,
+            modifier = Modifier.size(96.dp).clip(androidx.compose.foundation.shape.CircleShape),
+        )
+      }
+    }
+    // Quick timer shortcut: bottom-left, stacked directly above the Alexa button.
+    Box(
+        contentAlignment = Alignment.Center,
+        modifier =
+            Modifier.align(Alignment.BottomStart)
+                .padding(start = 36.dp, bottom = 140.dp + bottomButtonLift)
+                .size(96.dp)
+                .tvFocusable(shape = androidx.compose.foundation.shape.CircleShape) {
+                  showTimerAdd = true
+                },
+    ) {
+      Image(
+          painter = painterResource(R.drawable.timer_icon),
+          contentDescription = "New timer",
+          contentScale = ContentScale.Fit,
+          modifier = Modifier.size(96.dp).clip(androidx.compose.foundation.shape.CircleShape),
+      )
+    }
+    // Quick-settings gear: above the timer button.
+    Surface(
+        color = Color(0x33FFFFFF),
+        shape = androidx.compose.foundation.shape.CircleShape,
+        modifier =
+            Modifier.align(Alignment.BottomStart)
+                .padding(start = 52.dp, bottom = 252.dp + bottomButtonLift)
+                .size(48.dp)
+                .tvFocusable(androidx.compose.foundation.shape.CircleShape) {
+                  showQuickSettings = true
+                },
+    ) {
+      Box(contentAlignment = Alignment.Center) {
+        Text("\u2699", color = Color.White, fontSize = 24.sp)
+      }
+    }
+    // Hidden-apps eye button: bottom-right, left of the edit cluster (when hidden apps exist).
+    if (hiddenPkgs.isNotEmpty()) {
+      Surface(
+          color = Color(0x33FFFFFF),
+          shape = androidx.compose.foundation.shape.CircleShape,
+          modifier =
+              Modifier.align(Alignment.BottomEnd)
+                  .padding(end = 112.dp, bottom = 32.dp + bottomButtonLift)
+                  .size(60.dp)
+                  .tvFocusable(androidx.compose.foundation.shape.CircleShape) {
+                    showHiddenPanel = true
+                  },
+      ) {
+        Box(contentAlignment = Alignment.Center) {
+          Canvas(modifier = Modifier.size(28.dp)) {
+            val w = size.minDimension; val s = w * 0.09f
+            val stroke = Stroke(width = s, cap = StrokeCap.Round)
+            drawOval(Color.White, topLeft = Offset(w*0.04f, w*0.28f), size = Size(w*0.92f, w*0.44f), style = stroke)
+            drawCircle(Color.White, radius = w*0.14f, center = Offset(w*0.5f, w*0.5f), style = stroke)
+          }
+        }
+      }
+    }
+    // New-folder button: bottom-right, left of the edit cluster (while managing).
+    if (editMode) {
+      NewFolderButton(
+          modifier =
+              Modifier.align(Alignment.BottomEnd)
+                  .padding(end = 112.dp, bottom = 32.dp + bottomButtonLift),
+          onClick = { creatingFolder = true },
+      )
     }
 
     // Floating ghost of the tile being dragged — it follows the finger while the grid reflows
@@ -1087,6 +1351,12 @@ private fun LauncherScreen(
             },
             onRename = { renaming = name },
             onMoveOut = { moveOut(it) },
+            onDelete = { onUninstall(it) },
+            onHide = {
+              hideApp(it)
+              openFolder = null
+            },
+            onAppInfo = { openAppInfo(context, it) },
             onDismiss = { openFolder = null },
             extras =
                 if (name == "Settings")
@@ -1098,12 +1368,43 @@ private fun LauncherScreen(
                                 Intent(context, ImmortalSettingsActivity::class.java))
                           }
                         },
+                        FolderExtra("Clock", ICON_TIME) {
+                          openFolder = null
+                          runCatching { context.startActivity(Intent(context, ClockSettingsActivity::class.java)) }
+                        },
                         FolderExtra("Screensaver", ICON_IMAGE) {
                           openFolder = null
                           runCatching {
-                            context.startActivity(
-                                Intent(context, ScreensaverSettingsActivity::class.java))
+                            context.startActivity(Intent(context, ScreensaverSettingsActivity::class.java))
                           }
+                        },
+                        FolderExtra("Welcome", ICON_WAVING_HAND) {
+                          openFolder = null
+                          runCatching {
+                            context.startActivity(Intent(context, WelcomeSettingsActivity::class.java))
+                          }
+                        },
+                        FolderExtra("Sleep", ICON_TIME) {
+                          openFolder = null
+                          runCatching { context.startActivity(Intent(context, SleepSettingsActivity::class.java)) }
+                        },
+                        FolderExtra("Sounds", ICON_BELL) {
+                          openFolder = null
+                          runCatching { context.startActivity(Intent(context, ChimeSettingsActivity::class.java)) }
+                        },
+                        FolderExtra("Countdowns", ICON_HOURGLASS) {
+                          openFolder = null
+                          runCatching {
+                            context.startActivity(Intent(context, CountdownSettingsActivity::class.java))
+                          }
+                        },
+                        FolderExtra("Cameras", ICON_CAMERA) {
+                          openFolder = null
+                          runCatching { context.startActivity(Intent(context, CameraViewerActivity::class.java)) }
+                        },
+                        FolderExtra("Intercom", ICON_CALL) {
+                          openFolder = null
+                          runCatching { context.startActivity(Intent(context, IntercomActivity::class.java)) }
                         },
                         FolderExtra("Help", ICON_HELP) {
                           openFolder = null
@@ -1111,6 +1412,132 @@ private fun LauncherScreen(
                         })
                 else emptyList(),
         )
+      }
+    }
+
+    openToolCategory?.let { cat ->
+      ForkToolCategoryOverlay(
+          category = cat,
+          editMode = editMode,
+          onToggleEdit = { editMode = !editMode },
+          dailyTileMode = dailyTileMode,
+          onShowOverlay = { activeToolOverlay = it },
+          onDismiss = { openToolCategory = null },
+      )
+    }
+
+    activeToolOverlay?.let { toolId ->
+      ForkToolOverlay(
+          toolId = toolId,
+          dailyTileMode = dailyTileMode,
+          onDismiss = { activeToolOverlay = null },
+      )
+    }
+
+    if (showQuickSettings) {
+      androidx.compose.ui.window.Dialog(onDismissRequest = { showQuickSettings = false }) {
+        QuickSettingsPanel(onDismiss = { showQuickSettings = false })
+      }
+    }
+
+    // Add-a-kitchen-timer overlay (from the bottom-left timer shortcut).
+    if (showTimerAdd) {
+      AddTimerOverlay(
+          onDismiss = { showTimerAdd = false },
+          onAdd = { label, ms -> TimerConfig.add(context, label, ms); showTimerAdd = false; timerVersion++ },
+      )
+    }
+
+    // Leave-a-note overlay (typed sticky + voice memo).
+    if (showNote) {
+      ForkToolOverlay(toolId = "note", onDismiss = { showNote = false; noteVersion++ })
+    }
+
+    // Empty-folder creation (from the NewFolderButton in edit mode).
+    if (creatingFolder) {
+      NameOverlay(
+          title = "New folder",
+          initial = UserLayout.nextFolderName(folderNames.toSet()),
+          confirmLabel = "Create",
+          onConfirm = { createEmptyFolder(it); creatingFolder = false },
+          onCancel = { creatingFolder = false },
+      )
+    }
+
+    // Hidden apps panel: shows all hidden apps so users can restore them.
+    if (showHiddenPanel) {
+      BackHandler { showHiddenPanel = false }
+      Box(
+          contentAlignment = Alignment.Center,
+          modifier =
+              Modifier.fillMaxSize()
+                  .background(Color(0xCC000000))
+                  .clickable(
+                      interactionSource = remember { MutableInteractionSource() },
+                      indication = null,
+                  ) { showHiddenPanel = false },
+      ) {
+        Surface(
+            color = Color(0xFF1C1C1E),
+            shape = RoundedCornerShape(28.dp),
+            modifier = Modifier.widthIn(max = 600.dp).clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+            ) {},
+        ) {
+          Column(modifier = Modifier.padding(28.dp)) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+              Text("Hidden apps", color = Color.White, fontSize = 22.sp, modifier = Modifier.weight(1f))
+              if (hiddenAppsEff.isNotEmpty()) {
+                Surface(
+                    color = Color(0xFF1565C0),
+                    shape = RoundedCornerShape(10.dp),
+                    modifier = Modifier.tvFocusable(RoundedCornerShape(10.dp)) {
+                      UserLayout.unhideAllPackages(context)
+                      hiddenPkgs = emptySet()
+                      showHiddenPanel = false
+                    },
+                ) {
+                  Text("Restore all", color = Color.White, fontSize = 15.sp,
+                      modifier = Modifier.padding(horizontal = 18.dp, vertical = 8.dp))
+                }
+              }
+            }
+            Spacer(Modifier.size(20.dp))
+            if (hiddenAppsEff.isEmpty()) {
+              Text("No hidden apps.", color = Color(0xFF9A9A9A), fontSize = 16.sp)
+            } else {
+              LazyVerticalGrid(
+                  columns = GridCells.Fixed(4),
+                  horizontalArrangement = Arrangement.spacedBy(16.dp),
+                  verticalArrangement = Arrangement.spacedBy(16.dp),
+                  modifier = Modifier.heightIn(max = 400.dp),
+              ) {
+                items(hiddenAppsEff, key = { it.component.packageName }) { app ->
+                  Column(horizontalAlignment = Alignment.CenterHorizontally,
+                      modifier = Modifier.tvFocusable(RoundedCornerShape(16.dp)) {
+                        unhideApp(app.component.packageName)
+                      }) {
+                    Box {
+                      Image(bitmap = app.icon, contentDescription = app.label,
+                          modifier = Modifier.size(72.dp).clip(RoundedCornerShape(18.dp)).alpha(0.5f))
+                      Surface(color = Color(0xFF1565C0),
+                          shape = androidx.compose.foundation.shape.CircleShape,
+                          modifier = Modifier.size(24.dp).align(Alignment.TopEnd)) {
+                        Box(contentAlignment = Alignment.Center) {
+                          Text("+", color = Color.White, fontSize = 16.sp)
+                        }
+                      }
+                    }
+                    Spacer(Modifier.size(6.dp))
+                    Text(app.label, color = Color.White, fontSize = 13.sp, maxLines = 1,
+                        overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center)
+                  }
+                }
+              }
+            }
+          }
+        }
       }
     }
 
@@ -1249,6 +1676,7 @@ private fun SlideToStop(onStop: () -> Unit) {
 private const val APP_KEY = "app:"
 private const val FOLDER_KEY = "folder:"
 private const val WIDGET_KEY = "widget-tile:"
+private const val TOOL_FOLDER_KEY = "toolcat:"
 private const val BUILTIN_CALLS = "builtin:calls"
 private const val BUILTIN_STORE = "builtin:store"
 private const val BUILTIN_UPDATES = "builtin:updates"
@@ -1263,7 +1691,7 @@ private fun List<AppEntry>.toLayoutRefs(): List<HomeLayoutModel.AppRef> =
 // (apps, folders, built-ins, the drag ghost) follows the user's size setting.
 // Standard is the original 6-column/88dp look; Large is 5 columns of 110dp tiles,
 // closer to the stock Portal launcher.
-private val LocalTileDp = compositionLocalOf { 88.dp }
+internal val LocalTileDp = compositionLocalOf { 88.dp }
 
 private fun tileDpFor(size: String): Dp =
     when (size) {
@@ -1294,7 +1722,7 @@ private fun customWidgetLabel(kind: String): String =
     }
 
 @Composable
-private fun HeaderBar(onScreensaver: () -> Unit) {
+private fun HeaderBar(onScreensaver: () -> Unit, onClock: () -> Unit = {}, onSleep: () -> Unit = {}) {
   var now by remember { mutableStateOf(Date()) }
   androidx.compose.runtime.LaunchedEffect(Unit) {
     while (true) {
@@ -1316,6 +1744,10 @@ private fun HeaderBar(onScreensaver: () -> Unit) {
   // The header mini-player toggle is re-read on resume so flipping it in Immortal
   // Settings shows/hides the player the moment the user returns home.
   var showMiniPlayer by remember { mutableStateOf(ImmortalSettings.load(context).showMiniPlayer) }
+  var showSunTimes by remember { mutableStateOf(ImmortalSettings.load(context).showSunTimes) }
+  var showNameDay by remember { mutableStateOf(ImmortalSettings.load(context).showNameDay) }
+  var showFeastDay by remember { mutableStateOf(ImmortalSettings.load(context).showFeastDay) }
+  var showNextEvent by remember { mutableStateOf(ImmortalSettings.load(context).showNextEvent) }
   // Live now-playing from the device's media session. The hub notifies off-main, so
   // hop back to the main thread before touching Compose state.
   var nowPlaying by remember { mutableStateOf(NowPlayingHub.current) }
@@ -1333,6 +1765,11 @@ private fun HeaderBar(onScreensaver: () -> Unit) {
         use24Hour = ImmortalSettings.use24HourClock(context)
         heyPkg = heyPackage(context)
         showMiniPlayer = ImmortalSettings.load(context).showMiniPlayer
+        val s = ImmortalSettings.load(context)
+        showSunTimes = s.showSunTimes
+        showNameDay = s.showNameDay
+        showFeastDay = s.showFeastDay
+        showNextEvent = s.showNextEvent
       }
     }
     lifecycleOwner.lifecycle.addObserver(obs)
@@ -1349,6 +1786,13 @@ private fun HeaderBar(onScreensaver: () -> Unit) {
       } else {
         delay(60L * 1000) // retry in 1 min
       }
+    }
+  }
+  val sunTimes by produceState<Weather.SunTimes?>(initialValue = null, weatherUnit, showSunTimes) {
+    if (!showSunTimes) { value = null; return@produceState }
+    while (true) {
+      val st = withContext(Dispatchers.IO) { Weather.fetchSunTimes(context) }
+      if (st != null) { value = st; delay(30L * 60 * 1000) } else { delay(60L * 1000) }
     }
   }
   val battery = batteryState()
@@ -1384,6 +1828,68 @@ private fun HeaderBar(onScreensaver: () -> Unit) {
     ) {
       Box(contentAlignment = Alignment.Center) { StackedPhotoIcon() }
     }
+    Spacer(Modifier.size(12.dp))
+    // Digital clock shortcut: enables the digital clock screensaver + opens preview.
+    Surface(
+        color = Color(0x33FFFFFF),
+        shape = androidx.compose.foundation.shape.CircleShape,
+        modifier = Modifier.size(56.dp).tvFocusable(androidx.compose.foundation.shape.CircleShape) { onClock() },
+    ) {
+      Box(contentAlignment = Alignment.Center) { ClockIcon() }
+    }
+    Spacer(Modifier.size(12.dp))
+    // Sleep shortcut: turns the screen off immediately.
+    Surface(
+        color = Color(0x33FFFFFF),
+        shape = androidx.compose.foundation.shape.CircleShape,
+        modifier = Modifier.size(56.dp).tvFocusable(androidx.compose.foundation.shape.CircleShape) { onSleep() },
+    ) {
+      Box(contentAlignment = Alignment.Center) { MoonIcon() }
+    }
+    Spacer(Modifier.size(12.dp))
+    // Brightness cycle: dim -> medium -> full (window-level, no permission needed).
+    val activity = remember { context as? android.app.Activity }
+    var brightnessIdx by remember { mutableStateOf(2) }
+    Surface(
+        color = Color(0x33FFFFFF),
+        shape = androidx.compose.foundation.shape.CircleShape,
+        modifier = Modifier.size(56.dp).tvFocusable(androidx.compose.foundation.shape.CircleShape) {
+          brightnessIdx = (brightnessIdx + 1) % 3
+          val bval = when (brightnessIdx) { 0 -> 0.12f; 1 -> 0.50f; else -> 1.0f }
+          activity?.window?.let { w -> val p = w.attributes; p.screenBrightness = bval; w.attributes = p }
+        },
+    ) {
+      Box(contentAlignment = Alignment.Center) { SunIcon() }
+    }
+    Spacer(Modifier.size(12.dp))
+    // Volume button with inline +/- controls.
+    val audioMgr = remember { context.getSystemService(android.content.Context.AUDIO_SERVICE) as android.media.AudioManager }
+    var volLevel by remember { mutableStateOf(audioMgr.getStreamVolume(android.media.AudioManager.STREAM_MUSIC)) }
+    val maxVol = remember { audioMgr.getStreamMaxVolume(android.media.AudioManager.STREAM_MUSIC) }
+    var showVol by remember { mutableStateOf(false) }
+    Surface(
+        color = if (showVol) Color(0x88FFFFFF) else Color(0x33FFFFFF),
+        shape = androidx.compose.foundation.shape.CircleShape,
+        modifier = Modifier.size(56.dp).tvFocusable(androidx.compose.foundation.shape.CircleShape) { showVol = !showVol },
+    ) {
+      Box(contentAlignment = Alignment.Center) { VolumeIcon() }
+    }
+    if (showVol) {
+      Spacer(Modifier.size(8.dp))
+      Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        Surface(color = Color(0x33FFFFFF), shape = androidx.compose.foundation.shape.CircleShape,
+            modifier = Modifier.size(44.dp).clickable {
+              volLevel = (volLevel - 1).coerceAtLeast(0)
+              audioMgr.setStreamVolume(android.media.AudioManager.STREAM_MUSIC, volLevel, 0)
+            }) { Box(contentAlignment = Alignment.Center) { Text("\u2212", color = Color.White, fontSize = 22.sp) } }
+        Text("$volLevel", color = Color.White, fontSize = 18.sp, textAlign = TextAlign.Center, modifier = Modifier.widthIn(min = 28.dp))
+        Surface(color = Color(0x33FFFFFF), shape = androidx.compose.foundation.shape.CircleShape,
+            modifier = Modifier.size(44.dp).clickable {
+              volLevel = (volLevel + 1).coerceAtMost(maxVol)
+              audioMgr.setStreamVolume(android.media.AudioManager.STREAM_MUSIC, volLevel, 0)
+            }) { Box(contentAlignment = Alignment.Center) { Text("+", color = Color.White, fontSize = 22.sp) } }
+      }
+    }
     // Remote — one-tap "control from your phone": turn the remote on (if off) and show a
     // QR/PIN modal, so a phone pairs without digging into Settings.
     Spacer(Modifier.size(14.dp))
@@ -1400,26 +1906,7 @@ private fun HeaderBar(onScreensaver: () -> Unit) {
     ) {
       Box(contentAlignment = Alignment.Center) { RemoteGlyph() }
     }
-    // "Hey" button — push-to-talk for the active assistant. The launcher stays
-    // dumb: it just broadcasts the trigger; Millennium owns assistant selection,
-    // the premium gate and the falcon mic handoff. Only shown when Millennium is
-    // installed (so a bare launcher has no dead button).
-    heyPkg?.let { pkg ->
-      Spacer(Modifier.size(14.dp))
-      Surface(
-          color = Color(0x33FFFFFF),
-          shape = androidx.compose.foundation.shape.CircleShape,
-          modifier =
-              Modifier.size(56.dp).tvFocusable(
-                  shape = androidx.compose.foundation.shape.CircleShape,
-                  onLongClick = { openHeyPicker(context, pkg) },
-              ) {
-                fireHey(context, pkg)
-              },
-      ) {
-        Box(contentAlignment = Alignment.Center) { MicGlyph() }
-      }
-    }
+    // Assistant stays in the bottom-left launcher stack; no duplicate header button.
     // Mini-player — sits in the left action cluster, only while something's playing.
     // When shown it takes the flexible space (so its text uses the header width before
     // it scrolls); otherwise a weight spacer pushes the weather/date to the right.
@@ -1450,6 +1937,60 @@ private fun HeaderBar(onScreensaver: () -> Unit) {
           fontSize = 18.sp,
           modifier = Modifier.padding(top = 4.dp),
       )
+      sunTimes?.let { st ->
+        val (sr, ss) = st.formatted(use24Hour)
+        SunArc(
+            sunriseMin = minuteOfDay(st.sunriseMillis),
+            sunsetMin = minuteOfDay(st.sunsetMillis),
+            riseLabel = sr,
+            setLabel = ss,
+            modifier = Modifier.padding(top = 6.dp),
+        )
+      }
+      if (showNameDay) {
+        val nd = remember(now) { NameDays.todayLabel() }
+        if (nd.isNotBlank()) {
+          Text(nd, color = Color(0xFFB0B0B0), fontSize = 14.sp, modifier = Modifier.padding(top = 2.dp))
+        }
+      }
+      if (showFeastDay) {
+        val fd = remember(now) { FeastDays.forToday() }
+        if (fd.isNotBlank()) {
+          Text(fd, color = Color(0xFFB0B0B0), fontSize = 14.sp, modifier = Modifier.padding(top = 2.dp))
+        }
+      }
+      val packLines by produceState(initialValue = emptyList<String>(), now) {
+        value = withContext(Dispatchers.IO) { CalendarPacks.headerLines(context) }
+      }
+      packLines.forEach { line ->
+        Text(line, color = Color(0xFFB0B0B0), fontSize = 14.sp, modifier = Modifier.padding(top = 2.dp))
+      }
+      if (showNextEvent) {
+        val nextEvent by produceState<CalendarEvent?>(initialValue = null) {
+          if (CalendarHelper.hasPermission(context)) {
+            value = withContext(Dispatchers.IO) { CalendarHelper.upcoming(context).firstOrNull() }
+          }
+        }
+        nextEvent?.let { ev ->
+          val whenText = remember(ev.begin, ev.allDay, use24Hour) {
+            val cal = java.util.Calendar.getInstance().apply { timeInMillis = ev.begin }
+            if (ev.allDay) {
+              SimpleDateFormat("MMM d", Locale.getDefault()).format(cal.time)
+            } else {
+              SimpleDateFormat(if (use24Hour) "HH:mm" else "h:mm a", Locale.getDefault())
+                  .format(cal.time)
+            }
+          }
+          Text(
+              "$whenText - ${ev.title}",
+              color = Color(0xFFB0B0B0),
+              fontSize = 14.sp,
+              maxLines = 1,
+              overflow = TextOverflow.Ellipsis,
+              modifier = Modifier.padding(top = 2.dp),
+          )
+        }
+      }
     }
   }
 
@@ -1611,6 +2152,14 @@ private fun WeatherWidget(mode: String, fahrenheit: Boolean) {
           }
         }
       }
+  val air by
+      produceState<Weather.AirQuality?>(initialValue = null) {
+        while (true) {
+          val aq = withContext(Dispatchers.IO) { Weather.fetchAirQuality(context) }
+          if (aq != null) value = aq
+          delay(30L * 60 * 1000)
+        }
+      }
   if (state is ForecastState.Loading) return
 
   val startPage = if (mode == ImmortalSettings.WIDGET_DAILY) PAGE_DAILY else PAGE_HOURLY
@@ -1670,9 +2219,55 @@ private fun WeatherWidget(mode: String, fahrenheit: Boolean) {
             modifier = Modifier.padding(start = 4.dp, bottom = 4.dp),
         )
       }
+      air?.let { aq -> AirQualityStrip(aq) }
     }
   }
 }
+
+/** One-line air-quality / UV / pollen summary shown under the forecast pager. */
+@Composable
+private fun AirQualityStrip(aq: Weather.AirQuality) {
+  Row(
+      modifier = Modifier.fillMaxWidth().padding(start = 4.dp, end = 4.dp, top = 8.dp),
+      horizontalArrangement = Arrangement.spacedBy(10.dp),
+  ) {
+    AqChip("AQ", "AQI ${aq.aqi} - ${aq.aqiLabel}", aqiColor(aq.aqi))
+    if (aq.uvIndex > 0.0) AqChip("UV", String.format("UV %.1f", aq.uvIndex), uvColor(aq.uvIndex))
+    if (aq.pollen.isNotEmpty()) AqChip("Pollen", aq.pollen, Color(0xFFB388FF))
+  }
+}
+
+@Composable
+private fun AqChip(label: String, value: String, accent: Color) {
+  Surface(color = accent.copy(alpha = 0.18f), shape = RoundedCornerShape(10.dp)) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+    ) {
+      Text(label, color = accent, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
+      Text("  $value", color = accent, fontSize = 13.sp, maxLines = 1)
+    }
+  }
+}
+
+private fun aqiColor(aqi: Int): Color =
+    when {
+      aqi <= 20 -> Color(0xFF66BB6A)
+      aqi <= 40 -> Color(0xFF9CCC65)
+      aqi <= 60 -> Color(0xFFFFD54F)
+      aqi <= 80 -> Color(0xFFFFB74D)
+      aqi <= 100 -> Color(0xFFFF8A65)
+      else -> Color(0xFFEF5350)
+    }
+
+private fun uvColor(uv: Double): Color =
+    when {
+      uv < 3 -> Color(0xFF66BB6A)
+      uv < 6 -> Color(0xFFFFD54F)
+      uv < 8 -> Color(0xFFFFB74D)
+      uv < 11 -> Color(0xFFFF8A65)
+      else -> Color(0xFFB388FF)
+    }
 
 /** Small page-position dots, hinting the forecast can be swiped between its pages. */
 @Composable
@@ -1894,10 +2489,8 @@ private fun TidyButton(onClick: () -> Unit) {
   }
 }
 
-private data class BatteryReading(val present: Boolean, val percent: Int, val charging: Boolean)
-
 /** Reads the device battery, updating live. Returns present=false on devices
- * without a battery (Portal+, Portal TV, Portal Mini), so callers can hide it. */
+ *  without a battery (Portal+, Portal TV, Portal Mini), so callers can hide it. */
 @Composable
 private fun batteryState(): BatteryReading {
   val context = androidx.compose.ui.platform.LocalContext.current
@@ -1998,20 +2591,33 @@ private const val ICON_REFRESH =
     "M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"
 private const val ICON_IMAGE =
     "M21 19V5c0-1.1-.9-2-2-2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2zM8.5 13.5l2.5 3.01L14.5 12l4.5 6H5l3.5-4.5z"
+private const val ICON_CAMERA =
+    "M9 2L7.17 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2h-3.17L15 2H9zm3 15c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5z"
+private const val ICON_TIME =
+    "M11.99 2C6.47 2 2 6.48 2 12s4.47 10 9.99 10C17.52 22 22 17.52 22 12S17.52 2 11.99 2zM12 20c-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8-3.58 8-8 8zm.5-13H11v6l5.25 3.15.75-1.23-4.5-2.67z"
+private const val ICON_WAVING_HAND =
+    "M23 17c0 3.31-2.69 6-6 6v-1.5c2.48 0 4.5-2.02 4.5-4.5H23zM1 7c0-3.31 2.69-6 6-6v1.5C4.52 2.5 2.5 4.52 2.5 7H1zm7.01-1.5L7 7v3.5l1.01 1.5L10 13.5l-1 1.5v3.5l1.01 1.5 7 .01L18 18.5v-3.5l-1-1.5 1.99-1.5L18 10v-3.5l-1.01-1.5-7-.01zM13 7h2.5l1.5 1.5-1.5 1.5H13V7z"
+private const val ICON_HOURGLASS =
+    "M6 2v6h.01L6 8.01 10 12l-4 4 .01.01H6V22h12v-5.99h-.01L18 16l-4-4 4-3.99-.01-.01H18V2H6zm10 14.5V20H8v-3.5l4-4 4 4zM12 11.5l-4-4V4h8v3.5l-4 4z"
 private const val ICON_WIDGETS =
     "M3 3h8v8H3V3zm10 0h8v5h-8V3zM3 13h5v8H3v-8zm7 0h11v8H10v-8z"
 private const val ICON_HELP =
     "M11 18h2v-2h-2v2zm1-16C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm0-14c-2.21 0-4 1.79-4 4h2c0-1.1.9-2 2-2s2 .9 2 2c0 2-3 1.75-3 5h2c0-2.25 3-2.5 3-5 0-2.21-1.79-4-4-4z"
 private const val ICON_GEAR =
     "M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"
-
-/** A non-app tile injected into a folder (e.g. the Screensaver settings entry). */
-private data class FolderExtra(val label: String, val glyph: String, val onClick: () -> Unit)
+private const val ICON_BELL =
+    "M12 22c1.1 0 2-.9 2-2h-4c0 1.1.9 2 2 2zm6-6v-5c0-3.07-1.63-5.64-4.5-6.32V4c0-.83-.67-1.5-1.5-1.5s-1.5.67-1.5 1.5v.68C7.64 5.36 6 7.92 6 11v5l-2 2v1h16v-1l-2-2z"
+private const val ICON_STOPWATCH =
+    "M15 1H9v2h6V1zm-4 13h2V8h-2v6zm8.03-6.61 1.42-1.42c-.43-.51-.9-.99-1.41-1.41l-1.42 1.42C16.07 4.74 14.12 4 12 4c-4.97 0-9 4.03-9 9s4.02 9 9 9 9-4.03 9-9c0-2.12-.74-4.07-1.97-5.61zM12 20c-3.87 0-7-3.13-7-7s3.13-7 7-7 7 3.13 7 7-3.13 7-7 7z"
+private const val ICON_MOON =
+    "M12 3c-4.97 0-9 4.03-9 9s4.03 9 9 9 9-4.03 9-9c0-.46-.04-.92-.1-1.36-.98 1.37-2.58 2.26-4.4 2.26-2.98 0-5.4-2.42-5.4-5.4 0-1.81.89-3.42 2.26-4.4-.44-.06-.9-.1-1.36-.1z"
+private const val ICON_GLOBE =
+    "M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"
 
 /** A built-in launcher tile: a rounded colour tile with a centered white vector
- * glyph, styled to sit naturally beside real app icons. */
+ *  glyph, styled to sit naturally beside real app icons. */
 @Composable
-private fun BuiltInTile(
+internal fun BuiltInTile(
     label: String,
     background: Color,
     glyph: String,
@@ -2094,6 +2700,9 @@ private fun FolderOverlay(
     onLaunch: (ComponentName) -> Unit,
     onRename: () -> Unit,
     onMoveOut: (String) -> Unit,
+    onDelete: (String) -> Unit,
+    onHide: (String) -> Unit,
+    onAppInfo: (String) -> Unit,
     onDismiss: () -> Unit,
     extras: List<FolderExtra> = emptyList(),
 ) {
@@ -2188,7 +2797,7 @@ private fun FolderOverlay(
             item(key = "extra:${extra.label}") {
               BuiltInTile(
                   label = extra.label,
-                  background = Color(0xFF5B6BC0),
+                  background = MaterialTheme.colorScheme.primary,
                   glyph = extra.glyph,
                   onClick = extra.onClick,
               )
@@ -2202,6 +2811,9 @@ private fun FolderOverlay(
                 dimmed = dragPkg == pkg,
                 modifier =
                     Modifier.onGloballyPositioned { tileBounds[pkg] = it.boundsInWindow() },
+                onDelete = { onDelete(pkg) },
+                onHide = { onHide(pkg) },
+                onAppInfo = { onAppInfo(pkg) },
                 onClick = { onLaunch(app.component) },
             )
           }
@@ -2370,7 +2982,7 @@ private fun StoreTile(onClick: () -> Unit) {
 @Composable
 private fun AddWidgetButton(onClick: () -> Unit) {
   Surface(
-      color = Color(0xFF5B6BC0),
+      color = MaterialTheme.colorScheme.primary,
       shape = RoundedCornerShape(30.dp),
       modifier = Modifier.width(124.dp).height(60.dp).tvFocusable(RoundedCornerShape(30.dp)) {
         onClick()
@@ -3162,24 +3774,59 @@ private fun AppTile(
     modifier: Modifier = Modifier,
     dimmed: Boolean = false,
     onDelete: () -> Unit = {},
-    onLongPress: (() -> Unit)? = null,
+    onHide: () -> Unit = {},
+    onAppInfo: () -> Unit = {},
     onClick: () -> Unit,
 ) {
+  var menuOpen by remember { mutableStateOf(false) }
   Column(
       horizontalAlignment = Alignment.CenterHorizontally,
       // In Manage mode the body tap is inert (drag to reorder, ✕ to remove); the
-      // icon launches normally otherwise. A long-press enters Manage mode (iOS-style).
+      // icon launches normally otherwise. Long-press opens quick actions.
       modifier =
           modifier.fillMaxWidth().padding(4.dp).tvFocusable(
               RoundedCornerShape(22.dp),
               enabled = !editMode,
-              onLongClick = onLongPress,
+              onLongClick = { menuOpen = true },
           ) {
             onClick()
           },
   ) {
     // The icon (and its delete badge) jiggle as a unit in Manage mode; the label stays still.
     Box(modifier = Modifier.jiggle(editMode && !dimmed, app.component.packageName.hashCode())) {
+      androidx.compose.material3.DropdownMenu(
+          expanded = menuOpen,
+          onDismissRequest = { menuOpen = false },
+      ) {
+        androidx.compose.material3.DropdownMenuItem(
+            text = { Text("Open") },
+            onClick = {
+              menuOpen = false
+              onClick()
+            },
+        )
+        androidx.compose.material3.DropdownMenuItem(
+            text = { Text("App info") },
+            onClick = {
+              menuOpen = false
+              onAppInfo()
+            },
+        )
+        androidx.compose.material3.DropdownMenuItem(
+            text = { Text("Hide from home") },
+            onClick = {
+              menuOpen = false
+              onHide()
+            },
+        )
+        androidx.compose.material3.DropdownMenuItem(
+            text = { Text("Uninstall") },
+            onClick = {
+              menuOpen = false
+              onDelete()
+            },
+        )
+      }
       Image(
           bitmap = app.icon,
           contentDescription = app.label,
@@ -3189,6 +3836,38 @@ private fun AppTile(
                   .alpha(if (dimmed) 0.3f else 1f),
       )
       if (editMode) {
+        Surface(
+            color = Color(0xFF1565C0),
+            shape = androidx.compose.foundation.shape.CircleShape,
+            modifier = Modifier.size(30.dp).align(Alignment.TopStart).clickable { onHide() },
+        ) {
+          Box(contentAlignment = Alignment.Center) {
+            Canvas(modifier = Modifier.size(16.dp)) {
+              val w = size.minDimension
+              val s = w * 0.12f
+              val stroke = Stroke(width = s, cap = StrokeCap.Round)
+              drawOval(
+                  Color.White,
+                  topLeft = Offset(w * 0.04f, w * 0.32f),
+                  size = Size(w * 0.92f, w * 0.36f),
+                  style = stroke,
+              )
+              drawCircle(
+                  Color.White,
+                  radius = w * 0.12f,
+                  center = Offset(w * 0.5f, w * 0.5f),
+                  style = stroke,
+              )
+              drawLine(
+                  Color.White,
+                  Offset(w * 0.08f, w * 0.08f),
+                  Offset(w * 0.92f, w * 0.92f),
+                  strokeWidth = s,
+                  cap = StrokeCap.Round,
+              )
+            }
+          }
+        }
         // Sits at the icon's outer top-right corner (nudged off the icon, iOS-style).
         RemoveBadge(
             size = 26.dp,
@@ -3206,6 +3885,15 @@ private fun AppTile(
         overflow = TextOverflow.Ellipsis,
         textAlign = TextAlign.Center,
     )
+  }
+}
+
+private fun openAppInfo(context: Context, pkg: String) {
+  runCatching {
+    context.startActivity(
+        Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
+            .setData(Uri.fromParts("package", pkg, null))
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
   }
 }
 

@@ -169,4 +169,112 @@ object UserLayout {
     while ("Folder $i" in existing) i++
     return "Folder $i"
   }
+
+  private const val EMPTY_FOLDERS_KEY = "empty_folders"
+
+  fun loadEmptyFolders(context: Context): Set<String> {
+    val raw = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        .getString(EMPTY_FOLDERS_KEY, null) ?: return emptySet()
+    return deserializeSet(raw)
+  }
+
+  fun saveEmptyFolder(context: Context, folderName: String) {
+    val existing = loadEmptyFolders(context).toMutableSet()
+    existing.add(folderName)
+    context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        .edit()
+        .putString(EMPTY_FOLDERS_KEY, serializeSet(existing))
+        .apply()
+  }
+
+  fun removeEmptyFolder(context: Context, folderName: String) {
+    val existing = loadEmptyFolders(context).toMutableSet()
+    existing.remove(folderName)
+    context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        .edit()
+        .putString(EMPTY_FOLDERS_KEY, serializeSet(existing))
+        .apply()
+  }
+
+  // ----- hidden apps (eye-slash in edit mode) -----------------------------------
+
+  private const val HIDDEN_KEY = "hidden_packages"
+
+  fun loadHiddenPackages(context: Context): Set<String> {
+    val raw = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        .getString(HIDDEN_KEY, null) ?: return emptySet()
+    return deserializeSet(raw)
+  }
+
+  fun hidePackage(context: Context, pkg: String) {
+    val updated = loadHiddenPackages(context) + pkg
+    context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        .edit().putString(HIDDEN_KEY, serializeSet(updated)).apply()
+  }
+
+  fun unhidePackage(context: Context, pkg: String) {
+    val updated = loadHiddenPackages(context) - pkg
+    context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        .edit().putString(HIDDEN_KEY, serializeSet(updated)).apply()
+  }
+
+  fun unhideAllPackages(context: Context) {
+    context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        .edit().remove(HIDDEN_KEY).apply()
+  }
+
+  // ----- launch counts (for the "Most used" sort, permission-free) --------------
+
+  private const val LAUNCH_COUNTS_KEY = "launch_counts"
+
+  /** package id -> number of times launched from Immortal. */
+  fun loadLaunchCounts(context: Context): Map<String, Int> {
+    val raw = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        .getString(LAUNCH_COUNTS_KEY, null) ?: return emptyMap()
+    return runCatching {
+      val obj = JSONObject(raw)
+      buildMap { obj.keys().forEach { k -> put(k, obj.getInt(k)) } }
+    }.getOrDefault(emptyMap())
+  }
+
+  /** Increment the launch counter for [pkg]. */
+  fun recordLaunch(context: Context, pkg: String) {
+    val counts = loadLaunchCounts(context).toMutableMap()
+    counts[pkg] = (counts[pkg] ?: 0) + 1
+    val obj = JSONObject()
+    counts.forEach { (k, v) -> obj.put(k, v) }
+    context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        .edit().putString(LAUNCH_COUNTS_KEY, obj.toString()).apply()
+  }
+
+  // ----- tool-folder membership (which category each built-in tool tile lives in) ---
+  // Maps a tool id (see ALL_TOOLS in HomeActivity) -> category id. Overlays the per-tool
+  // default category, so the user can move tools between folders via the folder edit mode.
+
+  private const val TOOL_CATEGORIES_KEY = "tool_categories"
+
+  fun loadToolCategories(context: Context): Map<String, String> {
+    val raw = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        .getString(TOOL_CATEGORIES_KEY, null) ?: return emptyMap()
+    return deserialize(raw)
+  }
+
+  fun setToolCategory(context: Context, toolId: String, category: String) {
+    val updated = loadToolCategories(context).toMutableMap().apply { put(toolId, category) }
+    context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        .edit().putString(TOOL_CATEGORIES_KEY, serialize(updated)).apply()
+  }
+
+  private fun serializeSet(set: Set<String>): String {
+    val obj = JSONObject()
+    obj.put("folders", org.json.JSONArray(set.toList()))
+    return obj.toString()
+  }
+
+  private fun deserializeSet(raw: String): Set<String> =
+      runCatching {
+        val obj = JSONObject(raw)
+        val arr = obj.getJSONArray("folders")
+        buildSet { for (i in 0 until arr.length()) add(arr.getString(i)) }
+      }.getOrDefault(emptySet())
 }

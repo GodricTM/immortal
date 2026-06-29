@@ -33,14 +33,14 @@ class FlipWebClockFaceView(
 
   @SuppressLint("SetJavaScriptEnabled")
   private val web =
-      // Touch is handled by the host (tap = exit, swipe = next). Overriding onTouchEvent/
-      // performClick (not just setOnTouchListener, which WebView ignores in its own onTouchEvent)
-      // is the only way to stop the WebView eating it.
+      // The page is self-ticking and non-interactive. We override onTouchEvent to return false so
+      // the full-screen WebView never consumes touches — a plain setOnTouchListener can't do this,
+      // since WebView.onTouchEvent still consumes even when the listener returns false. Letting
+      // touches fall through means the host's tap-to-exit / swipe-to-change keep working.
       object : WebView(context) {
-            override fun onTouchEvent(event: MotionEvent): Boolean = false
-            override fun performClick(): Boolean = false
-          }
-          .apply {
+        override fun onTouchEvent(event: MotionEvent): Boolean = false
+        override fun performClick(): Boolean = false
+      }.apply {
         // Matches the page's slate backdrop so there's no black flash before it paints.
         setBackgroundColor(0xFF0F1012.toInt())
         isVerticalScrollBarEnabled = false

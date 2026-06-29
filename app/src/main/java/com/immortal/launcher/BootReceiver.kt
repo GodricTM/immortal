@@ -23,6 +23,8 @@ class BootReceiver : BroadcastReceiver() {
       SleepScheduler.applyOvernightNow(context)
       // Likewise re-arm the ambient chime alarms.
       ChimeScheduler.reschedule(context)
+      // And re-arm any kitchen timers that were mid-run when we rebooted.
+      TimerConfig.rearmAll(context)
       // Re-arm the sunrise wake-light alarm.
       SunriseScheduler.reschedule(context)
       // Re-open the WiFi fleet channel after the reboot (the whole point of an

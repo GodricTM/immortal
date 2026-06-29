@@ -31,7 +31,9 @@ class PhotoDreamService : DreamService() {
     isInteractive = true
     isFullscreen = true
     isScreenBright = true
-    frame = PhotoFrameController(this)
+    // The dream starts because the Portal's presence sensor detected someone
+    // approaching — this is the "welcome back" moment.
+    frame = PhotoFrameController(this, showWelcome = true)
     frame.onExit = {
       Log.i(TAG, "onExit (tap) -> finish()")
       // Mark this as a USER exit so DreamPolicy doesn't relaunch the frame.

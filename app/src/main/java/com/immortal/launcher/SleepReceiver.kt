@@ -10,6 +10,7 @@ package com.immortal.launcher
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.util.Log
 
 /**
  * Routes the idle and overnight alarms to [SleepScheduler], which owns the policy. This class only
@@ -18,9 +19,22 @@ import android.content.Intent
 class SleepReceiver : BroadcastReceiver() {
   override fun onReceive(context: Context, intent: Intent) {
     when (intent.action) {
+      SleepScheduler.ACTION_SLEEP_TIMER -> {
+        Log.i(TAG, "sleep timer reached")
+        val settings = ScreensaverConfig.load(context)
+        SleepScheduler.sleepNow(
+            context,
+            pauseAudio = settings.pauseAudioOnSleep,
+            closeApp = settings.closeAppOnSleep,
+        )
+      }
       SleepScheduler.ACTION_IDLE -> SleepScheduler.onIdleElapsed(context)
       SleepScheduler.ACTION_OVERNIGHT_START -> SleepScheduler.onWindowStart(context)
       SleepScheduler.ACTION_OVERNIGHT_END -> SleepScheduler.onWindowEnd(context)
     }
+  }
+
+  private companion object {
+    const val TAG = "ImmortalSleep"
   }
 }

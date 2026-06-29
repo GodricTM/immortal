@@ -15,14 +15,16 @@ import androidx.compose.material3.dynamicDarkColorScheme
 import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import com.immortal.launcher.ImmortalSettings
 
-private val LightColorScheme =
+private fun lightColorSchemeWithAccent(accent: Color) =
     lightColorScheme(
-        primary = MetaBlue,
+        primary = accent,
         onPrimary = OnMetaBlue,
-        primaryContainer = MetaBlueLight,
-        onPrimaryContainer = OnMetaBlueLight,
+        primaryContainer = accent.copy(alpha = 0.2f),
+        onPrimaryContainer = accent,
         secondary = NeutralGrey,
         onSecondary = OnMetaBlue,
         background = BackgroundLight,
@@ -31,12 +33,12 @@ private val LightColorScheme =
         onSurface = ContentOnLight,
     )
 
-private val DarkColorScheme =
+private fun darkColorSchemeWithAccent(accent: Color) =
     darkColorScheme(
-        primary = MetaBlue,
+        primary = accent,
         onPrimary = OnMetaBlue,
-        primaryContainer = MetaBlueDarkCont,
-        onPrimaryContainer = OnMetaBlueDarkC,
+        primaryContainer = accent.copy(alpha = 0.3f),
+        onPrimaryContainer = accent,
         secondary = NeutralGreyDark,
         onSecondary = OnMetaBlue,
         background = BackgroundDark,
@@ -45,21 +47,44 @@ private val DarkColorScheme =
         onSurface = ContentOnDark,
     )
 
+fun accentColorFromString(key: String): Color = when (key) {
+  ImmortalSettings.ACCENT_RED -> AccentRed
+  ImmortalSettings.ACCENT_GREEN -> AccentGreen
+  ImmortalSettings.ACCENT_PURPLE -> AccentPurple
+  ImmortalSettings.ACCENT_ORANGE -> AccentOrange
+  ImmortalSettings.ACCENT_PINK -> AccentPink
+  ImmortalSettings.ACCENT_TEAL -> AccentTeal
+  ImmortalSettings.ACCENT_YELLOW -> AccentYellow
+  ImmortalSettings.ACCENT_INDIGO -> AccentIndigo
+  ImmortalSettings.ACCENT_CYAN -> AccentCyan
+  ImmortalSettings.ACCENT_LIME -> AccentLime
+  ImmortalSettings.ACCENT_AMBER -> AccentAmber
+  ImmortalSettings.ACCENT_DEEP_PURPLE -> AccentDeepPurple
+  ImmortalSettings.ACCENT_BROWN -> AccentBrown
+  ImmortalSettings.ACCENT_CORAL -> AccentCoral
+  ImmortalSettings.ACCENT_MINT -> AccentMint
+  else -> AccentBlue
+}
+
 @Composable
 fun SampleAppTheme(
     darkTheme: Boolean = isSystemInDarkTheme(),
     // Disabled: dynamic color overrides all custom colors and appears over-saturated in MR headsets
     dynamicColor: Boolean = false,
+    accentKey: String? = null,
     content: @Composable () -> Unit,
 ) {
+  val context = LocalContext.current
+  val resolvedKey = accentKey ?: ImmortalSettings.load(context).accentColor
+  val accent = accentColorFromString(resolvedKey)
+
   val colorScheme =
       when {
         dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
-          val context = LocalContext.current
           if (darkTheme) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
         }
-        darkTheme -> DarkColorScheme
-        else -> LightColorScheme
+        darkTheme -> darkColorSchemeWithAccent(accent)
+        else -> lightColorSchemeWithAccent(accent)
       }
 
   MaterialTheme(colorScheme = colorScheme, typography = Typography, content = content)

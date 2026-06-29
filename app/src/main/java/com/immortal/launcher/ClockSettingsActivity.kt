@@ -169,6 +169,190 @@ private fun ClockSettingsScreen() {
           }
         }
 
+        // Screensaver activation — these are `immortal` domain specs routed through the registry
+        // so the domain's onApplied fires (the on-device screen and the remote share the same path).
+        Spacer(Modifier.size(26.dp))
+        SectionLabel("Screensaver activation")
+        Card {
+          ActivationToggleRow(
+              "Activate on sleep",
+              "Show the screensaver when the screen turns off. Turn off to let the Portal sleep normally.",
+              settings.activateOnSleep) {
+            SettingsDomains.immortal.apply(context, JSONObject().put("activateOnSleep", it))
+            settings = ImmortalSettings.load(context)
+          }
+          Divider()
+          ActivationToggleRow(
+              "Activate on dock",
+              "Show the screensaver when the Portal is docked/plugged in.",
+              settings.activateOnDock) {
+            SettingsDomains.immortal.apply(context, JSONObject().put("activateOnDock", it))
+            settings = ImmortalSettings.load(context)
+          }
+        }
+
+        // Back gesture — genuinely bespoke system-action UI (accessibility, overlay permission).
+        Spacer(Modifier.size(26.dp))
+        SectionLabel("Back gesture")
+        Card {
+          Row(
+              modifier = Modifier.fillMaxWidth().padding(18.dp),
+              verticalAlignment = Alignment.CenterVertically,
+          ) {
+            Column(modifier = Modifier.weight(1f)) {
+              Text("Immortal Back service", color = Color.White, fontSize = 17.sp)
+              Text(
+                  "Required for the right-edge back gesture. This replaces the old on-screen back buttons on Immortal pages.",
+                  color = Color(0xFF9A9A9A),
+                  fontSize = 13.sp,
+                  modifier = Modifier.padding(top = 2.dp),
+              )
+            }
+            Surface(
+                color = MaterialTheme.colorScheme.primary,
+                shape = RoundedCornerShape(10.dp),
+                modifier = Modifier.tvFocusable(RoundedCornerShape(10.dp)) {
+                  if (BackHelper.isBackServiceEnabled(context)) {
+                    Toast.makeText(context, "Immortal Back is already enabled", Toast.LENGTH_SHORT).show()
+                  } else {
+                    val resolver = context.contentResolver
+                    val current = android.provider.Settings.Secure.getString(
+                        resolver,
+                        android.provider.Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES) ?: ""
+                    val service = "${context.packageName}/${ImmortalBackGestureService::class.java.name}"
+                    val services = current.split(':').filter { it.isNotBlank() && it != service }
+                    val newValue = (services + service).joinToString(":")
+                    android.provider.Settings.Secure.putString(
+                        resolver,
+                        android.provider.Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES,
+                        newValue)
+                    android.provider.Settings.Secure.putInt(
+                        resolver,
+                        android.provider.Settings.Secure.ACCESSIBILITY_ENABLED,
+                        1)
+                    Toast.makeText(context, "Enabled Immortal Back. Turn on the swipe gesture below to use it.", Toast.LENGTH_LONG).show()
+                  }
+                },
+            ) {
+              Text(
+                  if (BackHelper.isBackServiceEnabled(context)) "Enabled" else "Enable",
+                  color = Color.White,
+                  fontSize = 15.sp,
+                  modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
+              )
+            }
+          }
+          Divider()
+          Row(
+              modifier = Modifier.fillMaxWidth().padding(18.dp),
+              verticalAlignment = Alignment.CenterVertically,
+          ) {
+            Column(modifier = Modifier.weight(1f)) {
+              Text("Test back action", color = Color.White, fontSize = 17.sp)
+              Text(
+                  "Sends a BACK broadcast to the accessibility service. If it does not navigate back, Immortal Back is enabled but Android is not allowing this service to perform global BACK here.",
+                  color = Color(0xFF9A9A9A),
+                  fontSize = 13.sp,
+                  modifier = Modifier.padding(top = 2.dp),
+              )
+            }
+            Surface(
+                color = MaterialTheme.colorScheme.primary,
+                shape = RoundedCornerShape(10.dp),
+                modifier = Modifier.tvFocusable(RoundedCornerShape(10.dp)) {
+                  if (BackHelper.isBackServiceEnabled(context)) {
+                    context.sendBroadcast(
+                        Intent(ImmortalBackGestureService.ACTION_BACK)
+                            .setPackage(context.packageName))
+                    Toast.makeText(context, "Back action sent", Toast.LENGTH_SHORT).show()
+                  } else {
+                    Toast.makeText(
+                        context,
+                        "Enable Immortal Back first so system-wide BACK works",
+                        Toast.LENGTH_LONG).show()
+                  }
+                },
+            ) {
+              Text(
+                  "Test",
+                  color = Color.White,
+                  fontSize = 15.sp,
+                  modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
+              )
+            }
+          }
+          Divider()
+          Row(
+              modifier = Modifier.fillMaxWidth().padding(18.dp),
+              verticalAlignment = Alignment.CenterVertically,
+          ) {
+            Column(modifier = Modifier.weight(1f)) {
+              Text("Right-edge back gesture", color = Color.White, fontSize = 17.sp)
+              Text(
+                  "Enable or disable the gesture here. When enabled, swipe left from the right edge in any app to go back.",
+                  color = Color(0xFF9A9A9A),
+                  fontSize = 13.sp,
+                  modifier = Modifier.padding(top = 2.dp),
+              )
+            }
+            Switch(
+                checked = isOverlayRunning(context),
+                onCheckedChange = { enabled ->
+                  if (enabled) {
+                    if (!android.provider.Settings.canDrawOverlays(context)) {
+                      Toast.makeText(
+                          context,
+                          "Please grant \"Draw over other apps\" first",
+                          Toast.LENGTH_LONG).show()
+                      val intent = Intent(
+                          android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                          android.net.Uri.parse("package:${context.packageName}"))
+                          .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                      runCatching { context.startActivity(intent) }
+                    } else {
+                      startSystemBackGesture(context)
+                      Toast.makeText(context, "Swipe-from-right back enabled", Toast.LENGTH_SHORT).show()
+                    }
+                  } else {
+                    stopSystemBackGesture(context)
+                    Toast.makeText(context, "Swipe-from-right back disabled", Toast.LENGTH_SHORT).show()
+                  }
+                },
+            )
+          }
+          if (!android.provider.Settings.canDrawOverlays(context)) {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(start = 18.dp, end = 18.dp, bottom = 18.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+              Text(
+                  "Grant \"Draw over other apps\" to enable the swipe gesture.",
+                  color = Color(0xFFE53935),
+                  fontSize = 13.sp,
+                  modifier = Modifier.weight(1f),
+              )
+              Surface(
+                  color = MaterialTheme.colorScheme.primary,
+                  shape = RoundedCornerShape(10.dp),
+                  modifier = Modifier.tvFocusable(RoundedCornerShape(10.dp)) {
+                    val intent = Intent(
+                        android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                        android.net.Uri.parse("package:${context.packageName}"))
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    runCatching { context.startActivity(intent) }
+                  },
+              ) {
+                Text(
+                    "Grant",
+                    color = Color.White,
+                    fontSize = 15.sp,
+                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
+                )
+              }
+            }
+          }
+        }
+
         Text(
             "Changes apply immediately. Tap the clock icon on the home screen to start the screensaver.",
             color = Color(0xFF7C7C7C),
@@ -179,4 +363,41 @@ private fun ClockSettingsScreen() {
     }
     FolderBackButton(onClick = { activity?.finish() })
   }
+}
+
+@Composable
+private fun ActivationToggleRow(title: String, subtitle: String, checked: Boolean, onChange: (Boolean) -> Unit) {
+  Row(
+      modifier =
+          Modifier.fillMaxWidth().tvFocusableRow { onChange(!checked) }
+              .padding(horizontal = 18.dp, vertical = 14.dp),
+      verticalAlignment = Alignment.CenterVertically,
+  ) {
+    Column(modifier = Modifier.weight(1f)) {
+      Text(title, color = Color.White, fontSize = 17.sp)
+      Text(subtitle, color = Color(0xFF9A9A9A), fontSize = 13.sp, modifier = Modifier.padding(top = 2.dp))
+    }
+    Switch(checked = checked, onCheckedChange = null)
+  }
+}
+
+private fun isOverlayRunning(context: android.content.Context): Boolean =
+    runCatching {
+      val am = context.getSystemService(android.app.ActivityManager::class.java)
+      am.getRunningServices(Int.MAX_VALUE).any { it.service.className == SystemBackGestureService::class.java.name }
+    }.getOrDefault(false)
+
+private fun startSystemBackGesture(context: android.content.Context) {
+  runCatching {
+    val intent = Intent(context, SystemBackGestureService::class.java)
+    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+      context.startForegroundService(intent)
+    } else {
+      context.startService(intent)
+    }
+  }
+}
+
+private fun stopSystemBackGesture(context: android.content.Context) {
+  runCatching { context.stopService(Intent(context, SystemBackGestureService::class.java)) }
 }

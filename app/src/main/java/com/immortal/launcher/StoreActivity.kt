@@ -493,14 +493,6 @@ private fun AppDetailScreen(
               .focusGroup(),
   ) {
     Spacer(Modifier.height(56.dp))
-    Text(
-        "←  App Store",
-        color = Color(0xFF8AB4F8),
-        fontSize = 16.sp,
-        modifier =
-            Modifier.focusRequester(backFocus).tvFocusable(RoundedCornerShape(8.dp)) { onBack() },
-    )
-    Spacer(Modifier.height(22.dp))
 
     Row(verticalAlignment = Alignment.CenterVertically) {
       AppIcon(app, 96.dp)
@@ -511,7 +503,7 @@ private fun AppDetailScreen(
             modifier = Modifier.padding(top = 8.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-          Chip(if (app.source == "fdroid") "F-Droid" else "Direct download", Color(0xFF2E6BE6))
+          Chip(if (app.source == "fdroid") "F-Droid" else "Direct download", MaterialTheme.colorScheme.primary)
           if (!compatible) Chip(StoreCatalog.incompatibleLabel(app.minSdk ?: 0), Color(0xFFB9552E))
           if (app.devices.size == 1)
               Chip(

@@ -109,6 +109,62 @@ object Weather {
           }
           .getOrNull()
 
+  /** Current air quality, UV, and pollen. [aqi] is the European AQI (0..100+, lower is
+   * better); [pollen] is "" when unavailable (pollen is Europe-only on Open-Meteo). */
+  data class AirQuality(
+      val aqi: Int,
+      val aqiLabel: String,
+      val uvIndex: Double,
+      val pollen: String,
+  )
+
+  /** European AQI band label. */
+  private fun aqiBand(aqi: Double): String =
+      when {
+        aqi < 20 -> "Good"
+        aqi < 40 -> "Fair"
+        aqi < 60 -> "Moderate"
+        aqi < 80 -> "Poor"
+        aqi < 100 -> "Very poor"
+        else -> "Extremely poor"
+      }
+
+  /** Coarse pollen band from the worst of the reported species (grains/m³). */
+  private fun pollenBand(maxGrains: Double): String =
+      when {
+        maxGrains <= 0.0 -> ""
+        maxGrains < 20 -> "Low"
+        maxGrains < 50 -> "Moderate"
+        maxGrains < 150 -> "High"
+        else -> "Very high"
+      }
+
+  /** Current air quality / UV / pollen from Open-Meteo's keyless air-quality API.
+   * Null on failure. Pollen fields are Europe-only and come back absent elsewhere. */
+  fun fetchAirQuality(context: Context): AirQuality? =
+      runCatching {
+            val (lat, lon) = location(context) ?: return null
+            val cur =
+                JSONObject(
+                        httpGet(
+                            "https://air-quality-api.open-meteo.com/v1/air-quality?latitude=$lat" +
+                                "&longitude=$lon&current=european_aqi,uv_index,grass_pollen," +
+                                "birch_pollen,alder_pollen,ragweed_pollen,olive_pollen,mugwort_pollen" +
+                                "&timezone=auto"))
+                    .getJSONObject("current")
+            val aqi = cur.optDouble("european_aqi", Double.NaN)
+            if (aqi.isNaN()) return null
+            val uv = cur.optDouble("uv_index", Double.NaN).let { if (it.isNaN()) 0.0 else it }
+            val pollenMax =
+                listOf(
+                        "grass_pollen", "birch_pollen", "alder_pollen", "ragweed_pollen",
+                        "olive_pollen", "mugwort_pollen")
+                    .map { cur.optDouble(it, 0.0) }
+                    .maxOrNull() ?: 0.0
+            AirQuality(aqi.roundToInt(), aqiBand(aqi), uv, pollenBand(pollenMax))
+          }
+          .getOrNull()
+
   /** Last known city name (empty until geolocation has succeeded once). */
   fun cachedCity(context: Context): String =
       context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString("city", "") ?: ""
