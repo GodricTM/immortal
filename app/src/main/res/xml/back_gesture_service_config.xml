@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Configuration for ImmortalBackGestureService.
+     Flags:
+       - flagDefault: basic event delivery
+       - flagRetrieveInteractiveWindows: needed to query the active window
+       - flagReportViewIds: needed to reliably identify views
+     Capabilities:
+       - canPerformGestures: required to perform global actions
+     Accessibility shortcut:
+       - The service is advertised in Android Settings → Accessibility and
+         exposes the global BACK action via performGlobalAction(). -->
+<accessibility-service
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    android:accessibilityEventTypes="typeWindowStateChanged|typeWindowContentChanged"
+    android:accessibilityFeedbackType="feedbackGeneric"
+    android:accessibilityFlags="flagDefault|flagIncludeNotImportantViews|flagRetrieveInteractiveWindows"
+    android:canPerformGestures="true"
+    android:canRetrieveWindowContent="true"
+    android:description="@string/back_gesture_service_description"
+    android:notificationTimeout="100"
+    android:settingsActivity="com.immortal.launcher.ImmortalSettingsActivity" />
