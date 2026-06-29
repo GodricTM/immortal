@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.44 (2026-06-21)
+
+Merges upstream **starbrightlab 1.42 and 1.43** into the **@GodricTM** feature
+fork. New from upstream: screensaver clock faces with a picker (flip clock, big,
+bold, minimal); self-hosted photo sources (Immich, SMB, WebDAV, web pages) set up
+from your phone via a QR code; a calendar widget on the photo frame from a public
+iCal link; a dimmed overnight night clock; Home Assistant over MQTT (now with
+TLS); a top-bar app switcher; and support for the newer iCloud (CloudKit)
+shared-album links. All @GodricTM fork features below are retained.
+
 ## 1.43 (2026-06-20)
 
 Screensaver gets clock faces and a lot more places to pull photos from.
@@ -18,6 +28,74 @@ Home Assistant, and a quicker way to switch apps.
 - **Home Assistant integration.** Immortal can talk to [Home Assistant](https://www.home-assistant.io/) over MQTT: it publishes the Portal's state and accepts commands, so the device shows up as something you can see and control from Home Assistant — including turning its screen on and off.
 - **Top-bar app switcher.** A new header control lists your recently-used apps so you can hop between them without going back to the home grid.
 - **Multi-room polish.** The multi-room audio settings gained an in-app setup guide and a keyboard sized to fit the fields, and dropped a Snapcast stream-status gate that could blank the AirPlay now-playing card.
+
+## 1.41 (2026-06-19)
+
+Merged upstream **starbrightlab 1.40** (multi-room audio, now-playing on every
+Portal, provisioning overhaul) into the **@GodricTM** feature fork. Adopted
+upstream's now-playing stack and its system installer (the gen-1 install daemon is
+kept as a fallback for API 28), and added a system-wide touch/keypress-sounds
+toggle. All fork features below are retained.
+
+### Fork feature batch — @GodricTM (2026-06-15)
+
+A large batch of ambient, kitchen, bedroom and "go outside and look" features.
+Authored by **@GodricTM**. Everything here is keyless and works offline-first (no
+Google services), per Portal constraints.
+
+**Sky & "go outside" tiles**
+
+- **ISS Pass predictor** — a tile that tells you when the International Space Station
+  flies over *your* location ("Visible pass Fri 9:42 PM ✨"), the direction it rises
+  and sets, how high it climbs, and whether it'll be bright enough to actually spot.
+  The orbit is propagated on-device with a self-contained SGP4 model (validated against
+  the standard NORAD test vector); only a one-off keyless orbital-element fetch needs the
+  network, then it works offline for days.
+- **Aurora tile** — lights up green *only when there's a real chance of aurora at this
+  device's location*, in any country and either hemisphere. It compares the live
+  planetary K-index (NOAA SWPC) to your geomagnetic latitude and the auroral oval, and
+  shows the Kp number and which horizon to face.
+- **Constellation night background** — a new "Stars" background that shows the real night
+  sky for your location and time behind the app grid after dark, fading in through dusk.
+
+**Kitchen & quick tools**
+
+- **Stopwatch / count-up** with lap marks, for workouts, steeping, anything.
+- **Converter** — length, weight, volume, speed and temperature offline, plus live
+  currency (European Central Bank rates, cached so it keeps working offline).
+- **Wave to advance (experimental):** wave a hand in front of the camera to move to the
+  next photo in the frame — no touch needed for floury or wet hands. Uses the standard
+  camera only; **off by default** (Screensaver settings → Gestures).
+
+**Bedroom**
+
+- **Sunrise alarm / wake light** — at the time you set, the screen brightens gradually
+  from a deep ember to daylight over a chosen ramp, with an optional gentle chime at the
+  end. Turns a bedroom Portal into a wake light.
+- **Lamp mode** — fills the screen with warm white at a chosen brightness and warmth: an
+  instant nightlight, reading light, or video-call fill light.
+- **Bedtime stories** — a small library of public-domain children's tales shown in big,
+  calm text and read aloud through the device's voice.
+- **Anti-burn-in** — the always-on digital clock now drifts along a slow, invisible path
+  so a screen that's never off ages evenly.
+
+**Household & connected**
+
+- **Ping the other room** — tap to light up every other Portal in the house with a tone
+  and a spoken room name. A contact-free intercom-lite over your Wi-Fi, with nothing to
+  sign in to and no server.
+- **Calendar packs** — add the calendar that fits your household: Irish bank holidays and
+  saints' days, or daily Islamic prayer times computed for your location. These sit
+  alongside the existing Romanian name-days / Orthodox feast lines.
+
+**Knowing your device**
+
+- **What's New** — a tile showing the launcher's recent self-updates, so a device that
+  improves itself quietly isn't a black box.
+- **Request an app** — opens a prefilled request so the household can signal which apps
+  they'd like added.
+- **"Did you know" tips** — an occasional card surfacing a feature you might not have
+  found yet.
 
 ## 1.40 (2026-06-18)
 
@@ -60,12 +138,83 @@ A push-to-talk voice button in the header, and a tidier top bar.
 - **Clock moved to the top-left corner**, with the screensaver and "hey" buttons grouped to its right — cleaner now that there's more than one button up there.
 - **Provisioning kit:** Shizuku is now installed + started on **every** Portal (not just the Gen-1), as a generally useful privileged broker. New **opt-in "Restore Amazon Alexa"** step revives the original on-device Alexa client (`./provision.sh --alexa`, or answer the prompt during setup).
 
+## 1.37 (2026-06-14)
+
+A major expansion of the screensaver, back navigation, home screen widgets, and
+Piper neural TTS. Authored by **@GodricTM**.
+
+- **Welcome-back overlay:** when the Portal's presence sensor wakes the screensaver,
+  a brief (3 s) overlay fades in over the photo frame showing a time-of-day greeting
+  ("Good morning / afternoon / evening"), the current time, and the date. Tapping
+  dismisses it early. Shown on every presence-triggered start (`PhotoDreamService` and
+  `DreamPolicy` relaunch); skipped for the manual preview. Togglable via
+  `ScreensaverConfig.welcomeEnabled` (on by default).
+- **Piper neural TTS:** the welcome overlay can speak the greeting via `PiperTTS`,
+  a Sherpa-ONNX wrapper using the `en_US-lessac-medium` voice (~16 MB download on
+  first use). Android system TTS starts immediately as a fast-path fallback; Piper
+  wins if it's ready first. Off by default; enabled in Welcome settings.
+- **Digital clock screensaver:** a second Dream service (`DigitalClockDreamService`)
+  shows a configurable full-screen digital or analog clock. Clock settings tile with
+  font, color, size, layout, background, glow, and style controls; optional
+  seconds display and date line; full-screen preview; screensaver activation controls.
+- **Sleep timer:** a dedicated Sleep tile and settings page with a live countdown,
+  start/stop controls, pause-audio option, close-app option, and a sleep flow that
+  disables Immortal's screensaver before locking the screen.
+- **System-wide back shortcut:** `ImmortalBackGestureService` (accessibility) plus an
+  optional right-edge swipe overlay (`SystemBackGestureService`). Fixes the
+  back-action recursion so the accessibility service fires Android's real
+  `GLOBAL_ACTION_BACK`.
+- **Launcher dashboard:** optional Calendar agenda widget (next 7 days), system stats
+  widget (RAM / storage / uptime), custom accent colors (16 options), custom
+  image/blur background, explicit new-folder button, persisted empty folders,
+  bottom-right folder back button, and a Portal-home shortcut tile.
+- **Settings polish:** expanded Immortal settings for weather, calendar, stats, clock
+  format, accent color, background, and screensaver activation; moved sleep controls
+  into their own page.
+- **Easter Egg tile:** injects the Android 9 Pie Easter Egg
+  (`com.android.systemui/.egg.MLandActivity` — the cat-herding / MLand game) as a
+  persistent home-grid tile on any Portal where it's present.
+- **Dual NIU overlay fix (provisioner):** the `--overlay-fix` step now disables both
+  `com.facebook.aloha.rro.niu.android` *and* `com.facebook.aloha.rro.niu.settings`,
+  fixing Settings white-on-white in addition to the installer dialog on Gen-1.
+- **OFL font compliance:** replaced the four personal-use-only TTF fonts with
+  redistribution-safe OFL-1.1 alternatives (DSEG7Classic, DSEG14Classic, Orbitron).
+  Added `assets/fonts/OFL.txt`. The build is now clean for open-source redistribution.
+- **CLAUDE.md:** AI agent navigation guide documenting hardware targets, architecture,
+  key constraints, and build/deploy workflow — for automated coding assistance in
+  future sessions.
+- **`deploy.bat`:** Windows one-shot build-and-deploy helper (wraps `gradlew
+  assembleDebug` + `adb install -r`).
+- **Build/runtime plumbing:** calendar, overlay, foreground-service, and accessibility
+  metadata; `ui-android` Compose dependency; Sherpa-ONNX AAR via local `libs/`.
+
+## 1.34 (2026-06-09)
+
+Calls bridge fix, a real screensaver off-switch, and practical screen-off controls.
+
+- **Calls bridge:** routes through the stock launcher's `portal://launcher/home` deep link where available and suppresses Immortal's aggressive photo-frame relaunch during the handoff, fixing the issue where opening Calls could immediately kick the user back into Immortal.
+- **Screensaver off-switch:** the photo-frame master toggle now sticks. When disabled, Immortal stops forcing its screensaver back on, so the Portal can sleep normally or the user can use another setup.
+- **Idle screen-off:** added an optional timer that turns the screen off after the screensaver has been running for a chosen period with no interaction.
+- **Overnight sleep:** added an optional daily sleep window so the screen stays off between configured times.
+- **Provisioning:** activates Immortal's force-lock device admin during setup and removes it during restore. This is used only for the new screen-off features.
+- **Release:** bumped the app to `versionCode` 35 / `versionName` 1.34 and pointed the OTA manifest at the new build.
+
 ## 1.30 (2026-06-08)
 
 A 24-hour clock option — by community request.
 
 - New **Clock ▸ Time format** control in Settings folder → Immortal: **Auto** (follows the Portal's system 24-hour setting), **12h**, or **24h**. Auto by default, so existing setups are unchanged.
 - The choice applies everywhere the time is shown: the home-screen header clock, the screensaver/photo-frame clock, and the hourly forecast labels (e.g. `13` instead of `1 PM`). The launcher and screensaver re-read the setting on resume, so it takes effect as soon as you go back home.
+
+## 1.29 (2026-06-08)
+
+Optional home-screen weather forecast widget.
+
+- New **Home-screen forecast** control in Settings folder -> Immortal -> Weather: Off, Hourly, or 7-day. Off by default.
+- The launcher can render a full-width forecast below the app grid, with swipeable hourly and 7-day pages.
+- Forecast data comes from one keyless Open-Meteo request and respects the user's Fahrenheit/Celsius setting.
+- Failure handling is quiet: the widget retries when unavailable and keeps the last good forecast rather than blanking on a failed refresh.
+- Added focused tests around forecast URL construction, parsing, time cutoff behavior, and edge cases.
 
 ## 1.28 (2026-06-07)
 
