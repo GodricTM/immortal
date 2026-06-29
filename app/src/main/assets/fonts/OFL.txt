@@ -1,0 +1,29 @@
+All fonts in this directory are licensed under the SIL Open Font License 1.1.
+
+digital_7.ttf  — DSEG7Classic-Regular
+segment_led.ttf — DSEG14Classic-Regular
+  Copyright (c) 2017 Keshikan (http://www.keshikan.net)
+  Source: https://github.com/keshikan/DSEG
+
+technology.ttf     — Orbitron Regular
+technology_bold.ttf — Orbitron Bold
+  Copyright (c) 2009, Matt McInerney (matt@pixelspread.com)
+  Copyright (c) 2011, Google Inc. (https://www.google.com/get/noto/)
+  Source: https://github.com/googlefonts/orbitron
+
+---
+SIL OPEN FONT LICENSE Version 1.1
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of the Font Software, to use, study, copy, merge, embed, modify, redistribute,
+and sell modified and unmodified copies of the Font Software, subject to the
+following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies of the Font Software.
+
+THE FONT SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. IN NO
+EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES
+OR OTHER LIABILITY ARISING FROM THE USE OF THE FONT SOFTWARE.
+
+Full license text: https://scripts.sil.org/OFL

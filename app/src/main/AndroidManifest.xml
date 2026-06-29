@@ -20,6 +20,9 @@
     <uses-permission android:name="android.permission.WRITE_SECURE_SETTINGS"
         tools:ignore="ProtectedPermissions" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <!-- Voice notes: AudioNote records short memos via the handset mic. Requested at
+         runtime; recording is a no-op until granted. -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <!-- Fleet Agent: a foreground service so WiFi device management survives a
          reboot on these non-root Portals (where adb-over-WiFi can't). -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
@@ -173,6 +176,23 @@
         <activity android:name=".DeviceHealthActivity" android:exported="false" android:theme="@style/Theme.SampleApp" />
         <activity android:name=".WorldClockActivity" android:exported="false" android:theme="@style/Theme.SampleApp" />
         <activity android:name=".BootAppsActivity" android:exported="false" android:theme="@style/Theme.SampleApp" />
+
+        <!-- Lamp mode: full-screen warm-white light panel. -->
+        <activity
+            android:name=".LampActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:screenOrientation="landscape"
+            android:label="Lamp"
+            android:theme="@style/Theme.SampleApp" />
+
+        <!-- Bedtime stories: public-domain tales read aloud via TTS. -->
+        <activity
+            android:name=".BedtimeStoryActivity"
+            android:exported="false"
+            android:screenOrientation="landscape"
+            android:label="Bedtime story"
+            android:theme="@style/Theme.SampleApp" />
 
         <!-- Connect a self-hosted Immich server as the screensaver source. -->
         <activity
