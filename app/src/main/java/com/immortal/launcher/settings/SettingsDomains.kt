@@ -12,7 +12,11 @@ import com.immortal.launcher.CalendarFeed
 import com.immortal.launcher.CalendarUrlEntryActivity
 import com.immortal.launcher.ChimeConfig
 import com.immortal.launcher.ChimeScheduler
+import com.immortal.launcher.DigitalClockConfig
 import com.immortal.launcher.DreamPolicy
+import com.immortal.launcher.SunriseConfig
+import com.immortal.launcher.SunriseScheduler
+import com.immortal.launcher.WelcomeConfig
 import com.immortal.launcher.FaceCatalog
 import com.immortal.launcher.FacePickerActivity
 import com.immortal.launcher.FleetCalendar
@@ -330,6 +334,77 @@ object SettingsDomains {
                       get = { it.overnightNightClock },
                       set = ScreensaverConfig::setOvernightNightClock,
                       visible = { _, s -> s.overnightEnabled }),
+                  // ---- Fork-specific screensaver controls ----
+                  EnumSpec(
+                      "feed",
+                      "Photo feed",
+                      get = { it.feed },
+                      set = ScreensaverConfig::setFeed,
+                      options = ScreensaverConfig.FEEDS.map { it to ScreensaverConfig.feedLabel(it) },
+                      coerce = { v -> v.takeIf { it in ScreensaverConfig.FEEDS } },
+                      visible = { _, s -> s.source == ScreensaverConfig.SOURCE_DEFAULT },
+                      help = "Which online photo feed to use with the built-in source."),
+                  BoolSpec(
+                      "sleepTimerEnabled",
+                      "Sleep timer",
+                      get = { it.sleepTimerEnabled },
+                      set = ScreensaverConfig::setSleepTimerEnabled,
+                      help = "Turn the screensaver off after a set time."),
+                  IntSpec(
+                      "sleepTimerMin",
+                      "Sleep after",
+                      get = { it.sleepTimerMin },
+                      set = ScreensaverConfig::setSleepTimerMin,
+                      min = 1,
+                      max = 240,
+                      step = 5,
+                      format = { "$it min" },
+                      visible = { _, s -> s.sleepTimerEnabled }),
+                  BoolSpec(
+                      "pauseAudioOnSleep",
+                      "Pause audio on sleep",
+                      get = { it.pauseAudioOnSleep },
+                      set = ScreensaverConfig::setPauseAudioOnSleep,
+                      visible = { _, s -> s.sleepTimerEnabled }),
+                  BoolSpec(
+                      "closeAppOnSleep",
+                      "Close app on sleep",
+                      get = { it.closeAppOnSleep },
+                      set = ScreensaverConfig::setCloseAppOnSleep,
+                      visible = { _, s -> s.sleepTimerEnabled }),
+                  EnumSpec(
+                      "soundscape",
+                      "Ambient sound",
+                      get = { it.soundscape },
+                      set = ScreensaverConfig::setSoundscape,
+                      options = ScreensaverConfig.SOUNDSCAPES.map { it to ScreensaverConfig.soundscapeLabel(it) },
+                      coerce = { v -> v.takeIf { it in ScreensaverConfig.SOUNDSCAPES } },
+                      help = "Synthesised ambient sound played while the screensaver shows."),
+                  IntSpec(
+                      "soundscapeVolume",
+                      "Soundscape volume",
+                      get = { it.soundscapeVolume },
+                      set = ScreensaverConfig::setSoundscapeVolume,
+                      min = 0,
+                      max = 100,
+                      step = 5,
+                      format = { "$it%" },
+                      visible = { _, s -> s.soundscape != ScreensaverConfig.SOUND_OFF }),
+                  BoolSpec(
+                      "ambientDashboard",
+                      "Ambient dashboard",
+                      get = { it.ambientDashboard },
+                      set = ScreensaverConfig::setAmbientDashboard),
+                  BoolSpec(
+                      "gestureWave",
+                      "Gesture wave to wake",
+                      get = { it.gestureWave },
+                      set = ScreensaverConfig::setGestureWave),
+                  BoolSpec(
+                      "welcomeEnabled",
+                      "Welcome screen",
+                      get = { it.welcomeEnabled },
+                      set = ScreensaverConfig::setWelcomeEnabled),
               ),
           sections =
               mapOf(
@@ -340,13 +415,23 @@ object SettingsDomains {
                   "includeVideo" to "Display",
                   "showNowPlaying" to "Display",
                   "antiBurnIn" to "Display",
+                  "feed" to "Display",
+                  "ambientDashboard" to "Display",
+                  "gestureWave" to "Display",
+                  "welcomeEnabled" to "Display",
                   "batterySaver" to "Power & sleep",
                   "presenceMode" to "Power & sleep",
                   "idleSleepMin" to "Power & sleep",
                   "overnightEnabled" to "Power & sleep",
                   "overnightStartMin" to "Power & sleep",
                   "overnightEndMin" to "Power & sleep",
-                  "overnightNightClock" to "Power & sleep"),
+                  "overnightNightClock" to "Power & sleep",
+                  "sleepTimerEnabled" to "Sleep timer",
+                  "sleepTimerMin" to "Sleep timer",
+                  "pauseAudioOnSleep" to "Sleep timer",
+                  "closeAppOnSleep" to "Sleep timer",
+                  "soundscape" to "Audio",
+                  "soundscapeVolume" to "Audio"),
           defaults = { ScreensaverConfig.Settings() },
           // The screensaver's post-apply side effects, lifted from the route layer (the same
           // reaffirm + overnight reschedule that `RemoteRoutes.applyConfig` / `FleetRoutes` run).
@@ -471,6 +556,187 @@ object SettingsDomains {
                       set = ImmortalSettings::setMaPassword,
                       secret = true,
                       visible = { _, s -> s.multiRoomEnabled }),
+                  // ---- Fork-specific home-screen controls ----
+                  BoolSpec(
+                      "showSunTimes",
+                      "Sunrise & sunset",
+                      get = { it.showSunTimes },
+                      set = ImmortalSettings::setShowSunTimes,
+                      help = "Show today's sunrise and sunset under the header weather."),
+                  BoolSpec(
+                      "showNameDay",
+                      "Name day",
+                      get = { it.showNameDay },
+                      set = ImmortalSettings::setShowNameDay,
+                      help = "Show today's Romanian name day (onomastica) in the header."),
+                  BoolSpec(
+                      "showFeastDay",
+                      "Orthodox feast day",
+                      get = { it.showFeastDay },
+                      set = ImmortalSettings::setShowFeastDay,
+                      help = "Show today's Orthodox feast in the header."),
+                  BoolSpec(
+                      "showNextEvent",
+                      "Next calendar event",
+                      get = { it.showNextEvent },
+                      set = ImmortalSettings::setShowNextEvent,
+                      help = "Show the next upcoming calendar event in the header."),
+                  BoolSpec(
+                      "showTabs",
+                      "Category tabs",
+                      get = { it.showTabs },
+                      set = ImmortalSettings::setShowTabs,
+                      help = "Show All, Apps, Tools, and Settings tabs above the grid for quick filtering."),
+                  BoolSpec(
+                      "dashboardPage",
+                      "Dashboard page",
+                      get = { it.dashboardPage },
+                      set = ImmortalSettings::setDashboardPage,
+                      help = "Add a second swipeable glanceable dashboard home page."),
+                  BoolSpec(
+                      "showTimeProgress",
+                      "Year progress card",
+                      get = { it.showTimeProgress },
+                      set = ImmortalSettings::setShowTimeProgress,
+                      help = "A 'year is N% gone' card on the dashboard page.",
+                      visible = { _, s -> s.dashboardPage }),
+                  BoolSpec(
+                      "showDashClock",
+                      "Dashboard clock",
+                      get = { it.showDashClock },
+                      set = ImmortalSettings::setShowDashClock,
+                      visible = { _, s -> s.dashboardPage }),
+                  BoolSpec(
+                      "showDashCountdowns",
+                      "Dashboard countdowns",
+                      get = { it.showDashCountdowns },
+                      set = ImmortalSettings::setShowDashCountdowns,
+                      visible = { _, s -> s.dashboardPage }),
+                  EnumSpec(
+                      "sortMode",
+                      "App sort",
+                      get = { it.sortMode },
+                      set = ImmortalSettings::setSortMode,
+                      options =
+                          listOf(
+                              ImmortalSettings.SORT_MANUAL to "Manual",
+                              ImmortalSettings.SORT_AZ to "A-Z",
+                              ImmortalSettings.SORT_USED to "Most used",
+                              ImmortalSettings.SORT_RECENT to "Recently installed"),
+                      coerce = oneOf(
+                          ImmortalSettings.SORT_MANUAL, ImmortalSettings.SORT_AZ,
+                          ImmortalSettings.SORT_USED, ImmortalSettings.SORT_RECENT),
+                      help = "How apps are ordered on the grid."),
+                  EnumSpec(
+                      "calendarWidget",
+                      "Calendar widget",
+                      get = { it.calendarWidget },
+                      set = ImmortalSettings::setCalendarWidget,
+                      options =
+                          listOf(
+                              ImmortalSettings.CALENDAR_OFF to "Off",
+                              ImmortalSettings.CALENDAR_ON to "On"),
+                      coerce = oneOf(ImmortalSettings.CALENDAR_OFF, ImmortalSettings.CALENDAR_ON)),
+                  EnumSpec(
+                      "statsMode",
+                      "System stats",
+                      get = { it.statsMode },
+                      set = ImmortalSettings::setStatsMode,
+                      options =
+                          listOf(
+                              ImmortalSettings.STATS_OFF to "Off",
+                              ImmortalSettings.STATS_ON to "On"),
+                      coerce = oneOf(ImmortalSettings.STATS_OFF, ImmortalSettings.STATS_ON)),
+                  EnumSpec(
+                      "accentColor",
+                      "Accent colour",
+                      get = { it.accentColor },
+                      set = ImmortalSettings::setAccentColor,
+                      options =
+                          listOf(
+                              ImmortalSettings.ACCENT_BLUE to "Blue",
+                              ImmortalSettings.ACCENT_GREEN to "Green",
+                              ImmortalSettings.ACCENT_PURPLE to "Purple",
+                              ImmortalSettings.ACCENT_ORANGE to "Orange",
+                              ImmortalSettings.ACCENT_PINK to "Pink",
+                              ImmortalSettings.ACCENT_TEAL to "Teal",
+                              ImmortalSettings.ACCENT_RED to "Red",
+                              ImmortalSettings.ACCENT_YELLOW to "Yellow",
+                              ImmortalSettings.ACCENT_INDIGO to "Indigo",
+                              ImmortalSettings.ACCENT_CYAN to "Cyan",
+                              ImmortalSettings.ACCENT_LIME to "Lime",
+                              ImmortalSettings.ACCENT_AMBER to "Amber",
+                              ImmortalSettings.ACCENT_DEEP_PURPLE to "Deep purple",
+                              ImmortalSettings.ACCENT_BROWN to "Brown",
+                              ImmortalSettings.ACCENT_CORAL to "Coral",
+                              ImmortalSettings.ACCENT_MINT to "Mint"),
+                      coerce = oneOf(
+                          ImmortalSettings.ACCENT_BLUE, ImmortalSettings.ACCENT_GREEN,
+                          ImmortalSettings.ACCENT_PURPLE, ImmortalSettings.ACCENT_ORANGE,
+                          ImmortalSettings.ACCENT_PINK, ImmortalSettings.ACCENT_TEAL,
+                          ImmortalSettings.ACCENT_RED, ImmortalSettings.ACCENT_YELLOW,
+                          ImmortalSettings.ACCENT_INDIGO, ImmortalSettings.ACCENT_CYAN,
+                          ImmortalSettings.ACCENT_LIME, ImmortalSettings.ACCENT_AMBER,
+                          ImmortalSettings.ACCENT_DEEP_PURPLE, ImmortalSettings.ACCENT_BROWN,
+                          ImmortalSettings.ACCENT_CORAL, ImmortalSettings.ACCENT_MINT),
+                      help = "The accent colour used for highlights and active controls."),
+                  EnumSpec(
+                      "backgroundType",
+                      "Background",
+                      get = { it.backgroundType },
+                      set = ImmortalSettings::setBackgroundType,
+                      options =
+                          listOf(
+                              ImmortalSettings.BG_DARK to "Dark",
+                              ImmortalSettings.BG_IMAGE to "Image",
+                              ImmortalSettings.BG_BLUR to "Blurred image",
+                              ImmortalSettings.BG_GRADIENT to "Gradient",
+                              ImmortalSettings.BG_SKY to "Sky",
+                              ImmortalSettings.BG_STARS to "Stars"),
+                      coerce = oneOf(
+                          ImmortalSettings.BG_DARK, ImmortalSettings.BG_IMAGE,
+                          ImmortalSettings.BG_BLUR, ImmortalSettings.BG_GRADIENT,
+                          ImmortalSettings.BG_SKY, ImmortalSettings.BG_STARS),
+                      help = "The home screen background."),
+                  EnumSpec(
+                      "backgroundGradient",
+                      "Gradient preset",
+                      get = { it.backgroundGradient },
+                      set = ImmortalSettings::setBackgroundGradient,
+                      options = ImmortalSettings.GRADIENTS.map { it.first to ImmortalSettings.gradientLabel(it.first) },
+                      coerce = { v -> v.takeIf { it in ImmortalSettings.GRADIENTS.map { g -> g.first } } },
+                      visible = { _, s -> s.backgroundType == ImmortalSettings.BG_GRADIENT }),
+                  BoolSpec(
+                      "showDayProgress",
+                      "Day progress bar",
+                      get = { it.showDayProgress },
+                      set = ImmortalSettings::setShowDayProgress,
+                      visible = { _, s -> s.backgroundType == ImmortalSettings.BG_SKY },
+                      help = "Thin top bar showing the day's progress (with the Sky background)."),
+                  EnumSpec(
+                      "dailyTileMode",
+                      "Daily tile",
+                      get = { it.dailyTileMode },
+                      set = ImmortalSettings::setDailyTileMode,
+                      options =
+                          listOf(
+                              "off" to "Off",
+                              "quote" to "Quote",
+                              "word" to "Word",
+                              "trivia" to "Trivia"),
+                      coerce = oneOf("off", "quote", "word", "trivia")),
+                  BoolSpec(
+                      "activateOnSleep",
+                      "Activate screensaver on sleep",
+                      get = { it.activateOnSleep },
+                      set = ImmortalSettings::setActivateOnSleep,
+                      help = "Start the dream when the screen turns off."),
+                  BoolSpec(
+                      "activateOnDock",
+                      "Activate screensaver on dock",
+                      get = { it.activateOnDock },
+                      set = ImmortalSettings::setActivateOnDock,
+                      help = "Start the dream when docked."),
               ),
           sections =
               mapOf(
@@ -485,7 +751,26 @@ object SettingsDomains {
                   "snapcastHost" to "Audio",
                   "maPort" to "Audio",
                   "maUsername" to "Audio",
-                  "maPassword" to "Audio"),
+                  "maPassword" to "Audio",
+                  "calendarWidget" to "Home screen",
+                  "statsMode" to "Home screen",
+                  "accentColor" to "Home screen",
+                  "backgroundType" to "Home screen",
+                  "backgroundGradient" to "Home screen",
+                  "showDayProgress" to "Home screen",
+                  "showSunTimes" to "Home screen",
+                  "showNameDay" to "Home screen",
+                  "showFeastDay" to "Home screen",
+                  "showNextEvent" to "Home screen",
+                  "dailyTileMode" to "Home screen",
+                  "sortMode" to "Home screen",
+                  "showTabs" to "Home screen",
+                  "dashboardPage" to "Dashboard",
+                  "showTimeProgress" to "Dashboard",
+                  "showDashClock" to "Dashboard",
+                  "showDashCountdowns" to "Dashboard",
+                  "activateOnSleep" to "Screensaver",
+                  "activateOnDock" to "Screensaver"),
           defaults = { ImmortalSettings.Settings() },
           onApplied = { c, keys ->
             if ("hideStatusBar" in keys) SettingsGuard.applyStatusBar(c)
@@ -612,34 +897,6 @@ object SettingsDomains {
           },
       )
 
-  /**
-   * Device identity. One control: the Portal's display name, shown in the phone remote's device
-   * switcher and used as the Home Assistant device name. HA `unique_id` and the MQTT topic path key
-   * off a separate stable device id ([MqttConfig.deviceId]), so renaming is cosmetic and safe.
-   * Bound to [FleetConfig], whose setter also rewrites the shell-readable fleet manifest.
-   */
-  val fleet: SettingsDomain<Context> =
-      SettingsDomain(
-          id = "fleet",
-          title = "Device",
-          load = { it },
-          specs =
-              listOf(
-                  StringSpec(
-                      "name",
-                      "Device name",
-                      get = { FleetConfig.name(it) },
-                      // Trim surrounding whitespace before storing. Any printable characters are
-                      // allowed (HA device name and the mDNS service name tolerate them).
-                      set = { c, v -> FleetConfig.setName(c, v.trim()) },
-                      // Reject blank or over-long names; the trimmed form must be 1..48 chars.
-                      applyWhen = { it.trim().length in 1..48 },
-                      help = "Shown in the phone remote and in Home Assistant.",
-                  ),
-              ),
-      )
-
-  /** Every registered domain. */
   /**
    * Gentle ambient audio cues — hourly chime, spoken time, golden-hour tone, "ping the other room"
    * volume, and quiet hours ([ChimeConfig]). All off by default; nothing plays inside the quiet
@@ -775,6 +1032,326 @@ object SettingsDomains {
           },
       )
 
+  /**
+   * The digital clock screensaver ([DigitalClockConfig]). When enabled, it replaces the photo-frame
+   * dream with a large customisable clock (style, color, font, size, layout, background, glow, date,
+   * seconds). The enum setters write the raw string straight to prefs (no normalising), so each
+   * [EnumSpec] carries a strict [EnumSpec.coerce] that rejects an unrecognised value — matching the
+   * Immortal display-enum pattern.
+   *
+   * Toggling [DigitalClockConfig.Settings.enabled] switches the active Dream between
+   * [DigitalClockDreamService] and [PhotoDreamService]; that side effect lives in [onApplied]
+   * (reaffirm the dream once per batch) rather than inline in the setter or the Activity.
+   */
+  val digitalclock: SettingsDomain<DigitalClockConfig.Settings> =
+      SettingsDomain(
+          id = "digitalclock",
+          title = "Clock",
+          load = DigitalClockConfig::load,
+          specs =
+              listOf(
+                  BoolSpec(
+                      "enabled",
+                      "Digital clock",
+                      get = { it.enabled },
+                      set = DigitalClockConfig::setEnabled,
+                      help = "Use a large clock instead of the photo frame screensaver."),
+                  EnumSpec(
+                      "style",
+                      "Clock style",
+                      get = { it.style },
+                      set = DigitalClockConfig::setStyle,
+                      options =
+                          listOf(
+                              DigitalClockConfig.STYLE_CLASSIC to "Classic",
+                              DigitalClockConfig.STYLE_FLIP to "Flip",
+                              DigitalClockConfig.STYLE_BOLD to "Bold",
+                              DigitalClockConfig.STYLE_NEON to "Neon",
+                              DigitalClockConfig.STYLE_SEGMENT to "Segment",
+                              DigitalClockConfig.STYLE_ANALOG to "Analog"),
+                      coerce = oneOf(
+                          DigitalClockConfig.STYLE_CLASSIC, DigitalClockConfig.STYLE_FLIP,
+                          DigitalClockConfig.STYLE_BOLD, DigitalClockConfig.STYLE_NEON,
+                          DigitalClockConfig.STYLE_SEGMENT, DigitalClockConfig.STYLE_ANALOG),
+                      visible = { _, s -> s.enabled }),
+                  EnumSpec(
+                      "color",
+                      "Color",
+                      get = { it.color },
+                      set = DigitalClockConfig::setColor,
+                      options =
+                          listOf(
+                              DigitalClockConfig.COLOR_WHITE to "White",
+                              DigitalClockConfig.COLOR_RED to "Red",
+                              DigitalClockConfig.COLOR_GREEN to "Green",
+                              DigitalClockConfig.COLOR_BLUE to "Blue",
+                              DigitalClockConfig.COLOR_YELLOW to "Yellow",
+                              DigitalClockConfig.COLOR_CYAN to "Cyan",
+                              DigitalClockConfig.COLOR_PINK to "Pink",
+                              DigitalClockConfig.COLOR_ORANGE to "Orange"),
+                      coerce = oneOf(
+                          DigitalClockConfig.COLOR_WHITE, DigitalClockConfig.COLOR_RED,
+                          DigitalClockConfig.COLOR_GREEN, DigitalClockConfig.COLOR_BLUE,
+                          DigitalClockConfig.COLOR_YELLOW, DigitalClockConfig.COLOR_CYAN,
+                          DigitalClockConfig.COLOR_PINK, DigitalClockConfig.COLOR_ORANGE),
+                      visible = { _, s -> s.enabled }),
+                  EnumSpec(
+                      "font",
+                      "Font",
+                      get = { it.font },
+                      set = DigitalClockConfig::setFont,
+                      options =
+                          listOf(
+                              DigitalClockConfig.FONT_LIGHT to "Light",
+                              DigitalClockConfig.FONT_NORMAL to "Normal",
+                              DigitalClockConfig.FONT_BOLD to "Bold",
+                              DigitalClockConfig.FONT_MONO to "Mono",
+                              DigitalClockConfig.FONT_SERIF to "Serif",
+                              DigitalClockConfig.FONT_SEGMENT_LED to "LED",
+                              DigitalClockConfig.FONT_DIGITAL_7 to "Digital",
+                              DigitalClockConfig.FONT_TECHNOLOGY to "Tech"),
+                      coerce = oneOf(
+                          DigitalClockConfig.FONT_LIGHT, DigitalClockConfig.FONT_NORMAL,
+                          DigitalClockConfig.FONT_BOLD, DigitalClockConfig.FONT_MONO,
+                          DigitalClockConfig.FONT_SERIF, DigitalClockConfig.FONT_SEGMENT_LED,
+                          DigitalClockConfig.FONT_DIGITAL_7, DigitalClockConfig.FONT_TECHNOLOGY),
+                      visible = { _, s -> s.enabled }),
+                  EnumSpec(
+                      "size",
+                      "Size",
+                      get = { it.size },
+                      set = DigitalClockConfig::setSize,
+                      options =
+                          listOf(
+                              DigitalClockConfig.SIZE_SMALL to "Small",
+                              DigitalClockConfig.SIZE_MEDIUM to "Medium",
+                              DigitalClockConfig.SIZE_LARGE to "Large",
+                              DigitalClockConfig.SIZE_XL to "XL"),
+                      coerce = oneOf(
+                          DigitalClockConfig.SIZE_SMALL, DigitalClockConfig.SIZE_MEDIUM,
+                          DigitalClockConfig.SIZE_LARGE, DigitalClockConfig.SIZE_XL),
+                      visible = { _, s -> s.enabled }),
+                  EnumSpec(
+                      "layout",
+                      "Position",
+                      get = { it.layout },
+                      set = DigitalClockConfig::setLayout,
+                      options =
+                          listOf(
+                              DigitalClockConfig.LAYOUT_CENTER to "Center",
+                              DigitalClockConfig.LAYOUT_TOP to "Top",
+                              DigitalClockConfig.LAYOUT_BOTTOM to "Bottom",
+                              DigitalClockConfig.LAYOUT_MINIMAL to "Minimal"),
+                      coerce = oneOf(
+                          DigitalClockConfig.LAYOUT_CENTER, DigitalClockConfig.LAYOUT_TOP,
+                          DigitalClockConfig.LAYOUT_BOTTOM, DigitalClockConfig.LAYOUT_MINIMAL),
+                      visible = { _, s -> s.enabled }),
+                  EnumSpec(
+                      "background",
+                      "Background",
+                      get = { it.background },
+                      set = DigitalClockConfig::setBackground,
+                      options =
+                          listOf(
+                              DigitalClockConfig.BG_BLACK to "Black",
+                              DigitalClockConfig.BG_GRADIENT to "Gradient",
+                              DigitalClockConfig.BG_RED to "Red"),
+                      coerce = oneOf(
+                          DigitalClockConfig.BG_BLACK, DigitalClockConfig.BG_GRADIENT,
+                          DigitalClockConfig.BG_RED),
+                      visible = { _, s -> s.enabled }),
+                  EnumSpec(
+                      "glow",
+                      "Glow",
+                      get = { it.glow },
+                      set = DigitalClockConfig::setGlow,
+                      options =
+                          listOf(
+                              DigitalClockConfig.GLOW_NONE to "None",
+                              DigitalClockConfig.GLOW_SOFT to "Soft",
+                              DigitalClockConfig.GLOW_STRONG to "Strong"),
+                      coerce = oneOf(
+                          DigitalClockConfig.GLOW_NONE, DigitalClockConfig.GLOW_SOFT,
+                          DigitalClockConfig.GLOW_STRONG),
+                      visible = { _, s -> s.enabled }),
+                  BoolSpec(
+                      "showDate",
+                      "Show date",
+                      get = { it.showDate },
+                      set = DigitalClockConfig::setShowDate,
+                      visible = { _, s -> s.enabled }),
+                  BoolSpec(
+                      "showSeconds",
+                      "Show seconds",
+                      get = { it.showSeconds },
+                      set = DigitalClockConfig::setShowSeconds,
+                      visible = { _, s -> s.enabled }),
+              ),
+          sections =
+              mapOf(
+                  "style" to "Clock style",
+                  "color" to "Appearance",
+                  "font" to "Appearance",
+                  "size" to "Appearance",
+                  "layout" to "Layout & background",
+                  "background" to "Layout & background",
+                  "glow" to "Layout & background",
+                  "showDate" to "Extras",
+                  "showSeconds" to "Extras"),
+          defaults = { DigitalClockConfig.Settings() },
+          onApplied = { c, keys ->
+            if ("enabled" in keys) SettingsGuard.reaffirmScreensaver(c)
+          },
+      )
+
+  /**
+   * Sunrise alarm / wake light ([SunriseConfig]). At the set time on the chosen days, the screen
+   * brightens gradually, optionally finishing with a chime. The scalar fields (enabled, hour,
+   * minute, ramp minutes, chime) are registry specs; the `days` Set<Int> (which days of the week)
+   * is managed by the bespoke day-picker in [SunriseSettingsActivity] — the registry models scalars,
+   * not sets. Rescheduling ([SunriseScheduler.reschedule]) goes in [onApplied], fired once per batch.
+   */
+  val sunrise: SettingsDomain<SunriseConfig.Config> =
+      SettingsDomain(
+          id = "sunrise",
+          title = "Sunrise alarm",
+          load = SunriseConfig::load,
+          specs =
+              listOf(
+                  BoolSpec(
+                      "enabled",
+                      "Sunrise alarm",
+                      get = { it.enabled },
+                      set = SunriseConfig::setEnabled,
+                      help = "Wake to a gradual screen-brightening ramp, optionally finishing with a chime."),
+                  IntSpec(
+                      "hour",
+                      "Hour",
+                      get = { it.hour },
+                      set = SunriseConfig::setHour,
+                      min = 0,
+                      max = 23,
+                      step = 1,
+                      format = { "%02d:00".format(it) },
+                      visible = { _, s -> s.enabled }),
+                  IntSpec(
+                      "minute",
+                      "Minute",
+                      get = { it.minute },
+                      set = SunriseConfig::setMinute,
+                      min = 0,
+                      max = 59,
+                      step = 5,
+                      format = { ":%02d".format(it) },
+                      visible = { _, s -> s.enabled }),
+                  IntSpec(
+                      "rampMinutes",
+                      "Ramp minutes",
+                      get = { it.rampMinutes },
+                      set = SunriseConfig::setRampMinutes,
+                      min = 1,
+                      max = 60,
+                      step = 5,
+                      format = { "$it min" },
+                      help = "How long the screen takes to brighten from ember to full daylight.",
+                      visible = { _, s -> s.enabled }),
+                  BoolSpec(
+                      "chime",
+                      "Chime at end",
+                      get = { it.chime },
+                      set = SunriseConfig::setChime,
+                      help = "Finish the ramp with a soft chime crescendo.",
+                      visible = { _, s -> s.enabled }),
+              ),
+          sections =
+              mapOf(
+                  "hour" to "Time",
+                  "minute" to "Time",
+                  "rampMinutes" to "Ramp",
+                  "chime" to "Ramp"),
+          defaults = { SunriseConfig.Config(false, 7, 0, 20, true, setOf(2, 3, 4, 5, 6)) },
+          onApplied = { c, _ -> SunriseScheduler.reschedule(c) },
+      )
+
+  /**
+   * The welcome-back overlay ([WelcomeConfig]) shown when the screensaver starts. The registry
+   * models the scalar toggles and the display duration; the Float fields (opacity, text sizes,
+   * letter spacing) and the ARGB color ints and the free-text greetings / voice picker stay in the
+   * bespoke [WelcomeSettingsActivity] — the registry has no [FloatSpec], and color pickers / text
+   * editors / TTS voice enumeration are bespoke UI it can't render. Those fields are listed in the
+   * tripwire's `managedElsewhere`.
+   */
+  val welcome: SettingsDomain<WelcomeConfig.Settings> =
+      SettingsDomain(
+          id = "welcome",
+          title = "Welcome",
+          load = WelcomeConfig::load,
+          specs =
+              listOf(
+                  IntSpec(
+                      "durationMs",
+                      "Display duration",
+                      get = { it.durationMs },
+                      set = WelcomeConfig::setDuration,
+                      min = 1000,
+                      max = 10000,
+                      step = 200,
+                      format = { "${it / 1000.0}s" },
+                      help = "How long the welcome overlay shows before auto-dismissing."),
+                  BoolSpec(
+                      "showGreeting",
+                      "Show greeting",
+                      get = { it.showGreeting },
+                      set = WelcomeConfig::setShowGreeting,
+                      help = "Show a time-of-day greeting (\"Good morning\")."),
+                  BoolSpec(
+                      "showClock",
+                      "Show clock",
+                      get = { it.showClock },
+                      set = WelcomeConfig::setShowClock),
+                  BoolSpec(
+                      "showDate",
+                      "Show date",
+                      get = { it.showDate },
+                      set = WelcomeConfig::setShowDate),
+                  BoolSpec(
+                      "enableTts",
+                      "Speak greeting",
+                      get = { it.enableTts },
+                      set = WelcomeConfig::setEnableTts,
+                      help = "Speak the greeting through Android TTS when the overlay shows."),
+              ),
+          defaults = { WelcomeConfig.Settings() },
+      )
+
+  /**
+   * Device identity. One control: the Portal's display name, shown in the phone remote's device
+   * switcher and used as the Home Assistant device name. HA `unique_id` and the MQTT topic path key
+   * off a separate stable device id ([MqttConfig.deviceId]), so renaming is cosmetic and safe.
+   * Bound to [FleetConfig], whose setter also rewrites the shell-readable fleet manifest.
+   */
+  val fleet: SettingsDomain<Context> =
+      SettingsDomain(
+          id = "fleet",
+          title = "Device",
+          load = { it },
+          specs =
+              listOf(
+                  StringSpec(
+                      "name",
+                      "Device name",
+                      get = { FleetConfig.name(it) },
+                      // Trim surrounding whitespace before storing. Any printable characters are
+                      // allowed (HA device name and the mDNS service name tolerate them).
+                      set = { c, v -> FleetConfig.setName(c, v.trim()) },
+                      // Reject blank or over-long names; the trimmed form must be 1..48 chars.
+                      applyWhen = { it.trim().length in 1..48 },
+                      help = "Shown in the phone remote and in Home Assistant.",
+                  ),
+              ),
+      )
+
+  /** Every registered domain. */
   val all: List<SettingsDomain<*>> =
-      listOf(screensaver, calendar, immortal, mqtt, quickbar, fleet, chime)
+      listOf(screensaver, calendar, immortal, mqtt, quickbar, chime, digitalclock, sunrise, welcome, fleet)
 }

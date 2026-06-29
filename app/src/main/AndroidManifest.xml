@@ -9,8 +9,23 @@
          required, so the app installs on every model. -->
     <uses-feature android:name="android.software.leanback" android:required="false" />
     <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
+    <!-- Camera is not required — the button gracefully hides if unavailable. -->
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
+    <uses-feature android:name="android.hardware.camera.autofocus" android:required="false" />
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Camera preview button: show live camera feed. -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <!-- Calendar widget: read upcoming events from the device calendar. -->
+    <uses-permission android:name="android.permission.READ_CALENDAR" />
+    <!-- System-wide back-swipe gesture: draw a transparent overlay on the
+         right edge of the screen. The user must grant "Draw over other apps"
+         at runtime. -->
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+    <!-- The overlay back-gesture service runs in the background so the swipe
+         works in any app. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <!-- Store: install and remove apps on-device via PackageInstaller. -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <uses-permission android:name="android.permission.REQUEST_DELETE_PACKAGES" />
@@ -20,9 +35,6 @@
     <uses-permission android:name="android.permission.WRITE_SECURE_SETTINGS"
         tools:ignore="ProtectedPermissions" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
-    <!-- Fleet Agent: a foreground service so WiFi device management survives a
-         reboot on these non-root Portals (where adb-over-WiFi can't). -->
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <!-- Wake the screen on demand (Home Assistant "wake the panel" via the MQTT screen
          switch). A normal permission; ScreenControl.wake uses a wake lock. -->
     <uses-permission android:name="android.permission.WAKE_LOCK" />
@@ -33,11 +45,6 @@
          MultiRoomService). Harmless/unused on the Portal's Android 9/10, where the
          per-type FGS rules don't apply. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
-    <!-- Lets the headless fleet agent surface the package-installer confirm dialog
-         (which InstallConfirmService then auto-confirms) — holding it also exempts
-         the agent from Android 10's background-activity-start restriction. Granted
-         by provisioning; harmless if not held (the agent reports install mode). -->
-    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <!-- Lets the fleet agent's /logcat endpoint read system-wide logs. READ_LOGS is
          signature|privileged|development; the "development" flag means provisioning
          can grant it via `pm grant`. Without it the agent sees only its own logs. -->
@@ -46,6 +53,23 @@
     <!-- "Install an APK" browser: list APKs the user downloaded. Pre-granted by
          the provisioning kit; also requested at runtime. -->
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
+    <!-- Stats widget: IP address from Wi-Fi connection info. -->
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <!-- "Ping the other room": hold a Wi-Fi multicast lock so the LAN broadcast ping is
+         actually received (the radio filters broadcast frames otherwise). -->
+    <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
+    <!-- Header volume button: adjust media volume. -->
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+    <!-- Quick-settings brightness + the "Touch & keypress sounds" toggle write
+         Settings.System (SCREEN_BRIGHTNESS / SOUND_EFFECTS_ENABLED). This is the
+         app-op "Modify system settings": grant it via the system screen the toggle
+         opens, or from the provisioning kit with
+         `appops set com.immortal.launcher android:write_settings allow`. Best-effort
+         no-op if not granted. -->
+    <uses-permission android:name="android.permission.WRITE_SETTINGS"
+        tools:ignore="ProtectedPermissions" />
+    <!-- "Leave a note" voice memo: record a short message from the handset mic. -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <!-- Lets the fleet agent WRITE to /sdcard (e.g. pushing screensaver photos over
          WiFi). With requestLegacyExternalStorage it governs legacy write access on
          these Android-10 Portals. Granted by provisioning. -->
@@ -141,12 +165,120 @@
             android:launchMode="singleTask"
             android:theme="@style/Theme.SampleApp" />
 
+        <!-- Camera preview: full-screen live camera feed, opened from the
+             Camera tile in the launcher. Excluded from recents. -->
+        <activity
+            android:name=".CameraPreviewActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:screenOrientation="landscape"
+            android:theme="@style/Theme.SampleApp" />
+
         <!-- Screensaver settings (source folder/USB, fit, interval, …), opened from
              the Screensaver tile in the launcher's Settings folder. -->
         <activity
             android:name=".ScreensaverSettingsActivity"
             android:exported="false"
             android:label="Screensaver"
+            android:theme="@style/Theme.SampleApp" />
+
+        <!-- Welcome overlay settings (greetings, colors, sizes, duration), opened from
+             the Welcome tile in the launcher's Settings folder. -->
+        <activity
+            android:name=".WelcomeSettingsActivity"
+            android:exported="false"
+            android:label="Welcome"
+            android:theme="@style/Theme.SampleApp" />
+
+        <!-- Sleep timer settings, opened from the Sleep tile in the launcher's Settings folder. -->
+        <activity
+            android:name=".SleepSettingsActivity"
+            android:exported="false"
+            android:label="Sleep"
+            android:theme="@style/Theme.SampleApp" />
+
+        <!-- Ambient sound cues (hourly chime, spoken time, golden-hour tone, quiet
+             hours), opened from the Sounds tile in the launcher's Settings folder. -->
+        <activity
+            android:name=".ChimeSettingsActivity"
+            android:exported="false"
+            android:label="Sounds"
+            android:theme="@style/Theme.SampleApp" />
+
+        <!-- Countdown chips (birthdays, trips, holidays), opened from the Countdowns
+             tile in the launcher's Settings folder. -->
+        <activity
+            android:name=".CountdownSettingsActivity"
+            android:exported="false"
+            android:label="Countdowns"
+            android:theme="@style/Theme.SampleApp" />
+
+        <!-- RTSP camera viewer, opened from the Cameras tile in the Settings folder. -->
+        <activity
+            android:name=".CameraViewerActivity"
+            android:exported="false"
+            android:label="Cameras"
+            android:screenOrientation="landscape"
+            android:theme="@style/Theme.SampleApp" />
+
+        <!-- LAN intercom / baby monitor, opened from the Intercom tile in Settings. -->
+        <activity
+            android:name=".IntercomActivity"
+            android:exported="false"
+            android:label="Intercom"
+            android:theme="@style/Theme.SampleApp" />
+
+        <!-- Lamp mode: full-screen warm-white light panel. -->
+        <activity
+            android:name=".LampActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:screenOrientation="landscape"
+            android:label="Lamp"
+            android:theme="@style/Theme.SampleApp" />
+
+        <!-- Bedtime stories: public-domain tales read aloud via TTS. -->
+        <activity
+            android:name=".BedtimeStoryActivity"
+            android:exported="false"
+            android:screenOrientation="landscape"
+            android:label="Bedtime story"
+            android:theme="@style/Theme.SampleApp" />
+
+        <!-- Sunrise alarm settings. -->
+        <activity
+            android:name=".SunriseSettingsActivity"
+            android:exported="false"
+            android:label="Sunrise alarm"
+            android:theme="@style/Theme.SampleApp" />
+
+        <!-- Full-screen sunrise wake light, launched by SunriseReceiver at the alarm
+             time (shows over the lock screen and wakes the device). -->
+        <activity
+            android:name=".WakeLightActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:showWhenLocked="true"
+            android:turnScreenOn="true"
+            android:screenOrientation="landscape"
+            android:launchMode="singleTask"
+            android:theme="@style/Theme.SampleApp" />
+
+        <!-- Clock settings (digital clock style, color, font, size, layout, background,
+             glow, show date, show seconds, screensaver activation), opened from the
+             Clock tile in the launcher's Settings folder. -->
+        <activity
+            android:name=".ClockSettingsActivity"
+            android:exported="false"
+            android:label="Clock"
+            android:theme="@style/Theme.SampleApp" />
+
+        <!-- Full-screen digital clock preview, opened from the Preview button in
+             Clock settings. Excluded from recents. -->
+        <activity
+            android:name=".DigitalClockPreviewActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
             android:theme="@style/Theme.SampleApp" />
 
         <!-- Photo-source picker subpage (standard + advanced sources). -->
@@ -173,13 +305,6 @@
         <activity android:name=".DeviceHealthActivity" android:exported="false" android:theme="@style/Theme.SampleApp" />
         <activity android:name=".WorldClockActivity" android:exported="false" android:theme="@style/Theme.SampleApp" />
         <activity android:name=".BootAppsActivity" android:exported="false" android:theme="@style/Theme.SampleApp" />
-
-        <!-- "Sounds": hourly chime / spoken time / golden-hour tone / ping volume + quiet hours. -->
-        <activity
-            android:name=".ChimeSettingsActivity"
-            android:exported="false"
-            android:label="Sounds"
-            android:theme="@style/Theme.SampleApp" />
 
         <!-- Connect a self-hosted Immich server as the screensaver source. -->
         <activity
@@ -297,11 +422,6 @@
             </intent-filter>
         </receiver>
 
-        <!-- Internal alarm for the ambient chime / spoken-time / golden-hour cues. -->
-        <receiver
-            android:name=".ChimeReceiver"
-            android:exported="false" />
-
         <!-- Device admin (force-lock only): lets Immortal turn the screen off for the
              idle-timeout and overnight-sleep features via lockNow(). Activated by
              provisioning with `dpm set-active-admin`; a no-op until then. -->
@@ -317,9 +437,53 @@
             </intent-filter>
         </receiver>
 
+        <!-- System-wide "Go back" accessibility service. User enables once in
+             Android Settings → Accessibility, then it exposes a global BACK
+             action in the accessibility navigation bar. -->
+        <service
+            android:name=".ImmortalBackGestureService"
+            android:exported="true"
+            android:label="@string/back_gesture_service_label"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/back_gesture_service_config" />
+        </service>
+
+        <!-- System-wide back-swipe gesture via a transparent overlay. Runs as
+             a foreground service and draws a thin strip on the right edge
+             that detects leftward swipes. Requires SYSTEM_ALERT_WINDOW. -->
+        <service
+            android:name=".SystemBackGestureService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="System-wide back-swipe gesture overlay" />
+        </service>
+
         <!-- Internal alarms for the idle and overnight screen-off features. -->
         <receiver
             android:name=".SleepReceiver"
+            android:exported="false" />
+
+        <!-- Internal alarms for the ambient audio cues (hourly chime, spoken time,
+             golden-hour tone). -->
+        <receiver
+            android:name=".ChimeReceiver"
+            android:exported="false" />
+
+        <!-- Internal alarms for the kitchen multi-timers (ring when each elapses). -->
+        <receiver
+            android:name=".TimerReceiver"
+            android:exported="false" />
+
+        <!-- Internal alarm for the sunrise wake light (launches WakeLightActivity). -->
+        <receiver
+            android:name=".SunriseReceiver"
             android:exported="false" />
 
         <!-- Timer "time's up" alarm: an exact AlarmManager alarm fires here when a
@@ -403,6 +567,17 @@
         <!-- Custom screensaver (Dream), set via secure setting screensaver_components. -->
         <service
             android:name=".PhotoDreamService"
+            android:exported="true"
+            android:permission="android.permission.BIND_DREAM_SERVICE">
+            <intent-filter>
+                <action android:name="android.service.dreams.DreamService" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </service>
+
+        <!-- Digital clock screensaver (Dream), alternative to the photo frame. -->
+        <service
+            android:name=".DigitalClockDreamService"
             android:exported="true"
             android:permission="android.permission.BIND_DREAM_SERVICE">
             <intent-filter>
