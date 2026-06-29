@@ -36,6 +36,13 @@ android {
     versionName = "1.52"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+    // Portal hardware is ARM only (gen-1/gen-2 Snapdragon, Portal TV Amlogic).
+    // Kept as a guard so any future native dependency can't drag x86/x86_64 .so
+    // files no Portal can run into the APK.
+    ndk {
+      abiFilters += listOf("arm64-v8a", "armeabi-v7a")
+    }
   }
 
   signingConfigs {
@@ -68,8 +75,6 @@ android {
       }
     }
     debug {
-      // Lets a debug build install alongside a provisioned release for testing.
-      applicationIdSuffix = ".debug"
     }
     // Release-faithful iteration build. Same applicationId + same signing key + minify off
     // (inherited from release via initWith), so it provisions identically — home role, device
@@ -98,6 +103,7 @@ dependencies {
   implementation(libs.androidx.compose.ui)
   implementation(libs.androidx.compose.ui.graphics)
   implementation(libs.androidx.compose.ui.tooling.preview)
+  implementation(libs.androidx.compose.ui.android)
   implementation(libs.androidx.core.ktx)
   implementation(libs.androidx.exifinterface)
   implementation(libs.androidx.lifecycle.runtime.ktx)

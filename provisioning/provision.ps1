@@ -423,6 +423,7 @@ function Restore-Alexa {
     $bspatch = $null
     if ($cfg["BSPATCH_EXE"] -and (Test-Path $cfg["BSPATCH_EXE"])) { $bspatch = $cfg["BSPATCH_EXE"] }
     elseif (Get-Command bspatch -ErrorAction SilentlyContinue) { $bspatch = (Get-Command bspatch).Source }
+    elseif (Test-Path (Join-Path $ScriptDir "bspatch.cmd")) { $bspatch = Join-Path $ScriptDir "bspatch.cmd" }
     if (-not $bspatch) { Warn "bspatch not found (Windows ships none). Install it + set BSPATCH_EXE in config.env, or set FALCON_PATCHED_LOCAL to a prebuilt APK. Skipping Alexa."; return }
     $stock = if ($cfg["FALCON_STOCK_LOCAL"]) { $cfg["FALCON_STOCK_LOCAL"] } else { Join-Path $work "stock-falcon.apk" }
     if (-not (Test-Path $stock) -or ($cfg["FALCON_STOCK_SHA256"] -and (Get-Sha256 $stock) -ne $cfg["FALCON_STOCK_SHA256"])) {

@@ -26,6 +26,22 @@ keystore.properties
 # Built APKs / staged release artifacts and scratch screenshots.
 provisioning/apks/*.apk
 _chk*.png
+screen.png
+
+# Local device/debug captures.
+*.log
+*-dump.txt
+
+# Claude Code session files — machine-specific, not project state.
+.claude/
+.openclaude/
+
+# Sherpa-ONNX AAR (55 MB — too large for plain git; get it from
+# https://github.com/k2-fsa/sherpa-onnx/releases and place in app/libs/).
+app/libs/*.aar
+
+# Optional local clock fonts; verify licenses before force-adding any .ttf.
+app/src/main/assets/fonts/*.ttf
 
 # Per-device fleet inventory written by `provision.sh --fleet`. Contains each
 # device's agent auth TOKEN — never commit (the repo is public).
@@ -33,6 +49,7 @@ provisioning/fleet/
 
 # Internal strategy/planning notes — never publish.
 _planning/
+CHANGELOG_IMMORTAL.md
 
 # Reverse-engineering research — never publish (repo is public). Decompilation
 # working dir and APKs pulled off the device. Keep internal findings in
