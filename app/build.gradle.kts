@@ -36,6 +36,13 @@ android {
     versionName = "1.52"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+    // Portal hardware is ARM only (gen-1/gen-2 Snapdragon, Portal TV Amlogic).
+    // Kept as a guard so any future native dependency can't drag x86/x86_64 .so
+    // files no Portal can run into the APK.
+    ndk {
+      abiFilters += listOf("arm64-v8a", "armeabi-v7a")
+    }
   }
 
   signingConfigs {
